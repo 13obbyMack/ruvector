@@ -77,12 +77,40 @@ jobs:
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
-      - name: List built files (debug)
-        working-directory: npm/packages/core
+      - name: Copy binary to platform package
+        shell: bash
         run: |
-          echo "=== Looking for .node files ==="
-          find . -name "*.node" -type f || true
-          ls -R . | grep -E "\.node$" || true
+          # Map NAPI-RS output directory to platform package directory
+          case "${{ matrix.settings.platform }}" in
+            linux-x64-gnu)
+              SRC="npm/core/native/linux-x64"
+              ;;
+            linux-arm64-gnu)
+              SRC="npm/core/native/linux-arm64"
+              ;;
+            darwin-x64)
+              SRC="npm/core/native/darwin-x64"
+              ;;
+            darwin-arm64)
+              SRC="npm/core/native/darwin-arm64"
+              ;;
+            win32-x64-msvc)
+              SRC="npm/core/native/win32-x64-msvc"
+              ;;
+          esac
+
+          DEST="npm/core/platforms/${{ matrix.settings.platform }}"
+
+          echo "Looking for .node files in: $SRC"
+          ls -la "$SRC" || true
+
+          if [ -f "$SRC/ruvector.node" ]; then
+            echo "Copying $SRC/ruvector.node to $DEST/"
+            cp -v "$SRC/ruvector.node" "$DEST/"
+          else
+            echo "ERROR: ruvector.node not found in $SRC"
+            exit 1
+          fi
 
       - name: Test native module (native platform only)
         if: |
