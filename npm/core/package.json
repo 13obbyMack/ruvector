@@ -1,6 +1,6 @@
 {
   "name": "@ruvector/core",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "description": "High-performance Rust vector database for Node.js with HNSW indexing and SIMD optimizations",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -8,7 +8,7 @@
   "exports": {
     ".": {
       "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
+      "require": "./dist/index.cjs.js",
       "types": "./dist/index.d.ts"
     }
   },
@@ -16,7 +16,9 @@
     "node": ">= 18"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build:esm && npm run build:cjs",
+    "build:esm": "tsc --project tsconfig.json",
+    "build:cjs": "tsc --project tsconfig.cjs.json",
     "prepublishOnly": "npm run build",
     "test": "node --test",
     "clean": "rm -rf dist"
