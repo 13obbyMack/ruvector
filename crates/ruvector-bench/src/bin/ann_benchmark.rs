@@ -6,10 +6,12 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use ruvector_bench::{
-    create_progress_bar, calculate_recall, BenchmarkResult, DatasetGenerator,
-    LatencyStats, MemoryProfiler, ResultWriter, VectorDistribution,
+    calculate_recall, create_progress_bar, BenchmarkResult, DatasetGenerator, LatencyStats,
+    MemoryProfiler, ResultWriter, VectorDistribution,
 };
-use ruvector_core::{DbOptions, DistanceMetric, HnswConfig, QuantizationConfig, SearchQuery, VectorDB, VectorEntry};
+use ruvector_core::{
+    DbOptions, DistanceMetric, HnswConfig, QuantizationConfig, SearchQuery, VectorDB, VectorEntry,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -79,7 +81,11 @@ fn main() -> Result<()> {
 
     // Load or generate dataset
     let (vectors, queries, ground_truth) = load_dataset(&args)?;
-    println!("✓ Dataset loaded: {} vectors, {} queries", vectors.len(), queries.len());
+    println!(
+        "✓ Dataset loaded: {} vectors, {} queries",
+        vectors.len(),
+        queries.len()
+    );
 
     let mut all_results = Vec::new();
 
@@ -102,7 +108,10 @@ fn main() -> Result<()> {
     // Print summary table
     print_summary_table(&all_results);
 
-    println!("\n✓ Benchmark complete! Results saved to: {}", args.output.display());
+    println!(
+        "\n✓ Benchmark complete! Results saved to: {}",
+        args.output.display()
+    );
     Ok(())
 }
 
@@ -113,10 +122,13 @@ fn load_dataset(args: &Args) -> Result<(Vec<Vec<f32>>, Vec<Vec<f32>>, Vec<Vec<St
         "deep1m" => load_deep1m(),
         "synthetic" | _ => {
             println!("Generating synthetic {} dataset...", args.dataset);
-            let gen = DatasetGenerator::new(args.dimensions, VectorDistribution::Normal {
-                mean: 0.0,
-                std_dev: 1.0,
-            });
+            let gen = DatasetGenerator::new(
+                args.dimensions,
+                VectorDistribution::Normal {
+                    mean: 0.0,
+                    std_dev: 1.0,
+                },
+            );
 
             let pb = create_progress_bar(args.num_vectors as u64, "Generating vectors");
             let vectors = (0..args.num_vectors)
@@ -142,7 +154,13 @@ fn load_sift1m() -> Result<(Vec<Vec<f32>>, Vec<Vec<f32>>, Vec<Vec<String>>)> {
     println!("⚠ SIFT1M dataset not found, using synthetic data");
     println!("  Download SIFT1M with: scripts/download_datasets.sh");
 
-    let gen = DatasetGenerator::new(128, VectorDistribution::Normal { mean: 0.0, std_dev: 1.0 });
+    let gen = DatasetGenerator::new(
+        128,
+        VectorDistribution::Normal {
+            mean: 0.0,
+            std_dev: 1.0,
+        },
+    );
     let vectors = gen.generate(10000);
     let queries = gen.generate(100);
     let ground_truth = compute_ground_truth(&vectors, &queries, 10)?;
@@ -151,7 +169,13 @@ fn load_sift1m() -> Result<(Vec<Vec<f32>>, Vec<Vec<f32>>, Vec<Vec<String>>)> {
 
 fn load_gist1m() -> Result<(Vec<Vec<f32>>, Vec<Vec<f32>>, Vec<Vec<String>>)> {
     println!("⚠ GIST1M dataset not found, using synthetic data");
-    let gen = DatasetGenerator::new(960, VectorDistribution::Normal { mean: 0.0, std_dev: 1.0 });
+    let gen = DatasetGenerator::new(
+        960,
+        VectorDistribution::Normal {
+            mean: 0.0,
+            std_dev: 1.0,
+        },
+    );
     let vectors = gen.generate(10000);
     let queries = gen.generate(100);
     let ground_truth = compute_ground_truth(&vectors, &queries, 10)?;
@@ -160,7 +184,13 @@ fn load_gist1m() -> Result<(Vec<Vec<f32>>, Vec<Vec<f32>>, Vec<Vec<String>>)> {
 
 fn load_deep1m() -> Result<(Vec<Vec<f32>>, Vec<Vec<f32>>, Vec<Vec<String>>)> {
     println!("⚠ Deep1M dataset not found, using synthetic data");
-    let gen = DatasetGenerator::new(96, VectorDistribution::Normal { mean: 0.0, std_dev: 1.0 });
+    let gen = DatasetGenerator::new(
+        96,
+        VectorDistribution::Normal {
+            mean: 0.0,
+            std_dev: 1.0,
+        },
+    );
     let vectors = gen.generate(10000);
     let queries = gen.generate(100);
     let ground_truth = compute_ground_truth(&vectors, &queries, 10)?;
@@ -189,7 +219,11 @@ fn compute_ground_truth(
                 .collect();
 
             distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            distances.iter().take(k).map(|(idx, _)| idx.to_string()).collect()
+            distances
+                .iter()
+                .take(k)
+                .map(|(idx, _)| idx.to_string())
+                .collect()
         })
         .collect();
 
@@ -301,7 +335,10 @@ fn run_benchmark(
 
     let mut metadata = HashMap::new();
     metadata.insert("m".to_string(), args.m.to_string());
-    metadata.insert("ef_construction".to_string(), args.ef_construction.to_string());
+    metadata.insert(
+        "ef_construction".to_string(),
+        args.ef_construction.to_string(),
+    );
     metadata.insert("ef_search".to_string(), ef_search.to_string());
     metadata.insert("metric".to_string(), args.metric.clone());
     metadata.insert("quantization".to_string(), args.quantization.clone());

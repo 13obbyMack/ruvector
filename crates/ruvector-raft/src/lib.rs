@@ -12,8 +12,8 @@ pub mod state;
 
 pub use node::{RaftNode, RaftNodeConfig};
 pub use rpc::{
-    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest,
-    InstallSnapshotResponse, RequestVoteRequest, RequestVoteResponse,
+    AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
+    RequestVoteRequest, RequestVoteResponse,
 };
 pub use state::{LeaderState, PersistentState, RaftState, VolatileState};
 

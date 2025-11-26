@@ -100,8 +100,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         enable_cors: true,
     };
 
-    tracing::info!("Starting admin server on {}:{}", admin_config.bind_address, admin_config.port);
-    tracing::info!("Authentication: {}", if admin_config.auth_token.is_some() { "enabled" } else { "disabled" });
+    tracing::info!(
+        "Starting admin server on {}:{}",
+        admin_config.bind_address,
+        admin_config.port
+    );
+    tracing::info!(
+        "Authentication: {}",
+        if admin_config.auth_token.is_some() {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
 
     // Create and start admin server
     let server = AdminServer::new(router, admin_config);

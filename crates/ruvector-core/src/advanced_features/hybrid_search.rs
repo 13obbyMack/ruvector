@@ -119,8 +119,7 @@ impl BM25 {
             let tf = term_freq.get(&term).copied().unwrap_or(0.0);
 
             let numerator = tf * (self.k1 + 1.0);
-            let denominator =
-                tf + self.k1 * (1.0 - self.b + self.b * (doc_len / self.avg_doc_len));
+            let denominator = tf + self.k1 * (1.0 - self.b + self.b * (doc_len / self.avg_doc_len));
 
             score += idf * (numerator / denominator);
         }
@@ -229,17 +228,20 @@ impl HybridSearch {
 
         // Add keyword-only results
         for (doc_id, bm25_score) in bm25_scores {
-            combined_results.entry(doc_id.clone()).or_insert(CombinedScore {
-                id: doc_id,
-                vector_score: None,
-                keyword_score: Some(bm25_score),
-                vector: None,
-                metadata: None,
-            });
+            combined_results
+                .entry(doc_id.clone())
+                .or_insert(CombinedScore {
+                    id: doc_id,
+                    vector_score: None,
+                    keyword_score: Some(bm25_score),
+                    vector: None,
+                    metadata: None,
+                });
         }
 
         // Normalize and combine scores
-        let normalized_results = self.normalize_and_combine(combined_results.into_values().collect())?;
+        let normalized_results =
+            self.normalize_and_combine(combined_results.into_values().collect())?;
 
         // Sort by combined score (descending)
         let mut sorted_results = normalized_results;
@@ -251,14 +253,8 @@ impl HybridSearch {
 
     /// Normalize and combine scores
     fn normalize_and_combine(&self, results: Vec<CombinedScore>) -> Result<Vec<SearchResult>> {
-        let mut vector_scores: Vec<f32> = results
-            .iter()
-            .filter_map(|r| r.vector_score)
-            .collect();
-        let mut keyword_scores: Vec<f32> = results
-            .iter()
-            .filter_map(|r| r.keyword_score)
-            .collect();
+        let mut vector_scores: Vec<f32> = results.iter().filter_map(|r| r.vector_score).collect();
+        let mut keyword_scores: Vec<f32> = results.iter().filter_map(|r| r.keyword_score).collect();
 
         // Normalize scores
         normalize_scores(&mut vector_scores, self.config.normalization);
@@ -392,8 +388,16 @@ mod tests {
         bm25.index_document("doc3".to_string(), "rust systems programming");
         bm25.build_idf();
 
-        let score1 = bm25.score("rust programming", &"doc1".to_string(), "rust programming language");
-        let score2 = bm25.score("rust programming", &"doc2".to_string(), "python programming tutorial");
+        let score1 = bm25.score(
+            "rust programming",
+            &"doc1".to_string(),
+            "rust programming language",
+        );
+        let score2 = bm25.score(
+            "rust programming",
+            &"doc2".to_string(),
+            "python programming tutorial",
+        );
 
         // doc1 should score higher (contains both terms)
         assert!(score1 > score2);

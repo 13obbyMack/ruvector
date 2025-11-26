@@ -207,9 +207,12 @@ impl SyncManager {
 
     /// Synchronous replication - wait for all replicas
     async fn replicate_sync(&self, entry: &LogEntry) -> Result<()> {
-        timeout(self.sync_timeout, Self::send_to_replicas(&self.replica_set, entry))
-            .await
-            .map_err(|_| ReplicationError::Timeout("Sync replication timed out".to_string()))?
+        timeout(
+            self.sync_timeout,
+            Self::send_to_replicas(&self.replica_set, entry),
+        )
+        .await
+        .map_err(|_| ReplicationError::Timeout("Sync replication timed out".to_string()))?
     }
 
     /// Semi-synchronous replication - wait for minimum replicas
@@ -227,22 +230,19 @@ impl SyncManager {
         let replica_set = self.replica_set.clone();
         let min = min_replicas;
 
-        timeout(
-            self.sync_timeout,
-            async move {
-                // Simulate sending to replicas and waiting for acknowledgments
-                // In a real implementation, this would use network calls
-                let acks = secondaries.len().min(min);
-                if acks >= min {
-                    Ok(())
-                } else {
-                    Err(ReplicationError::QuorumNotMet {
-                        needed: min,
-                        available: acks,
-                    })
-                }
+        timeout(self.sync_timeout, async move {
+            // Simulate sending to replicas and waiting for acknowledgments
+            // In a real implementation, this would use network calls
+            let acks = secondaries.len().min(min);
+            if acks >= min {
+                Ok(())
+            } else {
+                Err(ReplicationError::QuorumNotMet {
+                    needed: min,
+                    available: acks,
+                })
             }
-        )
+        })
         .await
         .map_err(|_| ReplicationError::Timeout("Semi-sync replication timed out".to_string()))?
     }

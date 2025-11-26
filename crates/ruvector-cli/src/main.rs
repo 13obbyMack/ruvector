@@ -159,55 +159,75 @@ async fn main() -> Result<()> {
 
     // Execute command
     let result = match cli.command {
-        Commands::Create { path, dimensions } => {
-            create_database(&path, dimensions, &config)
-        }
-        Commands::Insert { db, input, format, no_progress } => {
-            insert_vectors(&db, &input, &format, &config, !no_progress)
-        }
-        Commands::Search { db, query, top_k, show_vectors } => {
+        Commands::Create { path, dimensions } => create_database(&path, dimensions, &config),
+        Commands::Insert {
+            db,
+            input,
+            format,
+            no_progress,
+        } => insert_vectors(&db, &input, &format, &config, !no_progress),
+        Commands::Search {
+            db,
+            query,
+            top_k,
+            show_vectors,
+        } => {
             let query_vec = parse_query_vector(&query)?;
             search_vectors(&db, query_vec, top_k, &config, show_vectors)
         }
-        Commands::Info { db } => {
-            show_info(&db, &config)
-        }
-        Commands::Benchmark { db, queries } => {
-            run_benchmark(&db, &config, queries)
-        }
-        Commands::Export { db, output, format } => {
-            export_database(&db, &output, &format, &config)
-        }
-        Commands::Import { db, source, source_path } => {
-            import_from_external(&db, &source, &source_path, &config)
-        }
+        Commands::Info { db } => show_info(&db, &config),
+        Commands::Benchmark { db, queries } => run_benchmark(&db, &config, queries),
+        Commands::Export { db, output, format } => export_database(&db, &output, &format, &config),
+        Commands::Import {
+            db,
+            source,
+            source_path,
+        } => import_from_external(&db, &source, &source_path, &config),
         Commands::Graph { action } => {
             use cli::graph::GraphCommands;
             match action {
-                GraphCommands::Create { path, name, indexed } => {
-                    cli::graph::create_graph(&path, &name, indexed, &config)
-                }
-                GraphCommands::Query { db, cypher, format, explain } => {
-                    cli::graph::execute_query(&db, &cypher, &format, explain, &config)
-                }
+                GraphCommands::Create {
+                    path,
+                    name,
+                    indexed,
+                } => cli::graph::create_graph(&path, &name, indexed, &config),
+                GraphCommands::Query {
+                    db,
+                    cypher,
+                    format,
+                    explain,
+                } => cli::graph::execute_query(&db, &cypher, &format, explain, &config),
                 GraphCommands::Shell { db, multiline } => {
                     cli::graph::run_shell(&db, multiline, &config)
                 }
-                GraphCommands::Import { db, input, format, graph, skip_errors } => {
-                    cli::graph::import_graph(&db, &input, &format, &graph, skip_errors, &config)
-                }
-                GraphCommands::Export { db, output, format, graph } => {
-                    cli::graph::export_graph(&db, &output, &format, &graph, &config)
-                }
+                GraphCommands::Import {
+                    db,
+                    input,
+                    format,
+                    graph,
+                    skip_errors,
+                } => cli::graph::import_graph(&db, &input, &format, &graph, skip_errors, &config),
+                GraphCommands::Export {
+                    db,
+                    output,
+                    format,
+                    graph,
+                } => cli::graph::export_graph(&db, &output, &format, &graph, &config),
                 GraphCommands::Info { db, detailed } => {
                     cli::graph::show_graph_info(&db, detailed, &config)
                 }
-                GraphCommands::Benchmark { db, queries, bench_type } => {
-                    cli::graph::run_graph_benchmark(&db, queries, &bench_type, &config)
-                }
-                GraphCommands::Serve { db, host, http_port, grpc_port, graphql } => {
-                    cli::graph::serve_graph(&db, &host, http_port, grpc_port, graphql, &config)
-                }
+                GraphCommands::Benchmark {
+                    db,
+                    queries,
+                    bench_type,
+                } => cli::graph::run_graph_benchmark(&db, queries, &bench_type, &config),
+                GraphCommands::Serve {
+                    db,
+                    host,
+                    http_port,
+                    grpc_port,
+                    graphql,
+                } => cli::graph::serve_graph(&db, &host, http_port, grpc_port, graphql, &config),
             }
         }
     };

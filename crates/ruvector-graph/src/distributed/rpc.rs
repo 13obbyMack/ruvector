@@ -163,7 +163,10 @@ impl RpcClient {
     }
 
     /// Execute a query on the remote node
-    pub async fn execute_query(&self, request: ExecuteQueryRequest) -> Result<ExecuteQueryResponse> {
+    pub async fn execute_query(
+        &self,
+        request: ExecuteQueryRequest,
+    ) -> Result<ExecuteQueryResponse> {
         debug!(
             "Executing remote query on {}: {}",
             self.target_address, request.query
@@ -191,7 +194,10 @@ impl RpcClient {
     }
 
     /// Replicate data to the remote node
-    pub async fn replicate_data(&self, request: ReplicateDataRequest) -> Result<ReplicateDataResponse> {
+    pub async fn replicate_data(
+        &self,
+        request: ReplicateDataRequest,
+    ) -> Result<ReplicateDataResponse> {
         debug!(
             "Replicating data to {} for shard {}",
             self.target_address, request.shard_id
@@ -281,9 +287,7 @@ impl RpcServer {
 impl RpcServer {
     /// Create a new RPC server
     pub fn new(bind_address: String) -> Self {
-        Self {
-            bind_address,
-        }
+        Self { bind_address }
     }
 
     /// Start the RPC server

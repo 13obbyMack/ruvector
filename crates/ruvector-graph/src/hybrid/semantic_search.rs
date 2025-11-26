@@ -3,8 +3,8 @@
 //! Combines vector similarity with graph traversal for semantic queries.
 
 use crate::error::{GraphError, Result};
-use crate::types::{NodeId, EdgeId};
 use crate::hybrid::vector_index::HybridIndex;
+use crate::types::{EdgeId, NodeId};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -279,14 +279,20 @@ mod tests {
 
         // All scores should be in [0, 1]
         for result in &results {
-            assert!(result.score >= 0.0 && result.score <= 1.0,
-                "Score {} out of valid range [0, 1]", result.score);
+            assert!(
+                result.score >= 0.0 && result.score <= 1.0,
+                "Score {} out of valid range [0, 1]",
+                result.score
+            );
         }
 
         // Identical vector should have highest similarity (close to 1.0)
         if !results.is_empty() {
             let top_result = &results[0];
-            assert!(top_result.score > 0.9, "Identical vector should have score > 0.9");
+            assert!(
+                top_result.score > 0.9,
+                "Identical vector should have score > 0.9"
+            );
         }
 
         Ok(())
@@ -315,8 +321,11 @@ mod tests {
 
         // Low similarity result should be filtered out
         for result in &results {
-            assert!(result.score >= 0.9,
-                "Result with score {} should be filtered out (min: 0.9)", result.score);
+            assert!(
+                result.score >= 0.9,
+                "Result with score {} should be filtered out (min: 0.9)",
+                result.score
+            );
         }
 
         Ok(())

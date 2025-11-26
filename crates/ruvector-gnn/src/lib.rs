@@ -6,27 +6,27 @@
 #![warn(missing_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod compress;
 pub mod error;
 pub mod layer;
-pub mod tensor;
-pub mod compress;
-pub mod search;
-pub mod training;
 pub mod query;
+pub mod search;
+pub mod tensor;
+pub mod training;
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "mmap"))]
 pub mod mmap;
 
 // Re-export commonly used types
+pub use compress::{CompressedTensor, CompressionLevel, TensorCompress};
 pub use error::{GnnError, Result};
 pub use layer::RuvectorLayer;
-pub use compress::{CompressedTensor, CompressionLevel, TensorCompress};
+pub use query::{QueryMode, QueryResult, RuvectorQuery, SubGraph};
 pub use search::{cosine_similarity, differentiable_search, hierarchical_forward};
-pub use training::{TrainConfig, OnlineConfig, info_nce_loss, local_contrastive_loss, sgd_step};
-pub use query::{QueryMode, RuvectorQuery, QueryResult, SubGraph};
+pub use training::{info_nce_loss, local_contrastive_loss, sgd_step, OnlineConfig, TrainConfig};
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "mmap"))]
-pub use mmap::{AtomicBitmap, MmapManager, MmapGradientAccumulator};
+pub use mmap::{AtomicBitmap, MmapGradientAccumulator, MmapManager};
 
 #[cfg(test)]
 mod tests {

@@ -1,8 +1,8 @@
 //! Index structures for efficient vector search
 
+pub mod flat;
 #[cfg(feature = "hnsw")]
 pub mod hnsw;
-pub mod flat;
 
 use crate::error::Result;
 use crate::types::{DistanceMetric, SearchResult, VectorId};

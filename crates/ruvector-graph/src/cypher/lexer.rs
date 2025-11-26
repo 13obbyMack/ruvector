@@ -88,9 +88,9 @@ pub enum TokenKind {
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
-    Arrow,        // ->
-    LeftArrow,    // <-
-    Dash,         // -
+    Arrow,     // ->
+    LeftArrow, // <-
+    Dash,      // -
 
     // Delimiters
     LeftParen,
@@ -106,7 +106,7 @@ pub enum TokenKind {
     Pipe,
 
     // Special
-    DotDot,       // ..
+    DotDot, // ..
     Eof,
 }
 
@@ -199,8 +199,12 @@ fn parse_keyword(input: &str) -> IResult<&str, (TokenKind, &str)> {
     // Split into nested alt() calls since nom's alt() supports max 21 alternatives
     alt((
         alt((
-            map(tag_no_case("OPTIONAL MATCH"), |s: &str| (TokenKind::OptionalMatch, s)),
-            map(tag_no_case("DETACH DELETE"), |s: &str| (TokenKind::DetachDelete, s)),
+            map(tag_no_case("OPTIONAL MATCH"), |s: &str| {
+                (TokenKind::OptionalMatch, s)
+            }),
+            map(tag_no_case("DETACH DELETE"), |s: &str| {
+                (TokenKind::DetachDelete, s)
+            }),
             map(tag_no_case("ORDER BY"), |s: &str| (TokenKind::OrderBy, s)),
             map(tag_no_case("ON CREATE"), |s: &str| (TokenKind::OnCreate, s)),
             map(tag_no_case("ON MATCH"), |s: &str| (TokenKind::OnMatch, s)),
@@ -298,7 +302,8 @@ fn parse_string(input: &str) -> IResult<&str, (TokenKind, &str)> {
     ))(input)?;
 
     // Unescape string
-    let unescaped = s.replace("\\'", "'")
+    let unescaped = s
+        .replace("\\'", "'")
         .replace("\\\"", "\"")
         .replace("\\\\", "\\");
 
@@ -309,13 +314,9 @@ fn parse_identifier(input: &str) -> IResult<&str, (TokenKind, &str)> {
     let (input, _) = multispace0(input)?;
 
     // Backtick-quoted identifier
-    let backtick_result: IResult<&str, &str> = delimited(
-        char('`'),
-        take_while1(|c| c != '`'),
-        char('`'),
-    )(input);
-    if let Ok((rest, id)) = backtick_result
-    {
+    let backtick_result: IResult<&str, &str> =
+        delimited(char('`'), take_while1(|c| c != '`'), char('`'))(input);
+    if let Ok((rest, id)) = backtick_result {
         return Ok((rest, (TokenKind::Identifier(id.to_string()), id)));
     }
 
@@ -410,7 +411,10 @@ mod tests {
     fn test_tokenize_strings() {
         let tokens = tokenize(r#"'Alice' "Bob's friend""#).unwrap();
         assert_eq!(tokens[0].kind, TokenKind::String("Alice".to_string()));
-        assert_eq!(tokens[1].kind, TokenKind::String("Bob's friend".to_string()));
+        assert_eq!(
+            tokens[1].kind,
+            TokenKind::String("Bob's friend".to_string())
+        );
     }
 
     #[test]

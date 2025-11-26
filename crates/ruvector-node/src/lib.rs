@@ -10,8 +10,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use ruvector_core::{
     types::{DbOptions, HnswConfig, QuantizationConfig},
-    DistanceMetric, SearchQuery, SearchResult,
-    VectorDB as CoreVectorDB, VectorEntry,
+    DistanceMetric, SearchQuery, SearchResult, VectorDB as CoreVectorDB, VectorEntry,
 };
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -281,10 +280,7 @@ impl VectorDB {
     /// ```
     #[napi]
     pub async fn insert_batch(&self, entries: Vec<JsVectorEntry>) -> Result<Vec<String>> {
-        let core_entries: Result<Vec<VectorEntry>> = entries
-            .iter()
-            .map(|e| e.to_core())
-            .collect();
+        let core_entries: Result<Vec<VectorEntry>> = entries.iter().map(|e| e.to_core()).collect();
         let core_entries = core_entries?;
         let db = self.inner.clone();
 
@@ -368,11 +364,9 @@ impl VectorDB {
         .map_err(|e| Error::from_reason(format!("Task failed: {}", e)))?
         .map_err(|e| Error::from_reason(format!("Get failed: {}", e)))?;
 
-        Ok(result.map(|entry| {
-            JsVectorEntry {
-                id: entry.id,
-                vector: Float32Array::new(entry.vector),
-            }
+        Ok(result.map(|entry| JsVectorEntry {
+            id: entry.id,
+            vector: Float32Array::new(entry.vector),
         }))
     }
 
@@ -551,8 +545,9 @@ impl CollectionManager {
     #[napi(constructor)]
     pub fn new(base_path: Option<String>) -> Result<Self> {
         let path = PathBuf::from(base_path.unwrap_or_else(|| "./collections".to_string()));
-        let manager = CoreCollectionManager::new(path)
-            .map_err(|e| Error::from_reason(format!("Failed to create collection manager: {}", e)))?;
+        let manager = CoreCollectionManager::new(path).map_err(|e| {
+            Error::from_reason(format!("Failed to create collection manager: {}", e))
+        })?;
 
         Ok(Self {
             inner: Arc::new(RwLock::new(manager)),

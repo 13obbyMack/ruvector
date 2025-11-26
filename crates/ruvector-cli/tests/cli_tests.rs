@@ -18,9 +18,9 @@ fn test_cli_version() {
 fn test_cli_help() {
     let mut cmd = Command::cargo_bin("ruvector").unwrap();
     cmd.arg("--help");
-    cmd.assert()
-        .success()
-        .stdout(predicate::str::contains("High-performance Rust vector database"));
+    cmd.assert().success().stdout(predicate::str::contains(
+        "High-performance Rust vector database",
+    ));
 }
 
 #[test]
@@ -59,9 +59,7 @@ fn test_info_command() {
 
     // Check info
     let mut cmd = Command::cargo_bin("ruvector").unwrap();
-    cmd.arg("info")
-        .arg("--db")
-        .arg(db_path.to_str().unwrap());
+    cmd.arg("info").arg("--db").arg(db_path.to_str().unwrap());
 
     cmd.assert()
         .success()
@@ -196,9 +194,7 @@ fn test_benchmark_command() {
 fn test_error_handling() {
     // Test with non-existent database
     let mut cmd = Command::cargo_bin("ruvector").unwrap();
-    cmd.arg("info")
-        .arg("--db")
-        .arg("/nonexistent/path/db.db");
+    cmd.arg("info").arg("--db").arg("/nonexistent/path/db.db");
 
     cmd.assert()
         .failure()

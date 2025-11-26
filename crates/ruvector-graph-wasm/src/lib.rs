@@ -11,25 +11,25 @@
 //! - Async query execution with streaming results
 //! - IndexedDB persistence (planned)
 
-use wasm_bindgen::prelude::*;
 use js_sys::{Array, Object, Promise, Reflect};
-use web_sys::console;
-use std::collections::HashMap;
-use std::sync::Arc;
 use parking_lot::Mutex;
-use uuid::Uuid;
 use ruvector_core::advanced::hypergraph::{
-    HypergraphIndex, Hyperedge as CoreHyperedge, TemporalHyperedge, TemporalGranularity,
+    Hyperedge as CoreHyperedge, HypergraphIndex, TemporalGranularity, TemporalHyperedge,
 };
 use ruvector_core::types::DistanceMetric;
 use serde_wasm_bindgen::{from_value, to_value};
+use std::collections::HashMap;
+use std::sync::Arc;
+use uuid::Uuid;
+use wasm_bindgen::prelude::*;
+use web_sys::console;
 
-pub mod types;
 pub mod async_ops;
+pub mod types;
 
 use types::{
-    Node, Edge, Hyperedge, JsNode, JsEdge, JsHyperedge, QueryResult, GraphError,
-    NodeId, EdgeId, HyperedgeId, js_object_to_hashmap,
+    js_object_to_hashmap, Edge, EdgeId, GraphError, Hyperedge, HyperedgeId, JsEdge, JsHyperedge,
+    JsNode, Node, NodeId, QueryResult,
 };
 
 /// Initialize panic hook for better error messages
@@ -97,7 +97,8 @@ impl GraphDB {
 
         // Parse and execute basic Cypher queries
         // This is a simplified implementation - a full Cypher parser would be more complex
-        let result = self.execute_cypher(&cypher)
+        let result = self
+            .execute_cypher(&cypher)
             .map_err(|e| JsValue::from(GraphError::from(e)))?;
 
         Ok(result)
@@ -114,11 +115,11 @@ impl GraphDB {
     #[wasm_bindgen(js_name = createNode)]
     pub fn create_node(&self, labels: Vec<String>, properties: JsValue) -> Result<String, JsValue> {
         let id = Uuid::new_v4().to_string();
-        let props = js_object_to_hashmap(properties)
-            .map_err(|e| JsValue::from_str(&e))?;
+        let props = js_object_to_hashmap(properties).map_err(|e| JsValue::from_str(&e))?;
 
         // Extract embedding if present
-        let embedding = props.get("embedding")
+        let embedding = props
+            .get("embedding")
             .and_then(|v| serde_json::from_value::<Vec<f32>>(v.clone()).ok());
 
         let node = Node {
@@ -181,8 +182,7 @@ impl GraphDB {
         drop(nodes);
 
         let id = Uuid::new_v4().to_string();
-        let props = js_object_to_hashmap(properties)
-            .map_err(|e| JsValue::from_str(&e))?;
+        let props = js_object_to_hashmap(properties).map_err(|e| JsValue::from_str(&e))?;
 
         let edge = Edge {
             id: id.clone(),
@@ -399,8 +399,10 @@ impl GraphDB {
             let props = if node.properties.is_empty() {
                 String::new()
             } else {
-                format!(" {{{}}}",
-                    node.properties.iter()
+                format!(
+                    " {{{}}}",
+                    node.properties
+                        .iter()
                         .map(|(k, v)| format!("{}: {}", k, v))
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -415,8 +417,10 @@ impl GraphDB {
             let props = if edge.properties.is_empty() {
                 String::new()
             } else {
-                format!(" {{{}}}",
-                    edge.properties.iter()
+                format!(
+                    " {{{}}}",
+                    edge.properties
+                        .iter()
                         .map(|(k, v)| format!("{}: {}", k, v))
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -443,10 +447,30 @@ impl GraphDB {
         let obj = Object::new();
         Reflect::set(&obj, &"nodeCount".into(), &JsValue::from(node_count)).unwrap();
         Reflect::set(&obj, &"edgeCount".into(), &JsValue::from(edge_count)).unwrap();
-        Reflect::set(&obj, &"hyperedgeCount".into(), &JsValue::from(hyperedge_count)).unwrap();
-        Reflect::set(&obj, &"hypergraphEntities".into(), &JsValue::from(hypergraph_stats.total_entities)).unwrap();
-        Reflect::set(&obj, &"hypergraphEdges".into(), &JsValue::from(hypergraph_stats.total_hyperedges)).unwrap();
-        Reflect::set(&obj, &"avgEntityDegree".into(), &JsValue::from(hypergraph_stats.avg_entity_degree)).unwrap();
+        Reflect::set(
+            &obj,
+            &"hyperedgeCount".into(),
+            &JsValue::from(hyperedge_count),
+        )
+        .unwrap();
+        Reflect::set(
+            &obj,
+            &"hypergraphEntities".into(),
+            &JsValue::from(hypergraph_stats.total_entities),
+        )
+        .unwrap();
+        Reflect::set(
+            &obj,
+            &"hypergraphEdges".into(),
+            &JsValue::from(hypergraph_stats.total_hyperedges),
+        )
+        .unwrap();
+        Reflect::set(
+            &obj,
+            &"avgEntityDegree".into(),
+            &JsValue::from(hypergraph_stats.avg_entity_degree),
+        )
+        .unwrap();
 
         obj.into()
     }

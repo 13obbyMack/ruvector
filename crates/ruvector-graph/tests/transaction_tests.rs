@@ -2,8 +2,8 @@
 //!
 //! Tests to verify atomicity, consistency, isolation, and durability properties.
 
-use ruvector_graph::{GraphDB, Node, Label, Properties, PropertyValue};
-use ruvector_graph::transaction::{Transaction, IsolationLevel};
+use ruvector_graph::transaction::{IsolationLevel, Transaction};
+use ruvector_graph::{GraphDB, Label, Node, Properties, PropertyValue};
 use std::sync::Arc;
 use std::thread;
 
@@ -69,11 +69,8 @@ fn test_transaction_atomic_batch_insert() {
 
     // For now, just create without transaction
     for i in 0..10 {
-        db.create_node(Node::new(
-            format!("node_{}", i),
-            vec![],
-            Properties::new(),
-        )).unwrap();
+        db.create_node(Node::new(format!("node_{}", i), vec![], Properties::new()))
+            .unwrap();
     }
 
     assert!(db.get_node("node_0").is_some());
@@ -130,9 +127,12 @@ fn test_concurrent_transactions_read_committed() {
     props.insert("counter".to_string(), PropertyValue::Integer(0));
     db.create_node(Node::new(
         "counter".to_string(),
-        vec![Label { name: "Counter".to_string() }],
+        vec![Label {
+            name: "Counter".to_string(),
+        }],
         props,
-    )).unwrap();
+    ))
+    .unwrap();
 
     // TODO: Implement transactional updates
     // Spawn multiple threads that increment the counter

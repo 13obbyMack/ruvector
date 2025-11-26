@@ -172,7 +172,10 @@ impl ConformalPredictor {
                     .find(|r| &r.id == target_id)
                     .map(|r| r.score)
                     .ok_or_else(|| {
-                        RuvectorError::VectorNotFound(format!("Target {} not in results", target_id))
+                        RuvectorError::VectorNotFound(format!(
+                            "Target {} not in results",
+                            target_id
+                        ))
                     })
             }
             NonconformityMeasure::InverseRank => {
@@ -181,7 +184,10 @@ impl ConformalPredictor {
                     .iter()
                     .position(|r| &r.id == target_id)
                     .ok_or_else(|| {
-                        RuvectorError::VectorNotFound(format!("Target {} not in results", target_id))
+                        RuvectorError::VectorNotFound(format!(
+                            "Target {} not in results",
+                            target_id
+                        ))
                     })?;
                 Ok(1.0 / (rank as f32 + 1.0))
             }
@@ -192,7 +198,10 @@ impl ConformalPredictor {
                     .find(|r| &r.id == target_id)
                     .map(|r| r.score)
                     .ok_or_else(|| {
-                        RuvectorError::VectorNotFound(format!("Target {} not in results", target_id))
+                        RuvectorError::VectorNotFound(format!(
+                            "Target {} not in results",
+                            target_id
+                        ))
                     })?;
 
                 let avg_score = results.iter().map(|r| r.score).sum::<f32>() / results.len() as f32;

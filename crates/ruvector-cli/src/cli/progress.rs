@@ -1,6 +1,6 @@
 // ! Progress tracking for CLI operations
 
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::time::Duration;
 
 /// Progress tracker for long-running operations
@@ -36,7 +36,7 @@ impl ProgressTracker {
         pb.set_style(
             ProgressStyle::default_spinner()
                 .template("{spinner:.green} {msg}")
-                .unwrap()
+                .unwrap(),
         );
         pb.set_message(message.to_string());
         pb.enable_steady_tick(Duration::from_millis(100));

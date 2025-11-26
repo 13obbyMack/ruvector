@@ -137,7 +137,9 @@ mod tests {
 
     #[test]
     fn test_quantization_dequantization() {
-        let weights = Array2::from_shape_vec((3, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]).unwrap();
+        let weights =
+            Array2::from_shape_vec((3, 3), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0])
+                .unwrap();
         let (quantized, params) = quantize_to_int8(&weights).unwrap();
         let dequantized = dequantize_from_int8(&quantized, &params, (3, 3)).unwrap();
 

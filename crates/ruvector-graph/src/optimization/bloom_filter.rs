@@ -3,8 +3,8 @@
 //! Bloom filters provide O(1) membership tests with false positives
 //! but no false negatives, perfect for quickly eliminating non-existent keys.
 
-use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 /// Standard bloom filter with configurable size and hash functions
 pub struct BloomFilter {
@@ -92,9 +92,7 @@ impl BloomFilter {
 
     /// Get approximate number of items (based on bit saturation)
     pub fn approximate_count(&self) -> usize {
-        let set_bits: u32 = self.bits.iter()
-            .map(|&word| word.count_ones())
-            .sum();
+        let set_bits: u32 = self.bits.iter().map(|&word| word.count_ones()).sum();
 
         let m = self.num_bits as f64;
         let k = self.num_hashes as f64;
@@ -107,9 +105,7 @@ impl BloomFilter {
 
     /// Get current false positive rate estimate
     pub fn current_false_positive_rate(&self) -> f64 {
-        let set_bits: u32 = self.bits.iter()
-            .map(|&word| word.count_ones())
-            .sum();
+        let set_bits: u32 = self.bits.iter().map(|&word| word.count_ones()).sum();
 
         let p = set_bits as f64 / self.num_bits as f64;
         p.powi(self.num_hashes as i32)
@@ -182,9 +178,7 @@ impl ScalableBloomFilter {
 
     /// Get total memory usage in bytes
     pub fn memory_usage(&self) -> usize {
-        self.filters.iter()
-            .map(|f| f.bits.len() * 8)
-            .sum()
+        self.filters.iter().map(|f| f.bits.len() * 8).sum()
     }
 }
 

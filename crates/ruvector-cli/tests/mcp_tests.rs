@@ -46,7 +46,12 @@ fn test_mcp_response_serialization() {
 
     impl McpResponse {
         fn success(id: Option<serde_json::Value>, result: serde_json::Value) -> Self {
-            Self { jsonrpc: "2.0".to_string(), id, result: Some(result), error: None }
+            Self {
+                jsonrpc: "2.0".to_string(),
+                id,
+                result: Some(result),
+                error: None,
+            }
         }
     }
 
@@ -80,13 +85,21 @@ fn test_mcp_error_response() {
 
     impl McpResponse {
         fn error(id: Option<serde_json::Value>, error: McpError) -> Self {
-            Self { jsonrpc: "2.0".to_string(), id, result: None, error: Some(error) }
+            Self {
+                jsonrpc: "2.0".to_string(),
+                id,
+                result: None,
+                error: Some(error),
+            }
         }
     }
 
     impl McpError {
         fn new(code: i32, message: impl Into<String>) -> Self {
-            Self { code, message: message.into() }
+            Self {
+                code,
+                message: message.into(),
+            }
         }
     }
 

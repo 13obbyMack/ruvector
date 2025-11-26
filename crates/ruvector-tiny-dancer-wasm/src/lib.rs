@@ -1,16 +1,14 @@
 //! WASM bindings for Tiny Dancer neural routing
 
-use wasm_bindgen::prelude::*;
 use ruvector_tiny_dancer_core::{
-    Router as CoreRouter,
     types::{
-        RouterConfig as CoreRouterConfig,
-        RoutingRequest as CoreRoutingRequest,
-        RoutingResponse as CoreRoutingResponse,
-        Candidate as CoreCandidate,
+        Candidate as CoreCandidate, RouterConfig as CoreRouterConfig,
+        RoutingRequest as CoreRoutingRequest, RoutingResponse as CoreRoutingResponse,
     },
+    Router as CoreRouter,
 };
 use std::collections::HashMap;
+use wasm_bindgen::prelude::*;
 
 /// Initialize panic hook for better error messages in WASM
 #[wasm_bindgen(start)]
@@ -163,8 +161,10 @@ impl TryFrom<RoutingRequest> for CoreRoutingRequest {
             .collect();
 
         let metadata = if let Some(meta_str) = request.metadata {
-            Some(serde_json::from_str(&meta_str)
-                .map_err(|e| JsValue::from_str(&format!("Invalid metadata: {}", e)))?)
+            Some(
+                serde_json::from_str(&meta_str)
+                    .map_err(|e| JsValue::from_str(&format!("Invalid metadata: {}", e)))?,
+            )
         } else {
             None
         };

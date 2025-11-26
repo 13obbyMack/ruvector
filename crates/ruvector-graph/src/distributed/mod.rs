@@ -16,7 +16,7 @@ pub mod rpc;
 pub mod shard;
 
 pub use coordinator::{Coordinator, QueryPlan, ShardCoordinator};
-pub use federation::{ClusterRegistry, Federation, FederatedQuery, RemoteCluster};
+pub use federation::{ClusterRegistry, FederatedQuery, Federation, RemoteCluster};
 pub use gossip::{GossipConfig, GossipMembership, MembershipEvent, NodeHealth};
 pub use replication::{GraphReplication, GraphReplicationConfig, ReplicationStrategy};
 pub use rpc::{GraphRpcService, RpcClient, RpcServer};

@@ -1,8 +1,7 @@
 use crate::{
-    SEARCH_REQUESTS_TOTAL, SEARCH_LATENCY_SECONDS,
-    INSERT_REQUESTS_TOTAL, INSERT_LATENCY_SECONDS, VECTORS_INSERTED_TOTAL,
-    DELETE_REQUESTS_TOTAL,
-    VECTORS_TOTAL, COLLECTIONS_TOTAL, MEMORY_USAGE_BYTES,
+    COLLECTIONS_TOTAL, DELETE_REQUESTS_TOTAL, INSERT_LATENCY_SECONDS, INSERT_REQUESTS_TOTAL,
+    MEMORY_USAGE_BYTES, SEARCH_LATENCY_SECONDS, SEARCH_REQUESTS_TOTAL, VECTORS_INSERTED_TOTAL,
+    VECTORS_TOTAL,
 };
 
 /// Helper struct for recording metrics
@@ -101,12 +100,7 @@ impl MetricsRecorder {
     /// * `searches` - Number of search operations
     /// * `inserts` - Number of insert operations
     /// * `deletes` - Number of delete operations
-    pub fn record_batch(
-        collection: &str,
-        searches: usize,
-        inserts: usize,
-        deletes: usize,
-    ) {
+    pub fn record_batch(collection: &str, searches: usize, inserts: usize, deletes: usize) {
         if searches > 0 {
             SEARCH_REQUESTS_TOTAL
                 .with_label_values(&[collection, "success"])

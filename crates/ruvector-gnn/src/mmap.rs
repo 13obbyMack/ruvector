@@ -11,12 +11,12 @@
 #![cfg(all(not(target_arch = "wasm32"), feature = "mmap"))]
 
 use crate::error::{GnnError, Result};
+use memmap2::{MmapMut, MmapOptions};
+use parking_lot::RwLock;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use parking_lot::RwLock;
-use memmap2::{MmapMut, MmapOptions};
 
 /// Thread-safe bitmap using atomic operations.
 ///
@@ -37,9 +37,7 @@ impl AtomicBitmap {
     /// * `size` - Number of bits to allocate
     pub fn new(size: usize) -> Self {
         let num_words = (size + 63) / 64;
-        let bits = (0..num_words)
-            .map(|_| AtomicU64::new(0))
-            .collect();
+        let bits = (0..num_words).map(|_| AtomicU64::new(0)).collect();
 
         Self { bits, size }
     }
@@ -201,9 +199,7 @@ impl MmapManager {
     pub fn embedding_offset(&self, node_id: u64) -> Option<usize> {
         let node_idx = usize::try_from(node_id).ok()?;
         let elem_size = std::mem::size_of::<f32>();
-        node_idx
-            .checked_mul(self.d_embed)?
-            .checked_mul(elem_size)
+        node_idx.checked_mul(self.d_embed)?.checked_mul(elem_size)
     }
 
     /// Validate that a node_id is within bounds.
@@ -224,13 +220,27 @@ impl MmapManager {
     /// Panics if node_id is out of bounds or would cause overflow
     pub fn get_embedding(&self, node_id: u64) -> &[f32] {
         // Security: Validate bounds before any pointer arithmetic
-        assert!(self.validate_node_id(node_id), "node_id {} out of bounds (max: {})", node_id, self.max_nodes);
+        assert!(
+            self.validate_node_id(node_id),
+            "node_id {} out of bounds (max: {})",
+            node_id,
+            self.max_nodes
+        );
 
-        let offset = self.embedding_offset(node_id)
+        let offset = self
+            .embedding_offset(node_id)
             .expect("embedding offset calculation overflow");
-        let end = offset.checked_add(self.d_embed.checked_mul(std::mem::size_of::<f32>()).unwrap())
+        let end = offset
+            .checked_add(
+                self.d_embed
+                    .checked_mul(std::mem::size_of::<f32>())
+                    .unwrap(),
+            )
             .expect("end offset overflow");
-        assert!(end <= self.mmap.len(), "embedding extends beyond mmap bounds");
+        assert!(
+            end <= self.mmap.len(),
+            "embedding extends beyond mmap bounds"
+        );
 
         // Mark as accessed
         self.access_bitmap.set(node_id as usize);
@@ -253,18 +263,28 @@ impl MmapManager {
     /// or offset calculation would overflow.
     pub fn set_embedding(&mut self, node_id: u64, data: &[f32]) {
         // Security: Validate bounds first
-        assert!(self.validate_node_id(node_id), "node_id {} out of bounds (max: {})", node_id, self.max_nodes);
+        assert!(
+            self.validate_node_id(node_id),
+            "node_id {} out of bounds (max: {})",
+            node_id,
+            self.max_nodes
+        );
         assert_eq!(
             data.len(),
             self.d_embed,
             "Embedding data length must match d_embed"
         );
 
-        let offset = self.embedding_offset(node_id)
+        let offset = self
+            .embedding_offset(node_id)
             .expect("embedding offset calculation overflow");
-        let end = offset.checked_add(data.len().checked_mul(std::mem::size_of::<f32>()).unwrap())
+        let end = offset
+            .checked_add(data.len().checked_mul(std::mem::size_of::<f32>()).unwrap())
             .expect("end offset overflow");
-        assert!(end <= self.mmap.len(), "embedding extends beyond mmap bounds");
+        assert!(
+            end <= self.mmap.len(),
+            "embedding extends beyond mmap bounds"
+        );
 
         // Mark as accessed and dirty
         self.access_bitmap.set(node_id as usize);
@@ -482,8 +502,7 @@ impl MmapGradientAccumulator {
     /// * `embeddings` - Embedding manager to update
     pub fn apply(&mut self, learning_rate: f32, embeddings: &mut MmapManager) {
         assert_eq!(
-            self.d_embed,
-            embeddings.d_embed,
+            self.d_embed, embeddings.d_embed,
             "Gradient and embedding dimensions must match"
         );
 
@@ -805,9 +824,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("gradients.bin");
 
-        let accumulator = std::sync::Arc::new(
-            MmapGradientAccumulator::new(&path, 64, 100).unwrap()
-        );
+        let accumulator =
+            std::sync::Arc::new(MmapGradientAccumulator::new(&path, 64, 100).unwrap());
 
         let mut handles = vec![];
 

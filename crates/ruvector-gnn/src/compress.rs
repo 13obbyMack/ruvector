@@ -101,9 +101,7 @@ impl TensorCompress {
     /// Compressed tensor using adaptive compression level
     pub fn compress(&self, embedding: &[f32], access_freq: f32) -> Result<CompressedTensor> {
         if embedding.is_empty() {
-            return Err(GnnError::InvalidInput(
-                "Empty embedding vector".to_string(),
-            ));
+            return Err(GnnError::InvalidInput("Empty embedding vector".to_string()));
         }
 
         let level = self.select_level(access_freq);
@@ -135,9 +133,7 @@ impl TensorCompress {
     pub fn decompress(&self, compressed: &CompressedTensor) -> Result<Vec<f32>> {
         match compressed {
             CompressedTensor::Full { data } => Ok(data.clone()),
-            CompressedTensor::Half { data, scale, dim } => {
-                self.decompress_half(data, *scale, *dim)
-            }
+            CompressedTensor::Half { data, scale, dim } => self.decompress_half(data, *scale, *dim),
             CompressedTensor::PQ8 {
                 codes,
                 codebooks,
@@ -214,7 +210,12 @@ impl TensorCompress {
         })
     }
 
-    fn compress_pq8(&self, embedding: &[f32], subvectors: u8, centroids: u8) -> Result<CompressedTensor> {
+    fn compress_pq8(
+        &self,
+        embedding: &[f32],
+        subvectors: u8,
+        centroids: u8,
+    ) -> Result<CompressedTensor> {
         let dim = embedding.len();
         let subvectors = subvectors as usize;
 
@@ -428,14 +429,8 @@ impl TensorCompress {
         let dim = subvector.len();
 
         // Initialize centroids using simple range-based approach
-        let min_val = subvector
-            .iter()
-            .cloned()
-            .fold(f32::INFINITY, f32::min);
-        let max_val = subvector
-            .iter()
-            .cloned()
-            .fold(f32::NEG_INFINITY, f32::max);
+        let min_val = subvector.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_val = subvector.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
         let range = max_val - min_val;
 
         if range < 1e-6 {
@@ -473,9 +468,7 @@ impl TensorCompress {
                     .sum();
                 (i, dist)
             })
-            .min_by(|(_, a), (_, b)| {
-                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-            })
+            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i)
             .unwrap_or(0)
     }

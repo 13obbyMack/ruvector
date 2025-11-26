@@ -332,7 +332,10 @@ impl Tensor {
 /// # Panics
 /// Panics if fan_in or fan_out is 0
 pub fn xavier_init(fan_in: usize, fan_out: usize) -> Vec<f32> {
-    assert!(fan_in > 0 && fan_out > 0, "fan_in and fan_out must be positive");
+    assert!(
+        fan_in > 0 && fan_out > 0,
+        "fan_in and fan_out must be positive"
+    );
 
     let limit = (6.0 / (fan_in + fan_out) as f32).sqrt();
     let uniform = Uniform::new(-limit, limit);
@@ -362,9 +365,7 @@ pub fn he_init(fan_in: usize) -> Vec<f32> {
     let normal = Normal::new(0.0, std_dev).expect("Invalid normal distribution parameters");
     let mut rng = rand::thread_rng();
 
-    (0..fan_in)
-        .map(|_| normal.sample(&mut rng))
-        .collect()
+    (0..fan_in).map(|_| normal.sample(&mut rng)).collect()
 }
 
 /// Element-wise (Hadamard) product

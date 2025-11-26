@@ -101,9 +101,8 @@ impl TransactionManager {
 
     /// Clean up old transactions
     pub fn cleanup(&mut self) {
-        self.transactions.retain(|_, tx| {
-            matches!(tx.state, TransactionState::Active)
-        });
+        self.transactions
+            .retain(|_, tx| matches!(tx.state, TransactionState::Active));
     }
 }
 
@@ -129,8 +128,7 @@ mod tests {
         ));
 
         // Add operation
-        tm.add_operation(&tx_id, "CREATE NODE".to_string())
-            .unwrap();
+        tm.add_operation(&tx_id, "CREATE NODE".to_string()).unwrap();
 
         // Commit
         tm.commit(&tx_id).unwrap();
@@ -148,8 +146,7 @@ mod tests {
         let mut tm = TransactionManager::new();
 
         let tx_id = tm.begin();
-        tm.add_operation(&tx_id, "CREATE NODE".to_string())
-            .unwrap();
+        tm.add_operation(&tx_id, "CREATE NODE".to_string()).unwrap();
 
         // Rollback
         tm.rollback(&tx_id).unwrap();

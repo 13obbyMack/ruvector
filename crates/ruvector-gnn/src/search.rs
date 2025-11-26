@@ -120,7 +120,7 @@ pub fn hierarchical_forward(
             &current_embedding,
             embeddings,
             5.min(embeddings.len()), // Top-5 or all if less
-            1.0, // Default temperature
+            1.0,                     // Default temperature
         );
 
         // Aggregate embeddings from top nodes using soft weights
@@ -226,10 +226,7 @@ mod tests {
         // Layer embeddings should match the output dimensions of each layer
         let layer_embeddings = vec![
             // First layer: embeddings are 2-dimensional (match query)
-            vec![
-                vec![1.0, 0.0],
-                vec![0.0, 1.0],
-            ],
+            vec![vec![1.0, 0.0], vec![0.0, 1.0]],
         ];
 
         // Single GNN layer that maintains dimension

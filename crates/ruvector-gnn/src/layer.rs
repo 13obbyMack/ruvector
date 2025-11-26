@@ -24,9 +24,8 @@ impl Linear {
         let scale = (2.0 / (input_dim + output_dim) as f32).sqrt();
         let normal = Normal::new(0.0, scale as f64).unwrap();
 
-        let weights = Array2::from_shape_fn((output_dim, input_dim), |_| {
-            normal.sample(&mut rng) as f32
-        });
+        let weights =
+            Array2::from_shape_fn((output_dim, input_dim), |_| normal.sample(&mut rng) as f32);
 
         let bias = Array1::zeros(output_dim);
 
@@ -70,9 +69,7 @@ impl LayerNorm {
 
         // Compute mean and variance
         let mean = x.mean().unwrap_or(0.0);
-        let variance = x.iter()
-            .map(|&v| (v - mean).powi(2))
-            .sum::<f32>() / x.len() as f32;
+        let variance = x.iter().map(|&v| (v - mean).powi(2)).sum::<f32>() / x.len() as f32;
 
         // Normalize
         let normalized = x.mapv(|v| (v - mean) / (variance + self.eps).sqrt());
@@ -135,12 +132,8 @@ impl MultiHeadAttention {
 
         // Reshape for multi-head attention
         let q_heads = self.split_heads(&q);
-        let k_heads: Vec<Vec<Vec<f32>>> = k.iter()
-            .map(|k_vec| self.split_heads(k_vec))
-            .collect();
-        let v_heads: Vec<Vec<Vec<f32>>> = v.iter()
-            .map(|v_vec| self.split_heads(v_vec))
-            .collect();
+        let k_heads: Vec<Vec<Vec<f32>>> = k.iter().map(|k_vec| self.split_heads(k_vec)).collect();
+        let v_heads: Vec<Vec<Vec<f32>>> = v.iter().map(|v_vec| self.split_heads(v_vec)).collect();
 
         // Compute attention for each head
         let mut head_outputs = Vec::new();
@@ -185,7 +178,8 @@ impl MultiHeadAttention {
         let scale = (self.head_dim as f32).sqrt();
 
         // Compute attention scores
-        let scores: Vec<f32> = keys.iter()
+        let scores: Vec<f32> = keys
+            .iter()
             .map(|k| {
                 let dot: f32 = query.iter().zip(k.iter()).map(|(q, k)| q * k).sum();
                 dot / scale
@@ -254,23 +248,17 @@ impl GRUCell {
     /// Updated hidden state
     pub fn forward(&self, input: &[f32], hidden: &[f32]) -> Vec<f32> {
         // Update gate: z_t = sigmoid(W_z * x_t + U_z * h_{t-1})
-        let z = self.sigmoid_vec(&self.add_vecs(
-            &self.w_z.forward(input),
-            &self.u_z.forward(hidden),
-        ));
+        let z =
+            self.sigmoid_vec(&self.add_vecs(&self.w_z.forward(input), &self.u_z.forward(hidden)));
 
         // Reset gate: r_t = sigmoid(W_r * x_t + U_r * h_{t-1})
-        let r = self.sigmoid_vec(&self.add_vecs(
-            &self.w_r.forward(input),
-            &self.u_r.forward(hidden),
-        ));
+        let r =
+            self.sigmoid_vec(&self.add_vecs(&self.w_r.forward(input), &self.u_r.forward(hidden)));
 
         // Candidate hidden state: h_tilde = tanh(W_h * x_t + U_h * (r_t ⊙ h_{t-1}))
         let r_hidden = self.mul_vecs(&r, hidden);
-        let h_tilde = self.tanh_vec(&self.add_vecs(
-            &self.w_h.forward(input),
-            &self.u_h.forward(&r_hidden),
-        ));
+        let h_tilde =
+            self.tanh_vec(&self.add_vecs(&self.w_h.forward(input), &self.u_h.forward(&r_hidden)));
 
         // Final hidden state: h_t = (1 - z_t) ⊙ h_{t-1} + z_t ⊙ h_tilde
         let one_minus_z: Vec<f32> = z.iter().map(|&zval| 1.0 - zval).collect();
@@ -386,11 +374,9 @@ impl RuvectorLayer {
             .collect();
 
         // Step 2: Attention-based aggregation
-        let attention_output = self.attention.forward(
-            &node_msg,
-            &neighbor_msgs,
-            &neighbor_msgs,
-        );
+        let attention_output = self
+            .attention
+            .forward(&node_msg, &neighbor_msgs, &neighbor_msgs);
 
         // Step 3: Weighted aggregation using edge weights
         let weighted_msgs = self.aggregate_messages(&neighbor_msgs, edge_weights);
@@ -497,10 +483,7 @@ mod tests {
         let layer = RuvectorLayer::new(4, 8, 2, 0.1);
 
         let node = vec![1.0, 2.0, 3.0, 4.0];
-        let neighbors = vec![
-            vec![0.5, 1.0, 1.5, 2.0],
-            vec![2.0, 3.0, 4.0, 5.0],
-        ];
+        let neighbors = vec![vec![0.5, 1.0, 1.5, 2.0], vec![2.0, 3.0, 4.0, 5.0]];
         let weights = vec![0.3, 0.7];
 
         let output = layer.forward(&node, &neighbors, &weights);

@@ -10,22 +10,22 @@
 //! - Bloom filters for negative lookups
 //! - Adaptive radix trees for property indexes
 
-pub mod simd_traversal;
-pub mod cache_hierarchy;
-pub mod memory_pool;
-pub mod index_compression;
-pub mod query_jit;
-pub mod bloom_filter;
 pub mod adaptive_radix;
+pub mod bloom_filter;
+pub mod cache_hierarchy;
+pub mod index_compression;
+pub mod memory_pool;
+pub mod query_jit;
+pub mod simd_traversal;
 
 // Re-exports for convenience
-pub use simd_traversal::{SimdTraversal, SimdBfsIterator, SimdDfsIterator};
-pub use cache_hierarchy::{CacheHierarchy, HotColdStorage};
-pub use memory_pool::{ArenaAllocator, QueryArena, NumaAllocator};
-pub use index_compression::{CompressedIndex, RoaringBitmapIndex, DeltaEncoder};
-pub use query_jit::{JitCompiler, JitQuery, QueryOperator};
-pub use bloom_filter::{BloomFilter, ScalableBloomFilter};
 pub use adaptive_radix::{AdaptiveRadixTree, ArtNode};
+pub use bloom_filter::{BloomFilter, ScalableBloomFilter};
+pub use cache_hierarchy::{CacheHierarchy, HotColdStorage};
+pub use index_compression::{CompressedIndex, DeltaEncoder, RoaringBitmapIndex};
+pub use memory_pool::{ArenaAllocator, NumaAllocator, QueryArena};
+pub use query_jit::{JitCompiler, JitQuery, QueryOperator};
+pub use simd_traversal::{SimdBfsIterator, SimdDfsIterator, SimdTraversal};
 
 #[cfg(test)]
 mod tests {

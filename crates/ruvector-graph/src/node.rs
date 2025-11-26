@@ -1,8 +1,8 @@
 //! Node implementation
 
-use crate::types::{NodeId, Properties, PropertyValue, Label};
-use bincode::{Encode, Decode};
-use serde::{Serialize, Deserialize};
+use crate::types::{Label, NodeId, Properties, PropertyValue};
+use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -15,7 +15,11 @@ pub struct Node {
 
 impl Node {
     pub fn new(id: NodeId, labels: Vec<Label>, properties: Properties) -> Self {
-        Self { id, labels, properties }
+        Self {
+            id,
+            labels,
+            properties,
+        }
     }
 
     /// Check if node has a specific label
@@ -124,10 +128,7 @@ mod tests {
 
     #[test]
     fn test_node_has_label() {
-        let node = NodeBuilder::new()
-            .label("Person")
-            .label("Employee")
-            .build();
+        let node = NodeBuilder::new().label("Person").label("Employee").build();
 
         assert!(node.has_label("Person"));
         assert!(node.has_label("Employee"));

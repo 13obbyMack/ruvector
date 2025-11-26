@@ -52,7 +52,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Process normal requests
     for i in 0..5 {
-
         let candidates = create_candidates(i, 3);
         let request = RoutingRequest {
             query_embedding: vec![0.5 + (i as f32 * 0.05); 384],
@@ -79,7 +78,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Simulate high load with many candidates
     for i in 0..3 {
-
         let candidates = create_candidates(i, 20); // More candidates
         let request = RoutingRequest {
             query_embedding: vec![0.6; 384],

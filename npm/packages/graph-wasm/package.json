@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "build": "wasm-pack build --target web --out-dir ../../../npm/packages/graph-wasm ../../../crates/ruvector-graph-wasm",
+    "build:wasm": "wasm-pack build --target web --out-dir . ../../crates/ruvector-graph-wasm",
     "build:node": "wasm-pack build --target nodejs --out-dir ../../../npm/packages/graph-wasm/node ../../../crates/ruvector-graph-wasm",
     "build:bundler": "wasm-pack build --target bundler --out-dir ../../../npm/packages/graph-wasm/bundler ../../../crates/ruvector-graph-wasm",
     "build:all": "npm run build && npm run build:node && npm run build:bundler",

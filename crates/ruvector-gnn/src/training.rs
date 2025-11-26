@@ -217,11 +217,12 @@ pub fn info_nce_loss(
 
         // Compute log-sum-exp with numerical stability
         let max_logit = all_logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-        let log_sum_exp = max_logit + all_logits
-            .iter()
-            .map(|&x| (x - max_logit).exp())
-            .sum::<f32>()
-            .ln();
+        let log_sum_exp = max_logit
+            + all_logits
+                .iter()
+                .map(|&x| (x - max_logit).exp())
+                .sum::<f32>()
+                .ln();
 
         // Loss = -log(exp(pos_sim) / sum_exp) = -(pos_sim - log_sum_exp)
         total_loss -= pos_sim - log_sum_exp;
@@ -349,12 +350,7 @@ mod tests {
         let negative1 = vec![0.0, 1.0, 0.0];
         let negative2 = vec![0.0, 0.0, 1.0];
 
-        let loss = info_nce_loss(
-            &anchor,
-            &[&positive],
-            &[&negative1, &negative2],
-            0.07,
-        );
+        let loss = info_nce_loss(&anchor, &[&positive], &[&negative1, &negative2], 0.07);
 
         // Loss should be positive
         assert!(loss > 0.0);
@@ -373,12 +369,7 @@ mod tests {
         let negative1 = vec![0.0, 1.0, 0.0];
         let negative2 = vec![0.0, 0.0, 1.0];
 
-        let loss = info_nce_loss(
-            &anchor,
-            &[&positive],
-            &[&negative1, &negative2],
-            0.07,
-        );
+        let loss = info_nce_loss(&anchor, &[&positive], &[&negative1, &negative2], 0.07);
 
         // Loss should be lower for perfect match
         assert!(loss < 1.0);
@@ -408,10 +399,16 @@ mod tests {
         let loss_high_temp = info_nce_loss(&anchor, &[&positive], &[&negative], 1.0);
 
         // Both should be positive and finite
-        assert!(loss_low_temp > 0.0 && loss_low_temp.is_finite(),
-                "Low temp loss should be positive and finite, got: {}", loss_low_temp);
-        assert!(loss_high_temp > 0.0 && loss_high_temp.is_finite(),
-                "High temp loss should be positive and finite, got: {}", loss_high_temp);
+        assert!(
+            loss_low_temp > 0.0 && loss_low_temp.is_finite(),
+            "Low temp loss should be positive and finite, got: {}",
+            loss_low_temp
+        );
+        assert!(
+            loss_high_temp > 0.0 && loss_high_temp.is_finite(),
+            "High temp loss should be positive and finite, got: {}",
+            loss_high_temp
+        );
 
         // With standard temperature, the loss should be reasonable
         assert!(loss_low_temp < 10.0, "Loss should not be too large");
@@ -425,12 +422,8 @@ mod tests {
         let non_neighbor1 = vec![0.0, 1.0, 0.0];
         let non_neighbor2 = vec![0.0, 0.0, 1.0];
 
-        let loss = local_contrastive_loss(
-            &node,
-            &[neighbor],
-            &[non_neighbor1, non_neighbor2],
-            0.07,
-        );
+        let loss =
+            local_contrastive_loss(&node, &[neighbor], &[non_neighbor1, non_neighbor2], 0.07);
 
         // Loss should be positive and finite
         assert!(loss > 0.0);
@@ -444,12 +437,7 @@ mod tests {
         let neighbor2 = vec![0.95, 0.05, 0.0];
         let non_neighbor = vec![0.0, 1.0, 0.0];
 
-        let loss = local_contrastive_loss(
-            &node,
-            &[neighbor1, neighbor2],
-            &[non_neighbor],
-            0.07,
-        );
+        let loss = local_contrastive_loss(&node, &[neighbor1, neighbor2], &[non_neighbor], 0.07);
 
         assert!(loss > 0.0);
         assert!(loss.is_finite());
@@ -475,9 +463,9 @@ mod tests {
         sgd_step(&mut embedding, &gradient, learning_rate);
 
         // Expected: embedding[i] -= learning_rate * grad[i]
-        assert!((embedding[0] - 0.999).abs() < 1e-6);  // 1.0 - 0.01 * 0.1
-        assert!((embedding[1] - 2.002).abs() < 1e-6);  // 2.0 - 0.01 * (-0.2)
-        assert!((embedding[2] - 2.997).abs() < 1e-6);  // 3.0 - 0.01 * 0.3
+        assert!((embedding[0] - 0.999).abs() < 1e-6); // 1.0 - 0.01 * 0.1
+        assert!((embedding[1] - 2.002).abs() < 1e-6); // 2.0 - 0.01 * (-0.2)
+        assert!((embedding[2] - 2.997).abs() < 1e-6); // 3.0 - 0.01 * 0.3
     }
 
     #[test]
@@ -515,9 +503,9 @@ mod tests {
         sgd_step(&mut embedding, &gradient, learning_rate);
 
         // Expected: embedding[i] -= learning_rate * grad[i]
-        assert!((embedding[0] - 5.0).abs() < 1e-5);   // 10.0 - 5.0 * 1.0
-        assert!((embedding[1] - 10.0).abs() < 1e-5);  // 20.0 - 5.0 * 2.0
-        assert!((embedding[2] - 15.0).abs() < 1e-5);  // 30.0 - 5.0 * 3.0
+        assert!((embedding[0] - 5.0).abs() < 1e-5); // 10.0 - 5.0 * 1.0
+        assert!((embedding[1] - 10.0).abs() < 1e-5); // 20.0 - 5.0 * 2.0
+        assert!((embedding[2] - 15.0).abs() < 1e-5); // 30.0 - 5.0 * 3.0
     }
 
     #[test]
@@ -536,12 +524,7 @@ mod tests {
         let positive2 = vec![0.95, 0.05, 0.0];
         let negative = vec![0.0, 1.0, 0.0];
 
-        let loss = info_nce_loss(
-            &anchor,
-            &[&positive1, &positive2],
-            &[&negative],
-            0.07,
-        );
+        let loss = info_nce_loss(&anchor, &[&positive1, &positive2], &[&negative], 0.07);
 
         // Loss should be positive and finite
         assert!(loss > 0.0);

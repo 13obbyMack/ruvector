@@ -8,7 +8,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ParseError {
-    #[error("Unexpected token: expected {expected}, found {found} at line {line}, column {column}")]
+    #[error(
+        "Unexpected token: expected {expected}, found {found} at line {line}, column {column}"
+    )]
     UnexpectedToken {
         expected: String,
         found: String,
@@ -95,7 +97,9 @@ impl Parser {
 
         // Reject empty queries
         if statements.is_empty() {
-            return Err(ParseError::InvalidSyntax("Empty query - expected at least one statement".to_string()));
+            return Err(ParseError::InvalidSyntax(
+                "Empty query - expected at least one statement".to_string(),
+            ));
         }
 
         Ok(Query { statements })
@@ -189,44 +193,45 @@ impl Parser {
             }
 
             // Parse relationship details [r:TYPE {props} *min..max]
-            let (variable, rel_type, properties, range) = if self.match_token(&[TokenKind::LeftBracket]) {
-                let variable = if let TokenKind::Identifier(v) = &self.peek().kind {
-                    let v = v.clone();
-                    self.advance();
-                    Some(v)
-                } else {
-                    None
-                };
-
-                let rel_type = if self.match_token(&[TokenKind::Colon]) {
-                    if let TokenKind::Identifier(t) = &self.peek().kind {
-                        let t = t.clone();
+            let (variable, rel_type, properties, range) =
+                if self.match_token(&[TokenKind::LeftBracket]) {
+                    let variable = if let TokenKind::Identifier(v) = &self.peek().kind {
+                        let v = v.clone();
                         self.advance();
-                        Some(t)
+                        Some(v)
                     } else {
                         None
-                    }
-                } else {
-                    None
-                };
+                    };
 
-                let properties = if self.check(&TokenKind::LeftBrace) {
-                    Some(self.parse_property_map()?)
-                } else {
-                    None
-                };
+                    let rel_type = if self.match_token(&[TokenKind::Colon]) {
+                        if let TokenKind::Identifier(t) = &self.peek().kind {
+                            let t = t.clone();
+                            self.advance();
+                            Some(t)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
 
-                let range = if self.match_token(&[TokenKind::Star]) {
-                    Some(self.parse_relationship_range()?)
-                } else {
-                    None
-                };
+                    let properties = if self.check(&TokenKind::LeftBrace) {
+                        Some(self.parse_property_map()?)
+                    } else {
+                        None
+                    };
 
-                self.consume(TokenKind::RightBracket, "]")?;
-                (variable, rel_type, properties, range)
-            } else {
-                (None, None, None, None)
-            };
+                    let range = if self.match_token(&[TokenKind::Star]) {
+                        Some(self.parse_relationship_range()?)
+                    } else {
+                        None
+                    };
+
+                    self.consume(TokenKind::RightBracket, "]")?;
+                    (variable, rel_type, properties, range)
+                } else {
+                    (None, None, None, None)
+                };
 
             // Determine final direction based on ending pattern:
             // -[r]->  = Outgoing
@@ -247,7 +252,7 @@ impl Parser {
                 }
             } else {
                 return Err(ParseError::InvalidSyntax(
-                    "Expected '->' or '-' after relationship".to_string()
+                    "Expected '->' or '-' after relationship".to_string(),
                 ));
             };
 
@@ -268,7 +273,9 @@ impl Parser {
                 return Ok(Pattern::Hyperedge(HyperedgePattern {
                     variable,
                     rel_type: rel_type.ok_or_else(|| {
-                        ParseError::InvalidSyntax("Hyperedge requires relationship type".to_string())
+                        ParseError::InvalidSyntax(
+                            "Hyperedge requires relationship type".to_string(),
+                        )
                     })?,
                     properties,
                     from: Box::new(from),
@@ -321,44 +328,45 @@ impl Parser {
             }
 
             // Parse relationship details [r:TYPE {props} *min..max]
-            let (variable, rel_type, properties, range) = if self.match_token(&[TokenKind::LeftBracket]) {
-                let variable = if let TokenKind::Identifier(v) = &self.peek().kind {
-                    let v = v.clone();
-                    self.advance();
-                    Some(v)
-                } else {
-                    None
-                };
-
-                let rel_type = if self.match_token(&[TokenKind::Colon]) {
-                    if let TokenKind::Identifier(t) = &self.peek().kind {
-                        let t = t.clone();
+            let (variable, rel_type, properties, range) =
+                if self.match_token(&[TokenKind::LeftBracket]) {
+                    let variable = if let TokenKind::Identifier(v) = &self.peek().kind {
+                        let v = v.clone();
                         self.advance();
-                        Some(t)
+                        Some(v)
                     } else {
                         None
-                    }
-                } else {
-                    None
-                };
+                    };
 
-                let properties = if self.check(&TokenKind::LeftBrace) {
-                    Some(self.parse_property_map()?)
-                } else {
-                    None
-                };
+                    let rel_type = if self.match_token(&[TokenKind::Colon]) {
+                        if let TokenKind::Identifier(t) = &self.peek().kind {
+                            let t = t.clone();
+                            self.advance();
+                            Some(t)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
 
-                let range = if self.match_token(&[TokenKind::Star]) {
-                    Some(self.parse_relationship_range()?)
-                } else {
-                    None
-                };
+                    let properties = if self.check(&TokenKind::LeftBrace) {
+                        Some(self.parse_property_map()?)
+                    } else {
+                        None
+                    };
 
-                self.consume(TokenKind::RightBracket, "]")?;
-                (variable, rel_type, properties, range)
-            } else {
-                (None, None, None, None)
-            };
+                    let range = if self.match_token(&[TokenKind::Star]) {
+                        Some(self.parse_relationship_range()?)
+                    } else {
+                        None
+                    };
+
+                    self.consume(TokenKind::RightBracket, "]")?;
+                    (variable, rel_type, properties, range)
+                } else {
+                    (None, None, None, None)
+                };
 
             // Determine final direction
             let direction = if self.match_token(&[TokenKind::Arrow]) {
@@ -371,7 +379,7 @@ impl Parser {
                 }
             } else {
                 return Err(ParseError::InvalidSyntax(
-                    "Expected '->' or '-' after relationship".to_string()
+                    "Expected '->' or '-' after relationship".to_string(),
                 ));
             };
 
@@ -420,7 +428,9 @@ impl Parser {
         let variable = if let TokenKind::Identifier(v) = &self.peek().kind {
             let v = v.clone();
             // Check if next token is : (label) or { (properties)
-            if !self.tokens.get(self.current + 1)
+            if !self
+                .tokens
+                .get(self.current + 1)
                 .map(|t| matches!(t.kind, TokenKind::Colon | TokenKind::LeftBrace))
                 .unwrap_or(false)
             {
@@ -468,7 +478,9 @@ impl Parser {
                 let key = if let TokenKind::Identifier(k) = &self.peek().kind {
                     k.clone()
                 } else {
-                    return Err(ParseError::InvalidSyntax("Expected property name".to_string()));
+                    return Err(ParseError::InvalidSyntax(
+                        "Expected property name".to_string(),
+                    ));
                 };
                 self.advance();
 
@@ -547,7 +559,10 @@ impl Parser {
             expressions.push(self.parse_expression()?);
         }
 
-        Ok(DeleteClause { detach, expressions })
+        Ok(DeleteClause {
+            detach,
+            expressions,
+        })
     }
 
     fn parse_set(&mut self) -> ParseResult<SetClause> {
@@ -573,7 +588,10 @@ impl Parser {
                     }
                 } else if self.match_token(&[TokenKind::Equal]) {
                     let value = self.parse_expression()?;
-                    items.push(SetItem::Variable { variable: var, value });
+                    items.push(SetItem::Variable {
+                        variable: var,
+                        value,
+                    });
                 }
             }
 
@@ -604,7 +622,9 @@ impl Parser {
                             property: prop,
                         });
                     } else {
-                        return Err(ParseError::InvalidSyntax("Expected property name after '.'".to_string()));
+                        return Err(ParseError::InvalidSyntax(
+                            "Expected property name after '.'".to_string(),
+                        ));
                     }
                 } else if self.match_token(&[TokenKind::Colon]) {
                     // Remove labels: REMOVE n:Label1:Label2
@@ -626,11 +646,13 @@ impl Parser {
                     });
                 } else {
                     return Err(ParseError::InvalidSyntax(
-                        "Expected '.' or ':' after variable in REMOVE".to_string()
+                        "Expected '.' or ':' after variable in REMOVE".to_string(),
                     ));
                 }
             } else {
-                return Err(ParseError::InvalidSyntax("Expected variable in REMOVE".to_string()));
+                return Err(ParseError::InvalidSyntax(
+                    "Expected variable in REMOVE".to_string(),
+                ));
             }
 
             if !self.match_token(&[TokenKind::Comma]) {
@@ -1225,7 +1247,8 @@ mod tests {
     #[test]
     fn test_chained_relationship_mixed() {
         // Mixed direction chained relationships: (a)-[r]->(b)<-[s]-(c)
-        let query = "MATCH (a:Person)-[r:KNOWS]->(b:Person)<-[s:MANAGES]-(c:Manager) RETURN a, b, c";
+        let query =
+            "MATCH (a:Person)-[r:KNOWS]->(b:Person)<-[s:MANAGES]-(c:Manager) RETURN a, b, c";
         let result = parse_cypher(query);
         assert!(result.is_ok());
     }

@@ -143,7 +143,7 @@ impl Collection {
 
         Ok(CollectionStats {
             vectors_count,
-            segments_count: 1, // Single segment for now
+            segments_count: 1,  // Single segment for now
             disk_size_bytes: 0, // TODO: Implement disk size calculation
             ram_size_bytes: 0,  // TODO: Implement RAM size calculation
         })

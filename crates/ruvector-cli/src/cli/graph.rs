@@ -1,10 +1,10 @@
 //! Graph database command implementations
 
-use crate::cli::{ProgressTracker, format_success, format_error, format_info};
+use crate::cli::{format_error, format_info, format_success, ProgressTracker};
 use crate::config::Config;
 use anyhow::{Context, Result};
 use colored::*;
-use std::io::{self, Write, BufRead};
+use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::time::Instant;
 
@@ -150,16 +150,29 @@ pub enum GraphCommands {
 
 /// Create a new graph database
 pub fn create_graph(path: &str, name: &str, indexed: bool, config: &Config) -> Result<()> {
-    println!("{}", format_success(&format!("Creating graph database at: {}", path)));
+    println!(
+        "{}",
+        format_success(&format!("Creating graph database at: {}", path))
+    );
     println!("  Graph name: {}", name.cyan());
-    println!("  Property indexing: {}", if indexed { "enabled".green() } else { "disabled".dimmed() });
+    println!(
+        "  Property indexing: {}",
+        if indexed {
+            "enabled".green()
+        } else {
+            "disabled".dimmed()
+        }
+    );
 
     // TODO: Integrate with ruvector-neo4j when available
     // For now, create a placeholder implementation
     std::fs::create_dir_all(Path::new(path).parent().unwrap_or(Path::new(".")))?;
 
     println!("{}", format_success("Graph database created successfully!"));
-    println!("{}", format_info("Use 'ruvector graph shell' to start interactive mode"));
+    println!(
+        "{}",
+        format_info("Use 'ruvector graph shell' to start interactive mode")
+    );
 
     Ok(())
 }
@@ -199,7 +212,10 @@ pub fn execute_query(
         _ => return Err(anyhow::anyhow!("Unsupported output format: {}", format)),
     }
 
-    println!("\n{}", format!("Query completed in {:.2}ms", elapsed.as_secs_f64() * 1000.0).dimmed());
+    println!(
+        "\n{}",
+        format!("Query completed in {:.2}ms", elapsed.as_secs_f64() * 1000.0).dimmed()
+    );
 
     Ok(())
 }
@@ -208,7 +224,11 @@ pub fn execute_query(
 pub fn run_shell(db_path: &str, multiline: bool, config: &Config) -> Result<()> {
     println!("{}", "RuVector Graph Shell".bold().green());
     println!("Database: {}", db_path.cyan());
-    println!("Type {} to exit, {} for help\n", ":exit".yellow(), ":help".yellow());
+    println!(
+        "Type {} to exit, {} for help\n",
+        ":exit".yellow(),
+        ":help".yellow()
+    );
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -263,7 +283,7 @@ pub fn run_shell(db_path: &str, multiline: bool, config: &Config) -> Result<()> 
         let query = query_buffer.trim().trim_end_matches(';');
         if !query.is_empty() {
             match execute_query(db_path, query, "table", false, config) {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => println!("{}", format_error(&e.to_string())),
             }
         }
@@ -283,10 +303,20 @@ pub fn import_graph(
     skip_errors: bool,
     config: &Config,
 ) -> Result<()> {
-    println!("{}", format_success(&format!("Importing graph data from: {}", input_file)));
+    println!(
+        "{}",
+        format_success(&format!("Importing graph data from: {}", input_file))
+    );
     println!("  Format: {}", format.cyan());
     println!("  Graph: {}", graph_name.cyan());
-    println!("  Skip errors: {}", if skip_errors { "yes".yellow() } else { "no".dimmed() });
+    println!(
+        "  Skip errors: {}",
+        if skip_errors {
+            "yes".yellow()
+        } else {
+            "no".dimmed()
+        }
+    );
 
     let start = Instant::now();
 
@@ -308,10 +338,13 @@ pub fn import_graph(
     }
 
     let elapsed = start.elapsed();
-    println!("{}", format_success(&format!(
-        "Import completed in {:.2}s",
-        elapsed.as_secs_f64()
-    )));
+    println!(
+        "{}",
+        format_success(&format!(
+            "Import completed in {:.2}s",
+            elapsed.as_secs_f64()
+        ))
+    );
 
     Ok(())
 }
@@ -324,7 +357,10 @@ pub fn export_graph(
     graph_name: &str,
     config: &Config,
 ) -> Result<()> {
-    println!("{}", format_success(&format!("Exporting graph to: {}", output_file)));
+    println!(
+        "{}",
+        format_success(&format!("Exporting graph to: {}", output_file))
+    );
     println!("  Format: {}", format.cyan());
     println!("  Graph: {}", graph_name.cyan());
 
@@ -352,10 +388,13 @@ pub fn export_graph(
     }
 
     let elapsed = start.elapsed();
-    println!("{}", format_success(&format!(
-        "Export completed in {:.2}s",
-        elapsed.as_secs_f64()
-    )));
+    println!(
+        "{}",
+        format_success(&format!(
+            "Export completed in {:.2}s",
+            elapsed.as_secs_f64()
+        ))
+    );
 
     Ok(())
 }
@@ -438,11 +477,23 @@ pub fn serve_graph(
 ) -> Result<()> {
     println!("{}", "Starting RuVector Graph Server...".bold().green());
     println!("  Database: {}", db_path.cyan());
-    println!("  HTTP endpoint: {}:{}", host.cyan(), http_port.to_string().cyan());
-    println!("  gRPC endpoint: {}:{}", host.cyan(), grpc_port.to_string().cyan());
+    println!(
+        "  HTTP endpoint: {}:{}",
+        host.cyan(),
+        http_port.to_string().cyan()
+    );
+    println!(
+        "  gRPC endpoint: {}:{}",
+        host.cyan(),
+        grpc_port.to_string().cyan()
+    );
 
     if enable_graphql {
-        println!("  GraphQL endpoint: {}:{}/graphql", host.cyan(), http_port.to_string().cyan());
+        println!(
+            "  GraphQL endpoint: {}:{}/graphql",
+            host.cyan(),
+            http_port.to_string().cyan()
+        );
     }
 
     println!("\n{}", format_info("Server configuration loaded"));
@@ -451,7 +502,10 @@ pub fn serve_graph(
     println!("{}", format_success("Server ready! Press Ctrl+C to stop."));
 
     // Placeholder - would run actual server here
-    println!("\n{}", format_info("Server implementation pending - integrate with ruvector-neo4j"));
+    println!(
+        "\n{}",
+        format_info("Server implementation pending - integrate with ruvector-neo4j")
+    );
 
     Ok(())
 }
@@ -485,7 +539,10 @@ fn format_graph_results_csv(results: &[serde_json::Value]) -> Result<String> {
 fn print_shell_help() {
     println!("\n{}", "RuVector Graph Shell Commands".bold().cyan());
     println!("  {}  - Exit the shell", ":exit, :quit, :q".yellow());
-    println!("  {}          - Show this help message", ":help, :h".yellow());
+    println!(
+        "  {}          - Show this help message",
+        ":help, :h".yellow()
+    );
     println!("  {}         - Clear query buffer", ":clear".yellow());
     println!("\n{}", "Cypher Examples:".bold().cyan());
     println!("  {}", "CREATE (n:Person {{name: 'Alice'}})".dimmed());

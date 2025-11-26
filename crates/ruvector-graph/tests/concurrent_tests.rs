@@ -2,7 +2,7 @@
 //!
 //! Tests for multi-threaded access, lock-free operations, and concurrent modifications.
 
-use ruvector_graph::{GraphDB, Node, Edge, Label, Properties, PropertyValue};
+use ruvector_graph::{Edge, GraphDB, Label, Node, Properties, PropertyValue};
 use std::sync::Arc;
 use std::thread;
 
@@ -23,7 +23,9 @@ fn test_concurrent_node_creation() {
 
                     let node = Node::new(
                         format!("node_{}_{}", thread_id, i),
-                        vec![Label { name: "Concurrent".to_string() }],
+                        vec![Label {
+                            name: "Concurrent".to_string(),
+                        }],
                         props,
                     );
 
@@ -48,11 +50,7 @@ fn test_concurrent_reads() {
 
     // Create initial nodes
     for i in 0..100 {
-        let node = Node::new(
-            format!("node_{}", i),
-            vec![],
-            Properties::new(),
-        );
+        let node = Node::new(format!("node_{}", i), vec![], Properties::new());
         db.create_node(node).unwrap();
     }
 
@@ -108,11 +106,8 @@ fn test_concurrent_edge_creation() {
 
     // Create nodes first
     for i in 0..100 {
-        db.create_node(Node::new(
-            format!("n{}", i),
-            vec![],
-            Properties::new(),
-        )).unwrap();
+        db.create_node(Node::new(format!("n{}", i), vec![], Properties::new()))
+            .unwrap();
     }
 
     let num_threads = 10;
@@ -154,7 +149,8 @@ fn test_concurrent_read_while_writing() {
             format!("initial_{}", i),
             vec![],
             Properties::new(),
-        )).unwrap();
+        ))
+        .unwrap();
     }
 
     let num_readers = 5;
@@ -202,11 +198,8 @@ fn test_concurrent_property_updates() {
     // Create shared counter node
     let mut props = Properties::new();
     props.insert("counter".to_string(), PropertyValue::Integer(0));
-    db.create_node(Node::new(
-        "counter".to_string(),
-        vec![],
-        props,
-    )).unwrap();
+    db.create_node(Node::new("counter".to_string(), vec![], props))
+        .unwrap();
 
     // TODO: Implement atomic property updates
     // For now, just test concurrent reads
@@ -236,9 +229,12 @@ fn test_lock_free_reads() {
     for i in 0..1000 {
         db.create_node(Node::new(
             format!("node_{}", i),
-            vec![Label { name: "Test".to_string() }],
+            vec![Label {
+                name: "Test".to_string(),
+            }],
             Properties::new(),
-        )).unwrap();
+        ))
+        .unwrap();
     }
 
     // Many concurrent readers should not block each other
@@ -282,7 +278,8 @@ fn test_writer_starvation_prevention() {
             format!("initial_{}", i),
             vec![],
             Properties::new(),
-        )).unwrap();
+        ))
+        .unwrap();
     }
 
     let readers_done = Arc::new(std::sync::atomic::AtomicBool::new(false));

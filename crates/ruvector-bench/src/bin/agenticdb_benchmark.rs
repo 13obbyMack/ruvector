@@ -10,8 +10,8 @@ use anyhow::Result;
 use clap::Parser;
 use rand::Rng;
 use ruvector_bench::{
-    create_progress_bar, BenchmarkResult, DatasetGenerator, LatencyStats,
-    MemoryProfiler, ResultWriter, VectorDistribution,
+    create_progress_bar, BenchmarkResult, DatasetGenerator, LatencyStats, MemoryProfiler,
+    ResultWriter, VectorDistribution,
 };
 use ruvector_core::{DbOptions, DistanceMetric, HnswConfig, SearchQuery, VectorDB, VectorEntry};
 use serde_json::json;
@@ -85,7 +85,10 @@ fn main() -> Result<()> {
 
     print_summary(&all_results);
 
-    println!("\n✓ AgenticDB benchmark complete! Results saved to: {}", args.output.display());
+    println!(
+        "\n✓ AgenticDB benchmark complete! Results saved to: {}",
+        args.output.display()
+    );
     Ok(())
 }
 
@@ -110,10 +113,13 @@ fn bench_reflexion_episodes(args: &Args) -> Result<BenchmarkResult> {
     let db = VectorDB::new(options)?;
 
     // Generate episode data
-    let gen = DatasetGenerator::new(dimensions, VectorDistribution::Normal {
-        mean: 0.0,
-        std_dev: 1.0,
-    });
+    let gen = DatasetGenerator::new(
+        dimensions,
+        VectorDistribution::Normal {
+            mean: 0.0,
+            std_dev: 1.0,
+        },
+    );
 
     println!("Storing episodes...");
     let pb = create_progress_bar(args.episodes as u64, "Storing episodes");
@@ -126,8 +132,14 @@ fn bench_reflexion_episodes(args: &Args) -> Result<BenchmarkResult> {
                 vec![
                     ("trajectory".to_string(), json!(format!("traj_{}", i))),
                     ("reward".to_string(), json!(rand::thread_rng().gen::<f32>())),
-                    ("success".to_string(), json!(rand::thread_rng().gen_bool(0.7))),
-                    ("step_count".to_string(), json!(rand::thread_rng().gen_range(10..100))),
+                    (
+                        "success".to_string(),
+                        json!(rand::thread_rng().gen_bool(0.7)),
+                    ),
+                    (
+                        "step_count".to_string(),
+                        json!(rand::thread_rng().gen_range(10..100)),
+                    ),
                 ]
                 .into_iter()
                 .collect(),
@@ -205,9 +217,12 @@ fn bench_skill_library(args: &Args) -> Result<BenchmarkResult> {
     let build_start = Instant::now();
     let db = VectorDB::new(options)?;
 
-    let gen = DatasetGenerator::new(dimensions, VectorDistribution::Clustered {
-        num_clusters: 20, // Skills grouped by categories
-    });
+    let gen = DatasetGenerator::new(
+        dimensions,
+        VectorDistribution::Clustered {
+            num_clusters: 20, // Skills grouped by categories
+        },
+    );
 
     println!("Storing skills...");
     let pb = create_progress_bar(args.skills as u64, "Storing skills");
@@ -220,8 +235,14 @@ fn bench_skill_library(args: &Args) -> Result<BenchmarkResult> {
                 vec![
                     ("name".to_string(), json!(format!("skill_{}", i))),
                     ("category".to_string(), json!(format!("cat_{}", i % 20))),
-                    ("success_rate".to_string(), json!(rand::thread_rng().gen::<f32>())),
-                    ("usage_count".to_string(), json!(rand::thread_rng().gen_range(0..1000))),
+                    (
+                        "success_rate".to_string(),
+                        json!(rand::thread_rng().gen::<f32>()),
+                    ),
+                    (
+                        "usage_count".to_string(),
+                        json!(rand::thread_rng().gen_range(0..1000)),
+                    ),
                 ]
                 .into_iter()
                 .collect(),
@@ -281,7 +302,10 @@ fn bench_skill_library(args: &Args) -> Result<BenchmarkResult> {
 }
 
 fn bench_causal_graph(args: &Args) -> Result<BenchmarkResult> {
-    println!("Simulating causal graph with {} nodes...", args.episodes / 10);
+    println!(
+        "Simulating causal graph with {} nodes...",
+        args.episodes / 10
+    );
 
     let dimensions = 256;
     let num_nodes = args.episodes / 10;
@@ -300,10 +324,13 @@ fn bench_causal_graph(args: &Args) -> Result<BenchmarkResult> {
     let build_start = Instant::now();
     let db = VectorDB::new(options)?;
 
-    let gen = DatasetGenerator::new(dimensions, VectorDistribution::Normal {
-        mean: 0.0,
-        std_dev: 1.0,
-    });
+    let gen = DatasetGenerator::new(
+        dimensions,
+        VectorDistribution::Normal {
+            mean: 0.0,
+            std_dev: 1.0,
+        },
+    );
 
     println!("Building causal graph...");
     let pb = create_progress_bar(num_nodes as u64, "Storing nodes");
@@ -316,7 +343,10 @@ fn bench_causal_graph(args: &Args) -> Result<BenchmarkResult> {
                 vec![
                     ("state".to_string(), json!(format!("state_{}", i))),
                     ("action".to_string(), json!(format!("action_{}", i % 50))),
-                    ("causal_strength".to_string(), json!(rand::thread_rng().gen::<f32>())),
+                    (
+                        "causal_strength".to_string(),
+                        json!(rand::thread_rng().gen::<f32>()),
+                    ),
                 ]
                 .into_iter()
                 .collect(),
@@ -395,10 +425,13 @@ fn bench_learning_session(args: &Args) -> Result<BenchmarkResult> {
     let build_start = Instant::now();
     let db = VectorDB::new(options)?;
 
-    let gen = DatasetGenerator::new(dimensions, VectorDistribution::Normal {
-        mean: 0.0,
-        std_dev: 1.0,
-    });
+    let gen = DatasetGenerator::new(
+        dimensions,
+        VectorDistribution::Normal {
+            mean: 0.0,
+            std_dev: 1.0,
+        },
+    );
 
     println!("Running learning session with mixed read/write...");
     let mut latency_stats = LatencyStats::new()?;

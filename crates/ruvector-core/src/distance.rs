@@ -1,7 +1,7 @@
 //! SIMD-optimized distance metrics using SimSIMD
 
-use crate::types::DistanceMetric;
 use crate::error::{Result, RuvectorError};
+use crate::types::DistanceMetric;
 
 /// Calculate distance between two vectors using the specified metric
 #[inline]
@@ -36,26 +36,21 @@ pub fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
     // SimSIMD cosine returns similarity in range [0, 1]
     // For distance, we use 1 - similarity
     // But SimSIMD may return the distance directly, so let's use it as-is
-    simsimd::SpatialSimilarity::cosine(a, b)
-        .expect("SimSIMD cosine failed") as f32
+    simsimd::SpatialSimilarity::cosine(a, b).expect("SimSIMD cosine failed") as f32
 }
 
 /// Dot product distance (negative for maximization) using SimSIMD
 #[inline]
 pub fn dot_product_distance(a: &[f32], b: &[f32]) -> f32 {
     // Return negative dot product for distance minimization
-    let dot = simsimd::SpatialSimilarity::dot(a, b)
-        .expect("SimSIMD dot product failed");
+    let dot = simsimd::SpatialSimilarity::dot(a, b).expect("SimSIMD dot product failed");
     (-dot) as f32
 }
 
 /// Manhattan (L1) distance
 #[inline]
 pub fn manhattan_distance(a: &[f32], b: &[f32]) -> f32 {
-    a.iter()
-        .zip(b.iter())
-        .map(|(x, y)| (x - y).abs())
-        .sum()
+    a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).sum()
 }
 
 /// Batch distance calculation optimized with Rayon
@@ -90,13 +85,21 @@ mod tests {
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![1.0, 2.0, 3.0];
         let dist = cosine_distance(&a, &b);
-        assert!(dist < 0.01, "Identical vectors should have ~0 distance, got {}", dist);
+        assert!(
+            dist < 0.01,
+            "Identical vectors should have ~0 distance, got {}",
+            dist
+        );
 
         // Test with opposite vectors (should have high distance)
         let a = vec![1.0, 0.0, 0.0];
         let b = vec![-1.0, 0.0, 0.0];
         let dist = cosine_distance(&a, &b);
-        assert!(dist > 1.5, "Opposite vectors should have high distance, got {}", dist);
+        assert!(
+            dist > 1.5,
+            "Opposite vectors should have high distance, got {}",
+            dist
+        );
     }
 
     #[test]

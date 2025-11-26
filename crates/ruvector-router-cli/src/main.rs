@@ -127,10 +127,7 @@ fn main() -> anyhow::Result<()> {
                 .distance_metric(parse_metric(&metric))
                 .build()?;
 
-            println!(
-                "{} Database created successfully!",
-                "✓".green().bold()
-            );
+            println!("{} Database created successfully!", "✓".green().bold());
             println!("  Dimensions: {}", dimensions);
             println!("  Metric: {}", metric);
         }
@@ -138,8 +135,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Insert { path, id, vector } => {
             println!("{} Opening database...", "→".green().bold());
 
-            let vector_data = parse_vector(&vector)
-                .map_err(|e| anyhow::anyhow!(e))?;
+            let vector_data = parse_vector(&vector).map_err(|e| anyhow::anyhow!(e))?;
 
             let dimensions = vector_data.len();
 
@@ -167,8 +163,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Search { path, vector, k } => {
             println!("{} Opening database...", "→".green().bold());
 
-            let vector_data = parse_vector(&vector)
-                .map_err(|e| anyhow::anyhow!(e))?;
+            let vector_data = parse_vector(&vector).map_err(|e| anyhow::anyhow!(e))?;
 
             let dimensions = vector_data.len();
 
@@ -233,10 +228,7 @@ fn main() -> anyhow::Result<()> {
             num_vectors,
             dimensions,
         } => {
-            println!(
-                "{} Running benchmark...",
-                "→".green().bold()
-            );
+            println!("{} Running benchmark...", "→".green().bold());
             println!("  Vectors: {}", num_vectors);
             println!("  Dimensions: {}", dimensions);
             println!();

@@ -116,17 +116,16 @@ impl HashPartitioner {
         hasher.update(node_id.as_bytes());
         let hash = hasher.finalize();
         let hash_bytes = hash.as_bytes();
-        let hash_u64 =
-            u64::from_le_bytes([
-                hash_bytes[0],
-                hash_bytes[1],
-                hash_bytes[2],
-                hash_bytes[3],
-                hash_bytes[4],
-                hash_bytes[5],
-                hash_bytes[6],
-                hash_bytes[7],
-            ]);
+        let hash_u64 = u64::from_le_bytes([
+            hash_bytes[0],
+            hash_bytes[1],
+            hash_bytes[2],
+            hash_bytes[3],
+            hash_bytes[4],
+            hash_bytes[5],
+            hash_bytes[6],
+            hash_bytes[7],
+        ]);
         (hash_u64 % self.shard_count as u64) as ShardId
     }
 
@@ -333,7 +332,10 @@ impl EdgeCutMinimizer {
     }
 
     /// Initial partition using greedy approach
-    fn initial_partition(&self, coarse_graph: &HashMap<NodeId, Vec<NodeId>>) -> HashMap<NodeId, ShardId> {
+    fn initial_partition(
+        &self,
+        coarse_graph: &HashMap<NodeId, Vec<NodeId>>,
+    ) -> HashMap<NodeId, ShardId> {
         let mut assignments = HashMap::new();
         let mut shard_sizes: Vec<usize> = vec![0; self.shard_count as usize];
 

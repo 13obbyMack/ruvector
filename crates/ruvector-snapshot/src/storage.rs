@@ -159,8 +159,9 @@ impl SnapshotStorage for LocalStorage {
 
         // Deserialize
         let config = bincode::config::standard();
-        let (snapshot_data, _): (SnapshotData, usize) = bincode::decode_from_slice(&decompressed, config)
-            .map_err(|e| SnapshotError::SerializationError(e.to_string()))?;
+        let (snapshot_data, _): (SnapshotData, usize) =
+            bincode::decode_from_slice(&decompressed, config)
+                .map_err(|e| SnapshotError::SerializationError(e.to_string()))?;
 
         Ok(snapshot_data)
     }

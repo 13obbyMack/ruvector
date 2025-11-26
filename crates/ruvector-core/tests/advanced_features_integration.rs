@@ -62,7 +62,10 @@ fn test_enhanced_pq_128d() {
     let compression_ratio = pq.compression_ratio();
     assert!(compression_ratio >= 8.0); // Should be 16x for 128D with 8 subspaces
 
-    println!("✓ Enhanced PQ 128D: compression ratio = {:.1}x", compression_ratio);
+    println!(
+        "✓ Enhanced PQ 128D: compression ratio = {:.1}x",
+        compression_ratio
+    );
 }
 
 #[test]
@@ -141,7 +144,10 @@ fn test_filtered_search_pre_filter() {
     let mut metadata_store = HashMap::new();
     for i in 0..100 {
         let mut metadata = HashMap::new();
-        metadata.insert("category".to_string(), json!(if i % 3 == 0 { "A" } else { "B" }));
+        metadata.insert(
+            "category".to_string(),
+            json!(if i % 3 == 0 { "A" } else { "B" }),
+        );
         metadata.insert("price".to_string(), json!(i as f32 * 10.0));
         metadata_store.insert(format!("vec_{}", i), metadata);
     }
@@ -159,7 +165,10 @@ fn test_filtered_search_pre_filter() {
     assert!(!filtered_ids.is_empty());
     assert!(filtered_ids.len() < 50); // Should be selective
 
-    println!("✓ Filtered Search (Pre-filter): {} matching documents", filtered_ids.len());
+    println!(
+        "✓ Filtered Search (Pre-filter): {} matching documents",
+        filtered_ids.len()
+    );
 }
 
 #[test]
@@ -278,10 +287,17 @@ fn test_hybrid_search_basic() {
     hybrid.finalize_indexing();
 
     // Test BM25 scoring
-    let score = hybrid.bm25.score("rust programming", &"doc1".to_string(), "rust programming language");
+    let score = hybrid.bm25.score(
+        "rust programming",
+        &"doc1".to_string(),
+        "rust programming language",
+    );
     assert!(score > 0.0);
 
-    println!("✓ Hybrid Search: indexed {} documents", hybrid.doc_texts.len());
+    println!(
+        "✓ Hybrid Search: indexed {} documents",
+        hybrid.doc_texts.len()
+    );
 }
 
 #[test]
@@ -299,12 +315,23 @@ fn test_hybrid_search_keyword_matching() {
     assert!(candidates.contains(&"doc3".to_string()));
 
     // Test scoring
-    let score1 = bm25.score("vector database", &"doc1".to_string(), "vector database with HNSW indexing");
-    let score2 = bm25.score("vector database", &"doc2".to_string(), "relational database management system");
+    let score1 = bm25.score(
+        "vector database",
+        &"doc1".to_string(),
+        "vector database with HNSW indexing",
+    );
+    let score2 = bm25.score(
+        "vector database",
+        &"doc2".to_string(),
+        "relational database management system",
+    );
 
     assert!(score1 > score2); // doc1 matches better
 
-    println!("✓ Hybrid Search (BM25): {} candidate documents", candidates.len());
+    println!(
+        "✓ Hybrid Search (BM25): {} candidate documents",
+        candidates.len()
+    );
 }
 
 #[test]
@@ -498,5 +525,8 @@ fn test_pq_recall_128d() {
     // First result should be the query itself (or very close)
     assert!(results[0].1 < 1.0); // Distance should be small
 
-    println!("✓ PQ 128D Recall Test: top-{} results retrieved", results.len());
+    println!(
+        "✓ PQ 128D Recall Test: top-{} results retrieved",
+        results.len()
+    );
 }

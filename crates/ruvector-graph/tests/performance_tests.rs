@@ -2,7 +2,7 @@
 //!
 //! Benchmark tests to ensure performance doesn't degrade over time.
 
-use ruvector_graph::{GraphDB, Node, Edge, Label, Properties, PropertyValue};
+use ruvector_graph::{Edge, GraphDB, Label, Node, Properties, PropertyValue};
 use std::time::Instant;
 
 // ============================================================================
@@ -22,7 +22,9 @@ fn test_node_creation_performance() {
 
         let node = Node::new(
             format!("node_{}", i),
-            vec![Label { name: "Benchmark".to_string() }],
+            vec![Label {
+                name: "Benchmark".to_string(),
+            }],
             props,
         );
 
@@ -32,10 +34,17 @@ fn test_node_creation_performance() {
     let duration = start.elapsed();
 
     println!("Created {} nodes in {:?}", num_nodes, duration);
-    println!("Rate: {:.2} nodes/sec", num_nodes as f64 / duration.as_secs_f64());
+    println!(
+        "Rate: {:.2} nodes/sec",
+        num_nodes as f64 / duration.as_secs_f64()
+    );
 
     // Baseline: Should create at least 10k nodes/sec
-    assert!(duration.as_secs() < 5, "Node creation too slow: {:?}", duration);
+    assert!(
+        duration.as_secs() < 5,
+        "Node creation too slow: {:?}",
+        duration
+    );
 }
 
 #[test]
@@ -45,11 +54,8 @@ fn test_node_retrieval_performance() {
 
     // Setup
     for i in 0..num_nodes {
-        db.create_node(Node::new(
-            format!("node_{}", i),
-            vec![],
-            Properties::new(),
-        )).unwrap();
+        db.create_node(Node::new(format!("node_{}", i), vec![], Properties::new()))
+            .unwrap();
     }
 
     // Measure retrieval
@@ -63,10 +69,17 @@ fn test_node_retrieval_performance() {
     let duration = start.elapsed();
 
     println!("Retrieved {} nodes in {:?}", num_nodes, duration);
-    println!("Rate: {:.2} reads/sec", num_nodes as f64 / duration.as_secs_f64());
+    println!(
+        "Rate: {:.2} reads/sec",
+        num_nodes as f64 / duration.as_secs_f64()
+    );
 
     // Should be very fast for in-memory lookups
-    assert!(duration.as_secs() < 1, "Node retrieval too slow: {:?}", duration);
+    assert!(
+        duration.as_secs() < 1,
+        "Node retrieval too slow: {:?}",
+        duration
+    );
 }
 
 #[test]
@@ -77,11 +90,8 @@ fn test_edge_creation_performance() {
 
     // Create nodes
     for i in 0..num_nodes {
-        db.create_node(Node::new(
-            format!("n{}", i),
-            vec![],
-            Properties::new(),
-        )).unwrap();
+        db.create_node(Node::new(format!("n{}", i), vec![], Properties::new()))
+            .unwrap();
     }
 
     // Create edges
@@ -106,7 +116,10 @@ fn test_edge_creation_performance() {
     let total_edges = num_nodes * edges_per_node;
 
     println!("Created {} edges in {:?}", total_edges, duration);
-    println!("Rate: {:.2} edges/sec", total_edges as f64 / duration.as_secs_f64());
+    println!(
+        "Rate: {:.2} edges/sec",
+        total_edges as f64 / duration.as_secs_f64()
+    );
 }
 
 // TODO: Implement graph traversal methods
@@ -155,11 +168,7 @@ fn test_large_graph_creation() {
             println!("Created {} nodes...", i);
         }
 
-        let node = Node::new(
-            format!("large_{}", i),
-            vec![],
-            Properties::new(),
-        );
+        let node = Node::new(format!("large_{}", i), vec![], Properties::new());
 
         db.create_node(node).unwrap();
     }
@@ -167,7 +176,10 @@ fn test_large_graph_creation() {
     let duration = start.elapsed();
 
     println!("Created {} nodes in {:?}", num_nodes, duration);
-    println!("Rate: {:.2} nodes/sec", num_nodes as f64 / duration.as_secs_f64());
+    println!(
+        "Rate: {:.2} nodes/sec",
+        num_nodes as f64 / duration.as_secs_f64()
+    );
 }
 
 #[test]
@@ -183,11 +195,7 @@ fn test_million_node_graph() {
             println!("Created {} nodes...", i);
         }
 
-        let node = Node::new(
-            format!("mega_{}", i),
-            vec![],
-            Properties::new(),
-        );
+        let node = Node::new(format!("mega_{}", i), vec![], Properties::new());
 
         db.create_node(node).unwrap();
     }
@@ -195,7 +203,10 @@ fn test_million_node_graph() {
     let duration = start.elapsed();
 
     println!("Created {} nodes in {:?}", num_nodes, duration);
-    println!("Rate: {:.2} nodes/sec", num_nodes as f64 / duration.as_secs_f64());
+    println!(
+        "Rate: {:.2} nodes/sec",
+        num_nodes as f64 / duration.as_secs_f64()
+    );
 }
 
 // ============================================================================
@@ -211,11 +222,7 @@ fn test_memory_efficiency() {
         let mut props = Properties::new();
         props.insert("data".to_string(), PropertyValue::String("x".repeat(100)));
 
-        let node = Node::new(
-            format!("mem_{}", i),
-            vec![],
-            props,
-        );
+        let node = Node::new(format!("mem_{}", i), vec![], props);
 
         db.create_node(node).unwrap();
     }
@@ -240,24 +247,20 @@ fn test_property_heavy_nodes() {
         let mut props = Properties::new();
 
         for j in 0..props_per_node {
-            props.insert(
-                format!("prop_{}", j),
-                PropertyValue::Integer(j as i64)
-            );
+            props.insert(format!("prop_{}", j), PropertyValue::Integer(j as i64));
         }
 
-        let node = Node::new(
-            format!("heavy_{}", i),
-            vec![],
-            props,
-        );
+        let node = Node::new(format!("heavy_{}", i), vec![], props);
 
         db.create_node(node).unwrap();
     }
 
     let duration = start.elapsed();
 
-    println!("Created {} property-heavy nodes in {:?}", num_nodes, duration);
+    println!(
+        "Created {} property-heavy nodes in {:?}",
+        num_nodes, duration
+    );
 }
 
 // ============================================================================
@@ -342,18 +345,19 @@ fn test_regression_node_creation() {
     let start = Instant::now();
 
     for i in 0..1000 {
-        db.create_node(Node::new(
-            format!("regr_{}", i),
-            vec![],
-            Properties::new(),
-        )).unwrap();
+        db.create_node(Node::new(format!("regr_{}", i), vec![], Properties::new()))
+            .unwrap();
     }
 
     let duration = start.elapsed();
 
     // Baseline threshold - should not regress beyond this
     // Adjust based on baseline measurements
-    assert!(duration.as_millis() < 500, "Regression detected: {:?}", duration);
+    assert!(
+        duration.as_millis() < 500,
+        "Regression detected: {:?}",
+        duration
+    );
 }
 
 #[test]
@@ -362,11 +366,8 @@ fn test_regression_node_retrieval() {
 
     // Setup
     for i in 0..1000 {
-        db.create_node(Node::new(
-            format!("regr_{}", i),
-            vec![],
-            Properties::new(),
-        )).unwrap();
+        db.create_node(Node::new(format!("regr_{}", i), vec![], Properties::new()))
+            .unwrap();
     }
 
     let start = Instant::now();
@@ -378,7 +379,11 @@ fn test_regression_node_retrieval() {
     let duration = start.elapsed();
 
     // Should be very fast
-    assert!(duration.as_millis() < 100, "Regression detected: {:?}", duration);
+    assert!(
+        duration.as_millis() < 100,
+        "Regression detected: {:?}",
+        duration
+    );
 }
 
 // ============================================================================
@@ -391,14 +396,23 @@ fn setup_benchmark_graph(num_nodes: usize) -> GraphDB {
 
     for i in 0..num_nodes {
         let mut props = Properties::new();
-        props.insert("name".to_string(), PropertyValue::String(format!("Person{}", i)));
-        props.insert("age".to_string(), PropertyValue::Integer((20 + (i % 60)) as i64));
+        props.insert(
+            "name".to_string(),
+            PropertyValue::String(format!("Person{}", i)),
+        );
+        props.insert(
+            "age".to_string(),
+            PropertyValue::Integer((20 + (i % 60)) as i64),
+        );
 
         db.create_node(Node::new(
             format!("person_{}", i),
-            vec![Label { name: "Person".to_string() }],
+            vec![Label {
+                name: "Person".to_string(),
+            }],
             props,
-        )).unwrap();
+        ))
+        .unwrap();
     }
 
     // Create some edges
@@ -412,7 +426,8 @@ fn setup_benchmark_graph(num_nodes: usize) -> GraphDB {
             format!("person_{}", to),
             "KNOWS".to_string(),
             Properties::new(),
-        )).unwrap();
+        ))
+        .unwrap();
     }
 
     db

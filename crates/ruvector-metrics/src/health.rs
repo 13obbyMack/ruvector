@@ -169,13 +169,11 @@ mod tests {
     #[test]
     fn test_readiness_with_empty_collection() {
         let checker = HealthChecker::new();
-        let collections = vec![
-            CollectionStats {
-                name: "empty".to_string(),
-                vectors_count: 0,
-                last_updated: None,
-            },
-        ];
+        let collections = vec![CollectionStats {
+            name: "empty".to_string(),
+            vectors_count: 0,
+            last_updated: None,
+        }];
 
         let readiness = checker.readiness(&collections);
 

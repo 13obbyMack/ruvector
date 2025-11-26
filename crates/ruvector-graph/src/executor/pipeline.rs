@@ -2,11 +2,11 @@
 //!
 //! Implements pull-based query execution with row batching
 
-use crate::executor::plan::{PhysicalPlan, QuerySchema};
 use crate::executor::operators::Operator;
-use crate::executor::{Result, ExecutionError};
-use std::collections::HashMap;
 use crate::executor::plan::Value;
+use crate::executor::plan::{PhysicalPlan, QuerySchema};
+use crate::executor::{ExecutionError, Result};
+use std::collections::HashMap;
 
 /// Batch size for vectorized execution
 const DEFAULT_BATCH_SIZE: usize = 1024;
@@ -99,9 +99,10 @@ impl ExecutionContext {
     /// Check if memory limit exceeded
     pub fn check_memory(&self) -> Result<()> {
         if self.memory_used > self.memory_limit {
-            Err(ExecutionError::ResourceExhausted(
-                format!("Memory limit exceeded: {} > {}", self.memory_used, self.memory_limit)
-            ))
+            Err(ExecutionError::ResourceExhausted(format!(
+                "Memory limit exceeded: {} > {}",
+                self.memory_used, self.memory_limit
+            )))
         } else {
             Ok(())
         }
@@ -290,13 +291,11 @@ mod tests {
 
     #[test]
     fn test_row_batch() {
-        let schema = QuerySchema::new(vec![
-            ColumnDef {
-                name: "id".to_string(),
-                data_type: DataType::Int64,
-                nullable: false,
-            },
-        ]);
+        let schema = QuerySchema::new(vec![ColumnDef {
+            name: "id".to_string(),
+            data_type: DataType::Int64,
+            nullable: false,
+        }]);
 
         let mut batch = RowBatch::new(schema);
         assert!(batch.is_empty());

@@ -4,11 +4,7 @@ use crate::error::{Result, VectorDbError};
 use crate::types::DistanceMetric;
 
 /// Calculate distance between two vectors using specified metric
-pub fn calculate_distance(
-    a: &[f32],
-    b: &[f32],
-    metric: DistanceMetric,
-) -> Result<f32> {
+pub fn calculate_distance(a: &[f32], b: &[f32], metric: DistanceMetric) -> Result<f32> {
     if a.len() != b.len() {
         return Err(VectorDbError::InvalidDimensions {
             expected: a.len(),

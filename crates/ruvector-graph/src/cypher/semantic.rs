@@ -36,7 +36,9 @@ pub enum SemanticError {
     #[error("Property access on non-object type")]
     InvalidPropertyAccess,
 
-    #[error("Invalid number of arguments for function {function}: expected {expected}, found {found}")]
+    #[error(
+        "Invalid number of arguments for function {function}: expected {expected}, found {found}"
+    )]
     InvalidArgumentCount {
         function: String,
         expected: usize,
@@ -342,7 +344,9 @@ impl SemanticAnalyzer {
     fn analyze_set(&mut self, clause: &SetClause) -> SemanticResult<()> {
         for item in &clause.items {
             match item {
-                SetItem::Property { variable, value, .. } => {
+                SetItem::Property {
+                    variable, value, ..
+                } => {
                     self.lookup_variable(variable)?;
                     self.analyze_expression(value)?;
                 }
@@ -442,7 +446,10 @@ impl SemanticAnalyzer {
 
             Expression::Property { object, .. } => {
                 let obj_type = self.analyze_expression(object)?;
-                if !obj_type.is_graph_element() && obj_type != ValueType::Map && obj_type != ValueType::Any {
+                if !obj_type.is_graph_element()
+                    && obj_type != ValueType::Map
+                    && obj_type != ValueType::Any
+                {
                     return Err(SemanticError::InvalidPropertyAccess);
                 }
                 Ok(ValueType::Any)
@@ -475,9 +482,12 @@ impl SemanticAnalyzer {
                 let right_type = self.analyze_expression(right)?;
 
                 match op {
-                    BinaryOperator::Add | BinaryOperator::Subtract |
-                    BinaryOperator::Multiply | BinaryOperator::Divide |
-                    BinaryOperator::Modulo | BinaryOperator::Power => {
+                    BinaryOperator::Add
+                    | BinaryOperator::Subtract
+                    | BinaryOperator::Multiply
+                    | BinaryOperator::Divide
+                    | BinaryOperator::Modulo
+                    | BinaryOperator::Power => {
                         if !left_type.is_numeric() || !right_type.is_numeric() {
                             return Err(SemanticError::TypeMismatch {
                                 expected: "numeric".to_string(),
@@ -490,11 +500,12 @@ impl SemanticAnalyzer {
                             Ok(ValueType::Integer)
                         }
                     }
-                    BinaryOperator::Equal | BinaryOperator::NotEqual |
-                    BinaryOperator::LessThan | BinaryOperator::LessThanOrEqual |
-                    BinaryOperator::GreaterThan | BinaryOperator::GreaterThanOrEqual => {
-                        Ok(ValueType::Boolean)
-                    }
+                    BinaryOperator::Equal
+                    | BinaryOperator::NotEqual
+                    | BinaryOperator::LessThan
+                    | BinaryOperator::LessThanOrEqual
+                    | BinaryOperator::GreaterThan
+                    | BinaryOperator::GreaterThanOrEqual => Ok(ValueType::Boolean),
                     BinaryOperator::And | BinaryOperator::Or | BinaryOperator::Xor => {
                         Ok(ValueType::Boolean)
                     }
@@ -533,7 +544,11 @@ impl SemanticAnalyzer {
                 Ok(ValueType::Boolean)
             }
 
-            Expression::Case { expression, alternatives, default } => {
+            Expression::Case {
+                expression,
+                alternatives,
+                default,
+            } => {
                 if let Some(expr) = expression {
                     self.analyze_expression(expr)?;
                 }

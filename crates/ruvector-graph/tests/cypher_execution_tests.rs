@@ -2,14 +2,17 @@
 //!
 //! Tests to verify that Cypher queries execute correctly and return expected results.
 
-use ruvector_graph::{GraphDB, Node, Edge, Label, Properties, PropertyValue};
+use ruvector_graph::{Edge, GraphDB, Label, Node, Properties, PropertyValue};
 
 fn setup_test_graph() -> GraphDB {
     let db = GraphDB::new();
 
     // Create people
     let mut alice_props = Properties::new();
-    alice_props.insert("name".to_string(), PropertyValue::String("Alice".to_string()));
+    alice_props.insert(
+        "name".to_string(),
+        PropertyValue::String("Alice".to_string()),
+    );
     alice_props.insert("age".to_string(), PropertyValue::Integer(30));
 
     let mut bob_props = Properties::new();
@@ -17,26 +20,38 @@ fn setup_test_graph() -> GraphDB {
     bob_props.insert("age".to_string(), PropertyValue::Integer(35));
 
     let mut charlie_props = Properties::new();
-    charlie_props.insert("name".to_string(), PropertyValue::String("Charlie".to_string()));
+    charlie_props.insert(
+        "name".to_string(),
+        PropertyValue::String("Charlie".to_string()),
+    );
     charlie_props.insert("age".to_string(), PropertyValue::Integer(28));
 
     db.create_node(Node::new(
         "alice".to_string(),
-        vec![Label { name: "Person".to_string() }],
+        vec![Label {
+            name: "Person".to_string(),
+        }],
         alice_props,
-    )).unwrap();
+    ))
+    .unwrap();
 
     db.create_node(Node::new(
         "bob".to_string(),
-        vec![Label { name: "Person".to_string() }],
+        vec![Label {
+            name: "Person".to_string(),
+        }],
         bob_props,
-    )).unwrap();
+    ))
+    .unwrap();
 
     db.create_node(Node::new(
         "charlie".to_string(),
-        vec![Label { name: "Person".to_string() }],
+        vec![Label {
+            name: "Person".to_string(),
+        }],
         charlie_props,
-    )).unwrap();
+    ))
+    .unwrap();
 
     // Create relationships
     db.create_edge(Edge::new(
@@ -45,7 +60,8 @@ fn setup_test_graph() -> GraphDB {
         "bob".to_string(),
         "KNOWS".to_string(),
         Properties::new(),
-    )).unwrap();
+    ))
+    .unwrap();
 
     db.create_edge(Edge::new(
         "e2".to_string(),
@@ -53,7 +69,8 @@ fn setup_test_graph() -> GraphDB {
         "charlie".to_string(),
         "KNOWS".to_string(),
         Properties::new(),
-    )).unwrap();
+    ))
+    .unwrap();
 
     db
 }
@@ -134,14 +151,20 @@ fn test_execute_create_node() {
 
     // For now, create manually
     let mut props = Properties::new();
-    props.insert("name".to_string(), PropertyValue::String("David".to_string()));
+    props.insert(
+        "name".to_string(),
+        PropertyValue::String("David".to_string()),
+    );
     props.insert("age".to_string(), PropertyValue::Integer(40));
 
     db.create_node(Node::new(
         "david".to_string(),
-        vec![Label { name: "Person".to_string() }],
+        vec![Label {
+            name: "Person".to_string(),
+        }],
         props,
-    )).unwrap();
+    ))
+    .unwrap();
 
     let david = db.get_node("david").unwrap();
     assert_eq!(

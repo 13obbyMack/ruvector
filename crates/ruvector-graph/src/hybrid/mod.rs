@@ -3,26 +3,20 @@
 //! Combines vector similarity search with graph traversal for AI workloads.
 //! Supports semantic search, RAG (Retrieval Augmented Generation), and GNN inference.
 
-pub mod vector_index;
-pub mod semantic_search;
-pub mod rag_integration;
 pub mod cypher_extensions;
 pub mod graph_neural;
+pub mod rag_integration;
+pub mod semantic_search;
+pub mod vector_index;
 
 // Re-export main types
-pub use vector_index::{HybridIndex, VectorIndexType, EmbeddingConfig};
-pub use semantic_search::{
-    SemanticSearch, SemanticSearchConfig, SemanticPath, ClusterResult,
-};
-pub use rag_integration::{
-    RagEngine, RagConfig, Context, ReasoningPath, Evidence,
-};
-pub use cypher_extensions::{
-    VectorCypherParser, VectorCypherExecutor, SimilarityPredicate,
-};
+pub use cypher_extensions::{SimilarityPredicate, VectorCypherExecutor, VectorCypherParser};
 pub use graph_neural::{
-    GraphNeuralEngine, GnnConfig, NodeClassification, LinkPrediction, GraphEmbedding,
+    GnnConfig, GraphEmbedding, GraphNeuralEngine, LinkPrediction, NodeClassification,
 };
+pub use rag_integration::{Context, Evidence, RagConfig, RagEngine, ReasoningPath};
+pub use semantic_search::{ClusterResult, SemanticPath, SemanticSearch, SemanticSearchConfig};
+pub use vector_index::{EmbeddingConfig, HybridIndex, VectorIndexType};
 
 use crate::error::Result;
 use serde::{Deserialize, Serialize};

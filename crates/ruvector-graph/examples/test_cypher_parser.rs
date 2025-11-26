@@ -1,7 +1,7 @@
 //! Standalone example demonstrating the Cypher parser
 //! Run with: cargo run --example test_cypher_parser
 
-use ruvector_graph::cypher::{parse_cypher, ast::*};
+use ruvector_graph::cypher::{ast::*, parse_cypher};
 
 fn main() {
     println!("=== Cypher Parser Test Suite ===\n");

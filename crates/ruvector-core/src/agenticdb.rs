@@ -10,12 +10,12 @@
 use crate::error::{Result, RuvectorError};
 use crate::types::*;
 use crate::vector_db::VectorDB;
+use parking_lot::RwLock;
 use redb::{Database, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use parking_lot::RwLock;
 
 // Table definitions
 const REFLEXION_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("reflexion_episodes");
@@ -57,7 +57,7 @@ pub struct Skill {
 pub struct CausalEdge {
     pub id: String,
     pub causes: Vec<String>,  // Hypergraph: multiple causes
-    pub effects: Vec<String>,  // Hypergraph: multiple effects
+    pub effects: Vec<String>, // Hypergraph: multiple effects
     pub confidence: f64,
     pub context: String,
     pub embedding: Vec<f32>,
@@ -69,11 +69,11 @@ pub struct CausalEdge {
 #[derive(Debug, Clone, Serialize, Deserialize, bincode::Encode, bincode::Decode)]
 pub struct LearningSession {
     pub id: String,
-    pub algorithm: String,  // Q-Learning, DQN, PPO, etc
+    pub algorithm: String, // Q-Learning, DQN, PPO, etc
     pub state_dim: usize,
     pub action_dim: usize,
     pub experiences: Vec<Experience>,
-    pub model_params: Option<Vec<u8>>,  // Serialized model
+    pub model_params: Option<Vec<u8>>, // Serialized model
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -229,7 +229,11 @@ impl AgenticDB {
     }
 
     /// Retrieve similar reflexion episodes
-    pub fn retrieve_similar_episodes(&self, query: &str, k: usize) -> Result<Vec<ReflexionEpisode>> {
+    pub fn retrieve_similar_episodes(
+        &self,
+        query: &str,
+        k: usize,
+    ) -> Result<Vec<ReflexionEpisode>> {
         // Generate embedding for query
         let query_embedding = self.generate_text_embedding(query)?;
 
@@ -257,7 +261,7 @@ impl AgenticDB {
                     if let Some(data) = table.get(id)? {
                         // Use JSON decoding for ReflexionEpisode (contains serde_json::Value which isn't bincode-compatible)
                         let episode: ReflexionEpisode = serde_json::from_slice(data.value())
-                                .map_err(|e| RuvectorError::SerializationError(e.to_string()))?;
+                            .map_err(|e| RuvectorError::SerializationError(e.to_string()))?;
                         episodes.push(episode);
                     }
                 }
@@ -448,7 +452,7 @@ impl AgenticDB {
         // Get all causal edges
         let results = self.vector_db.search(SearchQuery {
             vector: query_embedding,
-            k: k * 2,  // Get more results for utility ranking
+            k: k * 2, // Get more results for utility ranking
             filter: Some({
                 let mut filter = HashMap::new();
                 filter.insert("type".to_string(), serde_json::json!("causal"));
@@ -460,11 +464,12 @@ impl AgenticDB {
         let mut utility_results = Vec::new();
 
         for result in results {
-            let similarity_score = 1.0 / (1.0 + result.score as f64);  // Convert distance to similarity
+            let similarity_score = 1.0 / (1.0 + result.score as f64); // Convert distance to similarity
 
             // Get causal uplift from metadata
             let causal_uplift = if let Some(ref metadata) = result.metadata {
-                metadata.get("confidence")
+                metadata
+                    .get("confidence")
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0)
             } else {
@@ -540,7 +545,8 @@ impl AgenticDB {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(LEARNING_TABLE)?;
 
-        let data = table.get(session_id)?
+        let data = table
+            .get(session_id)?
             .ok_or_else(|| RuvectorError::VectorNotFound(session_id.to_string()))?;
 
         let (mut session, _): (LearningSession, usize) =
@@ -579,7 +585,8 @@ impl AgenticDB {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(LEARNING_TABLE)?;
 
-        let data = table.get(session_id)?
+        let data = table
+            .get(session_id)?
             .ok_or_else(|| RuvectorError::VectorNotFound(session_id.to_string()))?;
 
         let (session, _): (LearningSession, usize) =
@@ -592,7 +599,8 @@ impl AgenticDB {
 
         for exp in &session.experiences {
             let distance = euclidean_distance(&state, &exp.state);
-            if distance < 1.0 {  // Similarity threshold
+            if distance < 1.0 {
+                // Similarity threshold
                 similar_actions.push(exp.action.clone());
                 rewards.push(exp.reward);
             }
@@ -681,9 +689,7 @@ fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
 }
 
 fn calculate_std_dev(values: &[f64], mean: f64) -> f64 {
-    let variance = values.iter()
-        .map(|x| (x - mean).powi(2))
-        .sum::<f64>() / values.len() as f64;
+    let variance = values.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / values.len() as f64;
     variance.sqrt()
 }
 
@@ -781,8 +787,16 @@ mod tests {
         let db = create_test_db()?;
 
         let sequences = vec![
-            vec!["step1".to_string(), "step2".to_string(), "step3".to_string()],
-            vec!["action1".to_string(), "action2".to_string(), "action3".to_string()],
+            vec![
+                "step1".to_string(),
+                "step2".to_string(),
+                "step3".to_string(),
+            ],
+            vec![
+                "action1".to_string(),
+                "action2".to_string(),
+                "action3".to_string(),
+            ],
         ];
 
         let skill_ids = db.auto_consolidate(sequences, 3)?;

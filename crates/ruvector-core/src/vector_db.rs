@@ -8,8 +8,8 @@ use crate::index::hnsw::HnswIndex;
 
 use crate::index::VectorIndex;
 use crate::types::*;
-use std::sync::Arc;
 use parking_lot::RwLock;
+use std::sync::Arc;
 
 // Import appropriate storage backend based on features
 #[cfg(feature = "storage")]
@@ -116,9 +116,9 @@ impl VectorDB {
         if let Some(filter) = &query.filter {
             results.retain(|r| {
                 if let Some(metadata) = &r.metadata {
-                    filter.iter().all(|(key, value)| {
-                        metadata.get(key).map_or(false, |v| v == value)
-                    })
+                    filter
+                        .iter()
+                        .all(|(key, value)| metadata.get(key).map_or(false, |v| v == value))
                 } else {
                     false
                 }
@@ -220,7 +220,10 @@ mod tests {
 
         assert!(results.len() >= 1);
         assert_eq!(results[0].id, "v1", "First result should be exact match");
-        assert!(results[0].score < 0.01, "Exact match should have ~0 distance");
+        assert!(
+            results[0].score < 0.01,
+            "Exact match should have ~0 distance"
+        );
 
         Ok(())
     }

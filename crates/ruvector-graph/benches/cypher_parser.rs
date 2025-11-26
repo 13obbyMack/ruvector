@@ -3,9 +3,7 @@ use ruvector_graph::cypher::parser::parse_cypher;
 
 fn bench_simple_match(c: &mut Criterion) {
     c.bench_function("parse simple MATCH", |b| {
-        b.iter(|| {
-            parse_cypher(black_box("MATCH (n:Person) RETURN n"))
-        })
+        b.iter(|| parse_cypher(black_box("MATCH (n:Person) RETURN n")))
     });
 }
 
@@ -23,7 +21,7 @@ fn bench_create_query(c: &mut Criterion) {
     c.bench_function("parse CREATE query", |b| {
         b.iter(|| {
             parse_cypher(black_box(
-                "CREATE (n:Person {name: 'Bob', age: 30, email: 'bob@example.com'})"
+                "CREATE (n:Person {name: 'Bob', age: 30, email: 'bob@example.com'})",
             ))
         })
     });
@@ -43,7 +41,7 @@ fn bench_aggregation_query(c: &mut Criterion) {
     c.bench_function("parse aggregation query", |b| {
         b.iter(|| {
             parse_cypher(black_box(
-                "MATCH (n:Person) RETURN COUNT(n), AVG(n.age), MAX(n.salary), COLLECT(n.name)"
+                "MATCH (n:Person) RETURN COUNT(n), AVG(n.age), MAX(n.salary), COLLECT(n.name)",
             ))
         })
     });

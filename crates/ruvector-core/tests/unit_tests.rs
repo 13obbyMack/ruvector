@@ -2,8 +2,8 @@
 //!
 //! These tests use mocks to isolate components and test behavior in isolation.
 
-use mockall::predicate::*;
 use mockall::mock;
+use mockall::predicate::*;
 use ruvector_core::error::{Result, RuvectorError};
 use ruvector_core::types::*;
 use std::collections::HashMap;
@@ -58,7 +58,11 @@ mod distance_tests {
         let a = vec![1.0, 0.0, 0.0];
         let b = vec![0.0, 1.0, 0.0];
         let dist = euclidean_distance(&a, &b);
-        assert!((dist - 1.414).abs() < 0.01, "Expected sqrt(2), got {}", dist);
+        assert!(
+            (dist - 1.414).abs() < 0.01,
+            "Expected sqrt(2), got {}",
+            dist
+        );
     }
 
     #[test]
@@ -66,7 +70,11 @@ mod distance_tests {
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![2.0, 4.0, 6.0]; // Parallel to a
         let dist = cosine_distance(&a, &b);
-        assert!(dist < 0.01, "Parallel vectors should have ~0 cosine distance, got {}", dist);
+        assert!(
+            dist < 0.01,
+            "Parallel vectors should have ~0 cosine distance, got {}",
+            dist
+        );
     }
 
     #[test]
@@ -74,7 +82,11 @@ mod distance_tests {
         let a = vec![1.0, 0.0, 0.0];
         let b = vec![0.0, 1.0, 0.0];
         let dist = cosine_distance(&a, &b);
-        assert!(dist > 0.9 && dist < 1.1, "Orthogonal vectors should have distance ~1, got {}", dist);
+        assert!(
+            dist > 0.9 && dist < 1.1,
+            "Orthogonal vectors should have distance ~1, got {}",
+            dist
+        );
     }
 
     #[test]
@@ -82,7 +94,10 @@ mod distance_tests {
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![1.0, 2.0, 3.0];
         let dist = dot_product_distance(&a, &b);
-        assert!(dist < 0.0, "Dot product distance should be negative for similar vectors");
+        assert!(
+            dist < 0.0,
+            "Dot product distance should be negative for similar vectors"
+        );
     }
 
     #[test]
@@ -90,7 +105,11 @@ mod distance_tests {
         let a = vec![0.0, 0.0, 0.0];
         let b = vec![1.0, 1.0, 1.0];
         let dist = manhattan_distance(&a, &b);
-        assert!((dist - 3.0).abs() < 0.001, "Manhattan distance should be 3.0, got {}", dist);
+        assert!(
+            (dist - 3.0).abs() < 0.001,
+            "Manhattan distance should be 3.0, got {}",
+            dist
+        );
     }
 
     #[test]
@@ -320,7 +339,10 @@ mod storage_tests {
         ];
 
         let result = storage.insert_batch(&entries);
-        assert!(result.is_err(), "Should error on dimension mismatch in batch");
+        assert!(
+            result.is_err(),
+            "Should error on dimension mismatch in batch"
+        );
     }
 
     #[test]

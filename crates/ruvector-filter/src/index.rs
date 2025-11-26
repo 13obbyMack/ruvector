@@ -23,7 +23,7 @@ pub enum PayloadIndex {
     Float(BTreeMap<OrderedFloat<f64>, HashSet<String>>),
     Keyword(HashMap<String, HashSet<String>>),
     Bool(HashMap<bool, HashSet<String>>),
-    Geo(Vec<(String, f64, f64)>), // vector_id, lat, lon
+    Geo(Vec<(String, f64, f64)>),           // vector_id, lat, lon
     Text(HashMap<String, HashSet<String>>), // Simple text index (word -> vector_ids)
 }
 
@@ -57,7 +57,10 @@ impl PayloadIndex {
         match self {
             Self::Integer(index) => {
                 if let Some(num) = value.as_i64() {
-                    index.entry(num).or_insert_with(HashSet::new).insert(vector_id.to_string());
+                    index
+                        .entry(num)
+                        .or_insert_with(HashSet::new)
+                        .insert(vector_id.to_string());
                 }
             }
             Self::Float(index) => {
@@ -78,12 +81,18 @@ impl PayloadIndex {
             }
             Self::Bool(index) => {
                 if let Some(b) = value.as_bool() {
-                    index.entry(b).or_insert_with(HashSet::new).insert(vector_id.to_string());
+                    index
+                        .entry(b)
+                        .or_insert_with(HashSet::new)
+                        .insert(vector_id.to_string());
                 }
             }
             Self::Geo(index) => {
                 if let Some(obj) = value.as_object() {
-                    if let (Some(lat), Some(lon)) = (obj.get("lat").and_then(|v| v.as_f64()), obj.get("lon").and_then(|v| v.as_f64())) {
+                    if let (Some(lat), Some(lon)) = (
+                        obj.get("lat").and_then(|v| v.as_f64()),
+                        obj.get("lon").and_then(|v| v.as_f64()),
+                    ) {
                         index.push((vector_id.to_string(), lat, lon));
                     }
                 }
@@ -224,11 +233,13 @@ impl PayloadIndexManager {
     /// Create an index on a field
     pub fn create_index(&mut self, field: &str, index_type: IndexType) -> Result<()> {
         if self.indices.contains_key(field) {
-            return Err(FilterError::InvalidExpression(
-                format!("Index already exists for field: {}", field),
-            ));
+            return Err(FilterError::InvalidExpression(format!(
+                "Index already exists for field: {}",
+                field
+            )));
         }
-        self.indices.insert(field.to_string(), PayloadIndex::new(index_type));
+        self.indices
+            .insert(field.to_string(), PayloadIndex::new(index_type));
         Ok(())
     }
 
@@ -353,8 +364,12 @@ mod tests {
     #[test]
     fn test_geo_index() {
         let mut index = PayloadIndex::new(IndexType::Geo);
-        index.add("v1", &json!({"lat": 40.7128, "lon": -74.0060})).unwrap();
-        index.add("v2", &json!({"lat": 34.0522, "lon": -118.2437})).unwrap();
+        index
+            .add("v1", &json!({"lat": 40.7128, "lon": -74.0060}))
+            .unwrap();
+        index
+            .add("v2", &json!({"lat": 34.0522, "lon": -118.2437}))
+            .unwrap();
 
         if let PayloadIndex::Geo(points) = index {
             assert_eq!(points.len(), 2);

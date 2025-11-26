@@ -203,12 +203,7 @@ impl FilteredSearch {
     }
 
     /// Apply filtered search with automatic strategy selection
-    pub fn search<F>(
-        &self,
-        query: &[f32],
-        k: usize,
-        search_fn: F,
-    ) -> Result<Vec<SearchResult>>
+    pub fn search<F>(&self, query: &[f32], k: usize, search_fn: F) -> Result<Vec<SearchResult>>
     where
         F: Fn(&[f32], usize, Option<&[VectorId]>) -> Result<Vec<SearchResult>>,
     {

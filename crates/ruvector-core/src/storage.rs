@@ -8,21 +8,21 @@ use crate::error::{Result, RuvectorError};
 #[cfg(feature = "storage")]
 use crate::types::{VectorEntry, VectorId};
 #[cfg(feature = "storage")]
-use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
-#[cfg(feature = "storage")]
 use bincode::config;
 #[cfg(feature = "storage")]
+use once_cell::sync::Lazy;
+#[cfg(feature = "storage")]
+use parking_lot::Mutex;
+#[cfg(feature = "storage")]
+use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
+#[cfg(feature = "storage")]
 use serde_json;
+#[cfg(feature = "storage")]
+use std::collections::HashMap;
 #[cfg(feature = "storage")]
 use std::path::{Path, PathBuf};
 #[cfg(feature = "storage")]
 use std::sync::Arc;
-#[cfg(feature = "storage")]
-use std::collections::HashMap;
-#[cfg(feature = "storage")]
-use parking_lot::Mutex;
-#[cfg(feature = "storage")]
-use once_cell::sync::Lazy;
 
 #[cfg(feature = "storage")]
 
@@ -31,9 +31,8 @@ const METADATA_TABLE: TableDefinition<&str, &str> = TableDefinition::new("metada
 
 // Global database connection pool to allow multiple VectorDB instances
 // to share the same underlying database file
-static DB_POOL: Lazy<Mutex<HashMap<PathBuf, Arc<Database>>>> = Lazy::new(|| {
-    Mutex::new(HashMap::new())
-});
+static DB_POOL: Lazy<Mutex<HashMap<PathBuf, Arc<Database>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Storage backend for vector database
 pub struct VectorStorage {
@@ -48,7 +47,9 @@ impl VectorStorage {
     /// instances to share the same underlying database file, fixing the
     /// "Database already open. Cannot acquire lock" error.
     pub fn new<P: AsRef<Path>>(path: P, dimensions: usize) -> Result<Self> {
-        let path_buf = path.as_ref().canonicalize()
+        let path_buf = path
+            .as_ref()
+            .canonicalize()
             .unwrap_or_else(|_| path.as_ref().to_path_buf());
 
         // Check if we already have a Database instance for this path
@@ -87,9 +88,10 @@ impl VectorStorage {
             });
         }
 
-        let id = entry.id.clone().unwrap_or_else(|| {
-            uuid::Uuid::new_v4().to_string()
-        });
+        let id = entry
+            .id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         let write_txn = self.db.begin_write()?;
         {
@@ -131,9 +133,10 @@ impl VectorStorage {
                     });
                 }
 
-                let id = entry.id.clone().unwrap_or_else(|| {
-                    uuid::Uuid::new_v4().to_string()
-                });
+                let id = entry
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
                 // Serialize and insert vector
                 let vector_data = bincode::encode_to_vec(&entry.vector, config::standard())
@@ -164,15 +167,18 @@ impl VectorStorage {
             return Ok(None);
         };
 
-        let (vector, _): (Vec<f32>, usize) = bincode::decode_from_slice(vector_data.value(), config::standard())
-            .map_err(|e| RuvectorError::SerializationError(e.to_string()))?;
+        let (vector, _): (Vec<f32>, usize) =
+            bincode::decode_from_slice(vector_data.value(), config::standard())
+                .map_err(|e| RuvectorError::SerializationError(e.to_string()))?;
 
         // Try to get metadata
         let meta_table = read_txn.open_table(METADATA_TABLE)?;
         let metadata = if let Some(meta_data) = meta_table.get(id)? {
             let meta_str = meta_data.value();
-            Some(serde_json::from_str(meta_str)
-                .map_err(|e| RuvectorError::SerializationError(e.to_string()))?)
+            Some(
+                serde_json::from_str(meta_str)
+                    .map_err(|e| RuvectorError::SerializationError(e.to_string()))?,
+            )
         } else {
             None
         };

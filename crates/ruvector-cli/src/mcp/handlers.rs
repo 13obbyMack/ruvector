@@ -3,11 +3,14 @@
 use super::protocol::*;
 use crate::config::Config;
 use anyhow::{Context, Result};
-use ruvector_core::{VectorDB, types::{VectorEntry, SearchQuery, DbOptions, DistanceMetric}};
+use ruvector_core::{
+    types::{DbOptions, DistanceMetric, SearchQuery, VectorEntry},
+    VectorDB,
+};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::collections::HashMap;
 
 /// MCP handler state
 pub struct McpHandler {
@@ -161,7 +164,9 @@ impl McpHandler {
         };
 
         match result {
-            Ok(value) => McpResponse::success(id, json!({ "content": [{"type": "text", "text": value}] })),
+            Ok(value) => {
+                McpResponse::success(id, json!({ "content": [{"type": "text", "text": value}] }))
+            }
             Err(e) => McpResponse::error(
                 id,
                 McpError::new(error_codes::INTERNAL_ERROR, e.to_string()),
@@ -185,7 +190,11 @@ impl McpHandler {
         )
     }
 
-    async fn handle_resources_read(&self, id: Option<Value>, _params: Option<Value>) -> McpResponse {
+    async fn handle_resources_read(
+        &self,
+        id: Option<Value>,
+        _params: Option<Value>,
+    ) -> McpResponse {
         McpResponse::success(
             id,
             json!({
@@ -239,8 +248,8 @@ impl McpHandler {
 
     // Tool implementations
     async fn tool_create_db(&self, args: &Value) -> Result<String> {
-        let params: CreateDbParams = serde_json::from_value(args.clone())
-            .context("Invalid parameters")?;
+        let params: CreateDbParams =
+            serde_json::from_value(args.clone()).context("Invalid parameters")?;
 
         let mut db_options = self.config.to_db_options();
         db_options.storage_path = params.path.clone();
@@ -257,7 +266,10 @@ impl McpHandler {
         }
 
         let db = VectorDB::new(db_options)?;
-        self.databases.write().await.insert(params.path.clone(), Arc::new(db));
+        self.databases
+            .write()
+            .await
+            .insert(params.path.clone(), Arc::new(db));
 
         Ok(format!("Database created at: {}", params.path))
     }
@@ -291,8 +303,7 @@ impl McpHandler {
             ef_search: None,
         })?;
 
-        serde_json::to_string_pretty(&results)
-            .context("Failed to serialize results")
+        serde_json::to_string_pretty(&results).context("Failed to serialize results")
     }
 
     async fn tool_stats(&self, args: &Value) -> Result<String> {
@@ -314,8 +325,7 @@ impl McpHandler {
     async fn tool_backup(&self, args: &Value) -> Result<String> {
         let params: BackupParams = serde_json::from_value(args.clone())?;
 
-        std::fs::copy(&params.db_path, &params.backup_path)
-            .context("Failed to backup database")?;
+        std::fs::copy(&params.db_path, &params.backup_path).context("Failed to backup database")?;
 
         Ok(format!("Backed up to: {}", params.backup_path))
     }
@@ -332,7 +342,10 @@ impl McpHandler {
         db_options.storage_path = path.to_string();
 
         let db = Arc::new(VectorDB::new(db_options)?);
-        self.databases.write().await.insert(path.to_string(), db.clone());
+        self.databases
+            .write()
+            .await
+            .insert(path.to_string(), db.clone());
 
         Ok(db)
     }

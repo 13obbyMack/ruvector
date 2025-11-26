@@ -4,8 +4,8 @@ use crate::distance::calculate_distance;
 use crate::error::{Result, VectorDbError};
 use crate::types::{DistanceMetric, SearchQuery, SearchResult};
 use parking_lot::RwLock;
-use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 
 /// HNSW Index configuration
@@ -58,7 +58,10 @@ impl PartialOrd for Neighbor {
 impl Ord for Neighbor {
     fn cmp(&self, other: &Self) -> Ordering {
         // Reverse ordering for min-heap behavior
-        other.distance.partial_cmp(&self.distance).unwrap_or(Ordering::Equal)
+        other
+            .distance
+            .partial_cmp(&self.distance)
+            .unwrap_or(Ordering::Equal)
     }
 }
 
@@ -105,10 +108,8 @@ impl HnswIndex {
         }
 
         // Find nearest neighbors
-        let neighbors = self.search_knn_internal(
-            &vector,
-            self.config.ef_construction.min(self.config.m * 2),
-        );
+        let neighbors =
+            self.search_knn_internal(&vector, self.config.ef_construction.min(self.config.m * 2));
 
         // Connect to nearest neighbors (bidirectional)
         for neighbor in neighbors.iter().take(self.config.m) {
@@ -177,8 +178,7 @@ impl HnswIndex {
 
         // Calculate distance to entry point
         if let Some(entry_vec) = vectors.get(entry_id) {
-            let dist = calculate_distance(query, entry_vec, self.config.metric)
-                .unwrap_or(f32::MAX);
+            let dist = calculate_distance(query, entry_vec, self.config.metric).unwrap_or(f32::MAX);
 
             let neighbor = Neighbor {
                 id: entry_id.clone(),
@@ -237,7 +237,9 @@ impl HnswIndex {
         // Convert to sorted vector
         let mut sorted_results: Vec<Neighbor> = result.into_iter().collect();
         sorted_results.sort_by(|a, b| {
-            a.distance.partial_cmp(&b.distance).unwrap_or(Ordering::Equal)
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(Ordering::Equal)
         });
 
         sorted_results

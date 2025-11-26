@@ -126,11 +126,7 @@ impl RaftLog {
         }
 
         let offset = (start_index - self.base_index - 1) as usize;
-        self.entries
-            .iter()
-            .skip(offset)
-            .cloned()
-            .collect()
+        self.entries.iter().skip(offset).cloned().collect()
     }
 
     /// Append a new entry to the log

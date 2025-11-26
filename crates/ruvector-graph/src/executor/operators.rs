@@ -2,9 +2,9 @@
 //!
 //! High-performance implementations with SIMD optimization
 
-use crate::executor::plan::{Predicate, Value};
 use crate::executor::pipeline::RowBatch;
-use crate::executor::{Result, ExecutionError};
+use crate::executor::plan::{Predicate, Value};
+use crate::executor::{ExecutionError, Result};
 use std::collections::HashMap;
 
 #[cfg(target_arch = "x86_64")]
@@ -130,39 +130,29 @@ impl Filter {
 
     fn evaluate_predicate(&self, pred: &Predicate, row: &HashMap<String, Value>) -> bool {
         match pred {
-            Predicate::Equals(col, val) => {
-                row.get(col).map(|v| v == val).unwrap_or(false)
-            }
-            Predicate::NotEquals(col, val) => {
-                row.get(col).map(|v| v != val).unwrap_or(false)
-            }
-            Predicate::GreaterThan(col, val) => {
-                row.get(col)
-                    .and_then(|v| v.compare(val))
-                    .map(|ord| ord == std::cmp::Ordering::Greater)
-                    .unwrap_or(false)
-            }
-            Predicate::GreaterThanOrEqual(col, val) => {
-                row.get(col)
-                    .and_then(|v| v.compare(val))
-                    .map(|ord| ord != std::cmp::Ordering::Less)
-                    .unwrap_or(false)
-            }
-            Predicate::LessThan(col, val) => {
-                row.get(col)
-                    .and_then(|v| v.compare(val))
-                    .map(|ord| ord == std::cmp::Ordering::Less)
-                    .unwrap_or(false)
-            }
-            Predicate::LessThanOrEqual(col, val) => {
-                row.get(col)
-                    .and_then(|v| v.compare(val))
-                    .map(|ord| ord != std::cmp::Ordering::Greater)
-                    .unwrap_or(false)
-            }
-            Predicate::In(col, values) => {
-                row.get(col).map(|v| values.contains(v)).unwrap_or(false)
-            }
+            Predicate::Equals(col, val) => row.get(col).map(|v| v == val).unwrap_or(false),
+            Predicate::NotEquals(col, val) => row.get(col).map(|v| v != val).unwrap_or(false),
+            Predicate::GreaterThan(col, val) => row
+                .get(col)
+                .and_then(|v| v.compare(val))
+                .map(|ord| ord == std::cmp::Ordering::Greater)
+                .unwrap_or(false),
+            Predicate::GreaterThanOrEqual(col, val) => row
+                .get(col)
+                .and_then(|v| v.compare(val))
+                .map(|ord| ord != std::cmp::Ordering::Less)
+                .unwrap_or(false),
+            Predicate::LessThan(col, val) => row
+                .get(col)
+                .and_then(|v| v.compare(val))
+                .map(|ord| ord == std::cmp::Ordering::Less)
+                .unwrap_or(false),
+            Predicate::LessThanOrEqual(col, val) => row
+                .get(col)
+                .and_then(|v| v.compare(val))
+                .map(|ord| ord != std::cmp::Ordering::Greater)
+                .unwrap_or(false),
+            Predicate::In(col, values) => row.get(col).map(|v| values.contains(v)).unwrap_or(false),
             Predicate::Like(col, pattern) => {
                 if let Some(Value::String(s)) = row.get(col) {
                     self.pattern_match(s, pattern)
@@ -170,15 +160,9 @@ impl Filter {
                     false
                 }
             }
-            Predicate::And(preds) => {
-                preds.iter().all(|p| self.evaluate_predicate(p, row))
-            }
-            Predicate::Or(preds) => {
-                preds.iter().any(|p| self.evaluate_predicate(p, row))
-            }
-            Predicate::Not(pred) => {
-                !self.evaluate_predicate(pred, row)
-            }
+            Predicate::And(preds) => preds.iter().all(|p| self.evaluate_predicate(p, row)),
+            Predicate::Or(preds) => preds.iter().any(|p| self.evaluate_predicate(p, row)),
+            Predicate::Not(pred) => !self.evaluate_predicate(pred, row),
         }
     }
 
@@ -247,7 +231,8 @@ impl Filter {
 impl Operator for Filter {
     fn execute(&mut self, input: Option<RowBatch>) -> Result<Option<RowBatch>> {
         if let Some(batch) = input {
-            let filtered_rows: Vec<_> = batch.rows
+            let filtered_rows: Vec<_> = batch
+                .rows
                 .into_iter()
                 .filter(|row| self.evaluate(row))
                 .collect();
@@ -295,26 +280,36 @@ impl Join {
 
     fn build_hash_table(&mut self, build_side: RowBatch) {
         for row in build_side.rows {
-            let key: Vec<Value> = self.on.iter()
+            let key: Vec<Value> = self
+                .on
+                .iter()
                 .filter_map(|(_, right_col)| row.get(right_col).cloned())
                 .collect();
 
-            self.hash_table.entry(key).or_insert_with(Vec::new).push(row);
+            self.hash_table
+                .entry(key)
+                .or_insert_with(Vec::new)
+                .push(row);
         }
         self.built = true;
     }
 
     fn probe(&self, probe_row: &HashMap<String, Value>) -> Vec<HashMap<String, Value>> {
-        let key: Vec<Value> = self.on.iter()
+        let key: Vec<Value> = self
+            .on
+            .iter()
             .filter_map(|(left_col, _)| probe_row.get(left_col).cloned())
             .collect();
 
         if let Some(matches) = self.hash_table.get(&key) {
-            matches.iter().map(|right_row| {
-                let mut joined = probe_row.clone();
-                joined.extend(right_row.clone());
-                joined
-            }).collect()
+            matches
+                .iter()
+                .map(|right_row| {
+                    let mut joined = probe_row.clone();
+                    joined.extend(right_row.clone());
+                    joined
+                })
+                .collect()
         } else {
             Vec::new()
         }
@@ -391,11 +386,16 @@ impl Project {
 impl Operator for Project {
     fn execute(&mut self, input: Option<RowBatch>) -> Result<Option<RowBatch>> {
         if let Some(batch) = input {
-            let projected: Vec<_> = batch.rows.into_iter().map(|row| {
-                self.columns.iter()
-                    .filter_map(|col| row.get(col).map(|v| (col.clone(), v.clone())))
-                    .collect()
-            }).collect();
+            let projected: Vec<_> = batch
+                .rows
+                .into_iter()
+                .map(|row| {
+                    self.columns
+                        .iter()
+                        .filter_map(|col| row.get(col).map(|v| (col.clone(), v.clone())))
+                        .collect()
+                })
+                .collect();
 
             Ok(Some(RowBatch {
                 rows: projected,
@@ -463,7 +463,9 @@ impl Operator for Limit {
             let start = self.offset.saturating_sub(self.current);
             let end = start + self.limit;
 
-            let limited: Vec<_> = batch.rows.into_iter()
+            let limited: Vec<_> = batch
+                .rows
+                .into_iter()
                 .skip(start)
                 .take(end - start)
                 .collect();
@@ -490,10 +492,7 @@ mod tests {
 
     #[test]
     fn test_filter_operator() {
-        let mut filter = Filter::new(Predicate::Equals(
-            "id".to_string(),
-            Value::Int64(42),
-        ));
+        let mut filter = Filter::new(Predicate::Equals("id".to_string(), Value::Int64(42)));
 
         let mut row = HashMap::new();
         row.insert("id".to_string(), Value::Int64(42));
@@ -508,9 +507,15 @@ mod tests {
 
     #[test]
     fn test_simd_filtering() {
-        let filter = Filter::new(Predicate::GreaterThan("value".to_string(), Value::Float64(5.0)));
+        let filter = Filter::new(Predicate::GreaterThan(
+            "value".to_string(),
+            Value::Float64(5.0),
+        ));
         let values = vec![1.0, 6.0, 3.0, 8.0, 4.0, 9.0, 2.0, 7.0];
         let result = filter.filter_batch_simd(&values, 5.0);
-        assert_eq!(result, vec![false, true, false, true, false, true, false, true]);
+        assert_eq!(
+            result,
+            vec![false, true, false, true, false, true, false, true]
+        );
     }
 }

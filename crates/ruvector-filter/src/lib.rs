@@ -84,23 +84,38 @@ mod tests {
         manager.create_index("score", IndexType::Float).unwrap();
 
         // Index payloads
-        manager.index_payload("v1", &json!({
-            "status": "active",
-            "age": 25,
-            "score": 0.9
-        })).unwrap();
+        manager
+            .index_payload(
+                "v1",
+                &json!({
+                    "status": "active",
+                    "age": 25,
+                    "score": 0.9
+                }),
+            )
+            .unwrap();
 
-        manager.index_payload("v2", &json!({
-            "status": "active",
-            "age": 30,
-            "score": 0.85
-        })).unwrap();
+        manager
+            .index_payload(
+                "v2",
+                &json!({
+                    "status": "active",
+                    "age": 30,
+                    "score": 0.85
+                }),
+            )
+            .unwrap();
 
-        manager.index_payload("v3", &json!({
-            "status": "inactive",
-            "age": 25,
-            "score": 0.7
-        })).unwrap();
+        manager
+            .index_payload(
+                "v3",
+                &json!({
+                    "status": "inactive",
+                    "age": 25,
+                    "score": 0.7
+                }),
+            )
+            .unwrap();
 
         // Create complex filter
         let filter = FilterExpression::and(vec![
@@ -124,15 +139,27 @@ mod tests {
     #[test]
     fn test_text_matching() {
         let mut manager = PayloadIndexManager::new();
-        manager.create_index("description", IndexType::Text).unwrap();
+        manager
+            .create_index("description", IndexType::Text)
+            .unwrap();
 
-        manager.index_payload("v1", &json!({
-            "description": "The quick brown fox"
-        })).unwrap();
+        manager
+            .index_payload(
+                "v1",
+                &json!({
+                    "description": "The quick brown fox"
+                }),
+            )
+            .unwrap();
 
-        manager.index_payload("v2", &json!({
-            "description": "The lazy dog"
-        })).unwrap();
+        manager
+            .index_payload(
+                "v2",
+                &json!({
+                    "description": "The lazy dog"
+                }),
+            )
+            .unwrap();
 
         let evaluator = FilterEvaluator::new(&manager);
         let filter = FilterExpression::match_text("description", "quick");
@@ -147,8 +174,12 @@ mod tests {
         let mut manager = PayloadIndexManager::new();
         manager.create_index("status", IndexType::Keyword).unwrap();
 
-        manager.index_payload("v1", &json!({"status": "active"})).unwrap();
-        manager.index_payload("v2", &json!({"status": "inactive"})).unwrap();
+        manager
+            .index_payload("v1", &json!({"status": "active"}))
+            .unwrap();
+        manager
+            .index_payload("v2", &json!({"status": "inactive"}))
+            .unwrap();
 
         let evaluator = FilterEvaluator::new(&manager);
         let filter = FilterExpression::not(FilterExpression::eq("status", json!("active")));
@@ -163,9 +194,15 @@ mod tests {
         let mut manager = PayloadIndexManager::new();
         manager.create_index("status", IndexType::Keyword).unwrap();
 
-        manager.index_payload("v1", &json!({"status": "active"})).unwrap();
-        manager.index_payload("v2", &json!({"status": "pending"})).unwrap();
-        manager.index_payload("v3", &json!({"status": "inactive"})).unwrap();
+        manager
+            .index_payload("v1", &json!({"status": "active"}))
+            .unwrap();
+        manager
+            .index_payload("v2", &json!({"status": "pending"}))
+            .unwrap();
+        manager
+            .index_payload("v3", &json!({"status": "inactive"}))
+            .unwrap();
 
         let evaluator = FilterEvaluator::new(&manager);
         let filter = FilterExpression::in_values("status", vec![json!("active"), json!("pending")]);

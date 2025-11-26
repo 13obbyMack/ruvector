@@ -10,7 +10,10 @@ mod config;
 mod mcp;
 
 use config::Config;
-use mcp::{handlers::McpHandler, transport::{StdioTransport, SseTransport}};
+use mcp::{
+    handlers::McpHandler,
+    transport::{SseTransport, StdioTransport},
+};
 
 #[derive(Parser)]
 #[command(name = "ruvector-mcp")]
@@ -70,7 +73,11 @@ async fn main() -> Result<()> {
             let host = cli.host.unwrap_or(config.mcp.host.clone());
             let port = cli.port.unwrap_or(config.mcp.port);
 
-            tracing::info!("Starting MCP server with SSE transport on {}:{}", host, port);
+            tracing::info!(
+                "Starting MCP server with SSE transport on {}:{}",
+                host,
+                port
+            );
             let transport = SseTransport::new(handler, host, port);
             transport.run().await?;
         }

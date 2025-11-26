@@ -1,15 +1,16 @@
 //! Integration tests for Cypher parser
 
-use ruvector_graph::cypher::{
-    parse_cypher,
-    ast::*,
-};
+use ruvector_graph::cypher::{ast::*, parse_cypher};
 
 #[test]
 fn test_simple_match_query() {
     let query = "MATCH (n:Person) RETURN n";
     let result = parse_cypher(query);
-    assert!(result.is_ok(), "Failed to parse simple MATCH query: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse simple MATCH query: {:?}",
+        result.err()
+    );
 
     let ast = result.unwrap();
     assert_eq!(ast.statements.len(), 2); // MATCH and RETURN
@@ -19,21 +20,33 @@ fn test_simple_match_query() {
 fn test_match_with_where() {
     let query = "MATCH (n:Person) WHERE n.age > 30 RETURN n.name";
     let result = parse_cypher(query);
-    assert!(result.is_ok(), "Failed to parse MATCH with WHERE: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse MATCH with WHERE: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_relationship_pattern() {
     let query = "MATCH (a:Person)-[r:KNOWS]->(b:Person) RETURN a, r, b";
     let result = parse_cypher(query);
-    assert!(result.is_ok(), "Failed to parse relationship pattern: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse relationship pattern: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_create_node() {
     let query = "CREATE (n:Person {name: 'Alice', age: 30})";
     let result = parse_cypher(query);
-    assert!(result.is_ok(), "Failed to parse CREATE query: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse CREATE query: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -41,7 +54,11 @@ fn test_create_node() {
 fn test_hyperedge_pattern() {
     let query = "MATCH (a)-[r:TRANSACTION]->(b, c, d) RETURN a, r, b, c, d";
     let result = parse_cypher(query);
-    assert!(result.is_ok(), "Failed to parse hyperedge: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse hyperedge: {:?}",
+        result.err()
+    );
 
     let ast = result.unwrap();
     assert!(ast.has_hyperedges(), "Query should contain hyperedges");
@@ -51,14 +68,22 @@ fn test_hyperedge_pattern() {
 fn test_aggregation_functions() {
     let query = "MATCH (n:Person) RETURN COUNT(n), AVG(n.age), MAX(n.salary)";
     let result = parse_cypher(query);
-    assert!(result.is_ok(), "Failed to parse aggregation query: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse aggregation query: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_order_by_limit() {
     let query = "MATCH (n:Person) RETURN n.name ORDER BY n.age DESC LIMIT 10";
     let result = parse_cypher(query);
-    assert!(result.is_ok(), "Failed to parse ORDER BY LIMIT: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse ORDER BY LIMIT: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -71,7 +96,11 @@ fn test_complex_query() {
         LIMIT 10
     "#;
     let result = parse_cypher(query);
-    assert!(result.is_ok(), "Failed to parse complex query: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse complex query: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -83,7 +112,11 @@ fn test_create_relationship() {
         CREATE (a)-[:KNOWS {since: 2024}]->(b)
     "#;
     let result = parse_cypher(query);
-    assert!(result.is_ok(), "Failed to parse CREATE relationship: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse CREATE relationship: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -103,14 +136,22 @@ fn test_with_clause() {
         RETURN n.name, age
     "#;
     let result = parse_cypher(query);
-    assert!(result.is_ok(), "Failed to parse WITH clause: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse WITH clause: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_path_pattern() {
     let query = "MATCH p = (a:Person)-[*1..3]->(b:Person) RETURN p";
     let result = parse_cypher(query);
-    assert!(result.is_ok(), "Failed to parse path pattern: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to parse path pattern: {:?}",
+        result.err()
+    );
 }
 
 #[test]

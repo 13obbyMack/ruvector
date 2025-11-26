@@ -13,27 +13,26 @@
 //! - Sub-millisecond simple lookups
 //! - SIMD-optimized predicate evaluation
 
-pub mod plan;
-pub mod operators;
-pub mod pipeline;
-pub mod parallel;
 pub mod cache;
+pub mod operators;
+pub mod parallel;
+pub mod pipeline;
+pub mod plan;
 pub mod stats;
 
-pub use plan::{LogicalPlan, PhysicalPlan, PlanNode};
+pub use cache::{CacheConfig, CacheEntry, QueryCache};
 pub use operators::{
-    Operator, NodeScan, EdgeScan, HyperedgeScan,
-    Filter, Join, Aggregate, Project, Sort, Limit,
-    JoinType, AggregateFunction, ScanMode,
+    Aggregate, AggregateFunction, EdgeScan, Filter, HyperedgeScan, Join, JoinType, Limit, NodeScan,
+    Operator, Project, ScanMode, Sort,
 };
-pub use pipeline::{Pipeline, ExecutionContext, RowBatch};
-pub use parallel::{ParallelExecutor, ParallelConfig};
-pub use cache::{QueryCache, CacheEntry, CacheConfig};
-pub use stats::{Statistics, TableStats, ColumnStats, Histogram};
+pub use parallel::{ParallelConfig, ParallelExecutor};
+pub use pipeline::{ExecutionContext, Pipeline, RowBatch};
+pub use plan::{LogicalPlan, PhysicalPlan, PlanNode};
+pub use stats::{ColumnStats, Histogram, Statistics, TableStats};
 
-use std::sync::Arc;
 use std::error::Error;
 use std::fmt;
+use std::sync::Arc;
 
 /// Query execution error types
 #[derive(Debug, Clone)]

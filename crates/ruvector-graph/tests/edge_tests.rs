@@ -2,7 +2,7 @@
 //!
 //! Tests for creating edges, querying relationships, and graph traversals.
 
-use ruvector_graph::{GraphDB, Node, Edge, EdgeBuilder, Label, Properties, PropertyValue};
+use ruvector_graph::{Edge, EdgeBuilder, GraphDB, Label, Node, Properties, PropertyValue};
 
 #[test]
 fn test_create_edge_basic() {
@@ -11,12 +11,16 @@ fn test_create_edge_basic() {
     // Create nodes first
     let node1 = Node::new(
         "person1".to_string(),
-        vec![Label { name: "Person".to_string() }],
+        vec![Label {
+            name: "Person".to_string(),
+        }],
         Properties::new(),
     );
     let node2 = Node::new(
         "person2".to_string(),
-        vec![Label { name: "Person".to_string() }],
+        vec![Label {
+            name: "Person".to_string(),
+        }],
         Properties::new(),
     );
 
@@ -72,12 +76,17 @@ fn test_edge_with_properties() {
     let db = GraphDB::new();
 
     // Setup
-    db.create_node(Node::new("a".to_string(), vec![], Properties::new())).unwrap();
-    db.create_node(Node::new("b".to_string(), vec![], Properties::new())).unwrap();
+    db.create_node(Node::new("a".to_string(), vec![], Properties::new()))
+        .unwrap();
+    db.create_node(Node::new("b".to_string(), vec![], Properties::new()))
+        .unwrap();
 
     let mut properties = Properties::new();
     properties.insert("weight".to_string(), PropertyValue::Float(0.85));
-    properties.insert("type".to_string(), PropertyValue::String("strong".to_string()));
+    properties.insert(
+        "type".to_string(),
+        PropertyValue::String("strong".to_string()),
+    );
     properties.insert("verified".to_string(), PropertyValue::Boolean(true));
 
     let edge = Edge::new(
@@ -91,16 +100,24 @@ fn test_edge_with_properties() {
     db.create_edge(edge).unwrap();
 
     let retrieved = db.get_edge("weighted_edge").unwrap();
-    assert_eq!(retrieved.properties.get("weight"), Some(&PropertyValue::Float(0.85)));
-    assert_eq!(retrieved.properties.get("verified"), Some(&PropertyValue::Boolean(true)));
+    assert_eq!(
+        retrieved.properties.get("weight"),
+        Some(&PropertyValue::Float(0.85))
+    );
+    assert_eq!(
+        retrieved.properties.get("verified"),
+        Some(&PropertyValue::Boolean(true))
+    );
 }
 
 #[test]
 fn test_bidirectional_edges() {
     let db = GraphDB::new();
 
-    db.create_node(Node::new("alice".to_string(), vec![], Properties::new())).unwrap();
-    db.create_node(Node::new("bob".to_string(), vec![], Properties::new())).unwrap();
+    db.create_node(Node::new("alice".to_string(), vec![], Properties::new()))
+        .unwrap();
+    db.create_node(Node::new("bob".to_string(), vec![], Properties::new()))
+        .unwrap();
 
     // Alice -> Bob
     let edge1 = Edge::new(
@@ -136,7 +153,8 @@ fn test_bidirectional_edges() {
 fn test_self_loop_edge() {
     let db = GraphDB::new();
 
-    db.create_node(Node::new("node".to_string(), vec![], Properties::new())).unwrap();
+    db.create_node(Node::new("node".to_string(), vec![], Properties::new()))
+        .unwrap();
 
     let edge = Edge::new(
         "self_loop".to_string(),
@@ -156,8 +174,10 @@ fn test_self_loop_edge() {
 fn test_multiple_edges_same_nodes() {
     let db = GraphDB::new();
 
-    db.create_node(Node::new("x".to_string(), vec![], Properties::new())).unwrap();
-    db.create_node(Node::new("y".to_string(), vec![], Properties::new())).unwrap();
+    db.create_node(Node::new("x".to_string(), vec![], Properties::new()))
+        .unwrap();
+    db.create_node(Node::new("y".to_string(), vec![], Properties::new()))
+        .unwrap();
 
     // Multiple relationship types between same nodes
     let edge1 = Edge::new(
@@ -187,12 +207,17 @@ fn test_multiple_edges_same_nodes() {
 fn test_edge_timestamp_property() {
     let db = GraphDB::new();
 
-    db.create_node(Node::new("user1".to_string(), vec![], Properties::new())).unwrap();
-    db.create_node(Node::new("post1".to_string(), vec![], Properties::new())).unwrap();
+    db.create_node(Node::new("user1".to_string(), vec![], Properties::new()))
+        .unwrap();
+    db.create_node(Node::new("post1".to_string(), vec![], Properties::new()))
+        .unwrap();
 
     let mut properties = Properties::new();
     properties.insert("timestamp".to_string(), PropertyValue::Integer(1699564800));
-    properties.insert("action".to_string(), PropertyValue::String("liked".to_string()));
+    properties.insert(
+        "action".to_string(),
+        PropertyValue::String("liked".to_string()),
+    );
 
     let edge = Edge::new(
         "interaction".to_string(),
@@ -220,12 +245,14 @@ fn test_create_many_edges() {
     let db = GraphDB::new();
 
     // Create hub node
-    db.create_node(Node::new("hub".to_string(), vec![], Properties::new())).unwrap();
+    db.create_node(Node::new("hub".to_string(), vec![], Properties::new()))
+        .unwrap();
 
     // Create 100 spoke nodes
     for i in 0..100 {
         let node_id = format!("spoke_{}", i);
-        db.create_node(Node::new(node_id.clone(), vec![], Properties::new())).unwrap();
+        db.create_node(Node::new(node_id.clone(), vec![], Properties::new()))
+            .unwrap();
 
         let edge = Edge::new(
             format!("edge_{}", i),
@@ -248,8 +275,10 @@ fn test_create_many_edges() {
 fn test_edge_builder() {
     let db = GraphDB::new();
 
-    db.create_node(Node::new("a".to_string(), vec![], Properties::new())).unwrap();
-    db.create_node(Node::new("b".to_string(), vec![], Properties::new())).unwrap();
+    db.create_node(Node::new("a".to_string(), vec![], Properties::new()))
+        .unwrap();
+    db.create_node(Node::new("b".to_string(), vec![], Properties::new()))
+        .unwrap();
 
     let edge = EdgeBuilder::new("a".to_string(), "b".to_string(), "KNOWS")
         .id("e1")
@@ -263,7 +292,10 @@ fn test_edge_builder() {
     assert_eq!(retrieved.from, "a");
     assert_eq!(retrieved.to, "b");
     assert_eq!(retrieved.edge_type, "KNOWS");
-    assert_eq!(retrieved.get_property("since"), Some(&PropertyValue::Integer(2020)));
+    assert_eq!(
+        retrieved.get_property("since"),
+        Some(&PropertyValue::Integer(2020))
+    );
 }
 
 // ============================================================================

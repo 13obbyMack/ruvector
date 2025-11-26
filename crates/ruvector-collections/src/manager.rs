@@ -95,7 +95,10 @@ impl CollectionManager {
         let storage_path = self.base_path.join(name);
         std::fs::create_dir_all(&storage_path)?;
 
-        let db_path = storage_path.join("vectors.db").to_string_lossy().to_string();
+        let db_path = storage_path
+            .join("vectors.db")
+            .to_string_lossy()
+            .to_string();
 
         // Create collection
         let collection = Collection::new(name.to_string(), config, db_path)?;
@@ -104,10 +107,8 @@ impl CollectionManager {
         self.save_collection_metadata(&collection)?;
 
         // Add to collections map
-        self.collections.insert(
-            name.to_string(),
-            Arc::new(RwLock::new(collection)),
-        );
+        self.collections
+            .insert(name.to_string(), Arc::new(RwLock::new(collection)));
 
         Ok(())
     }
@@ -166,7 +167,9 @@ impl CollectionManager {
         // Try to resolve as alias first
         let collection_name = self.resolve_alias(name).unwrap_or_else(|| name.to_string());
 
-        self.collections.get(&collection_name).map(|entry| entry.value().clone())
+        self.collections
+            .get(&collection_name)
+            .map(|entry| entry.value().clone())
     }
 
     /// List all collection names
@@ -188,11 +191,11 @@ impl CollectionManager {
 
     /// Get statistics for a collection
     pub fn collection_stats(&self, name: &str) -> Result<CollectionStats> {
-        let collection = self.get_collection(name).ok_or_else(|| {
-            CollectionError::CollectionNotFound {
-                name: name.to_string(),
-            }
-        })?;
+        let collection =
+            self.get_collection(name)
+                .ok_or_else(|| CollectionError::CollectionNotFound {
+                    name: name.to_string(),
+                })?;
 
         let guard = collection.read();
         guard.stats()
@@ -238,7 +241,8 @@ impl CollectionManager {
         }
 
         // Create alias
-        self.aliases.insert(alias.to_string(), collection.to_string());
+        self.aliases
+            .insert(alias.to_string(), collection.to_string());
 
         // Save aliases
         self.save_aliases()?;
@@ -295,7 +299,8 @@ impl CollectionManager {
         }
 
         // Update alias
-        self.aliases.insert(alias.to_string(), new_collection.to_string());
+        self.aliases
+            .insert(alias.to_string(), new_collection.to_string());
 
         // Save aliases
         self.save_aliases()?;
@@ -313,7 +318,9 @@ impl CollectionManager {
     ///
     /// `Some(collection_name)` if it's an alias, `None` if it's not an alias
     pub fn resolve_alias(&self, name_or_alias: &str) -> Option<String> {
-        self.aliases.get(name_or_alias).map(|entry| entry.value().clone())
+        self.aliases
+            .get(name_or_alias)
+            .map(|entry| entry.value().clone())
     }
 
     /// List all aliases with their target collections
@@ -348,10 +355,14 @@ impl CollectionManager {
         }
 
         // Only allow alphanumeric, hyphens, underscores
-        if !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        if !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        {
             return Err(CollectionError::InvalidName {
                 name: name.to_string(),
-                reason: "Name can only contain letters, numbers, hyphens, and underscores".to_string(),
+                reason: "Name can only contain letters, numbers, hyphens, and underscores"
+                    .to_string(),
             });
         }
 
@@ -373,7 +384,8 @@ impl CollectionManager {
             let path = entry.path();
 
             if path.is_dir() {
-                let name = path.file_name()
+                let name = path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("")
                     .to_string();
@@ -388,18 +400,14 @@ impl CollectionManager {
                     let db_path = path.join("vectors.db").to_string_lossy().to_string();
 
                     // Recreate collection
-                    if let Ok(mut collection) = Collection::new(
-                        metadata.name.clone(),
-                        metadata.config,
-                        db_path,
-                    ) {
+                    if let Ok(mut collection) =
+                        Collection::new(metadata.name.clone(), metadata.config, db_path)
+                    {
                         collection.created_at = metadata.created_at;
                         collection.updated_at = metadata.updated_at;
 
-                        self.collections.insert(
-                            name.clone(),
-                            Arc::new(RwLock::new(collection)),
-                        );
+                        self.collections
+                            .insert(name.clone(), Arc::new(RwLock::new(collection)));
                     }
                 }
             }
@@ -417,9 +425,7 @@ impl CollectionManager {
             updated_at: collection.updated_at,
         };
 
-        let metadata_path = self.base_path
-            .join(&collection.name)
-            .join("metadata.json");
+        let metadata_path = self.base_path.join(&collection.name).join("metadata.json");
 
         let json = serde_json::to_string_pretty(&metadata)?;
         std::fs::write(metadata_path, json)?;
@@ -498,7 +504,10 @@ mod tests {
         // Create alias
         manager.create_alias("test_alias", "test")?;
         assert!(manager.is_alias("test_alias"));
-        assert_eq!(manager.resolve_alias("test_alias"), Some("test".to_string()));
+        assert_eq!(
+            manager.resolve_alias("test_alias"),
+            Some("test".to_string())
+        );
 
         // Get collection by alias
         assert!(manager.get_collection("test_alias").is_some());

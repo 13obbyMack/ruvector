@@ -10,10 +10,7 @@ pub enum FilterError {
     InvalidIndexType(String),
 
     #[error("Type mismatch in filter expression: expected {expected}, got {actual}")]
-    TypeMismatch {
-        expected: String,
-        actual: String,
-    },
+    TypeMismatch { expected: String, actual: String },
 
     #[error("Invalid filter expression: {0}")]
     InvalidExpression(String),

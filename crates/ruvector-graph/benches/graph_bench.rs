@@ -1,6 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use ruvector_graph::{GraphDB, Node, Edge};
-use ruvector_graph::types::{NodeId, EdgeId, PropertyValue, Properties};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use ruvector_graph::types::{EdgeId, NodeId, Properties, PropertyValue};
+use ruvector_graph::{Edge, GraphDB, Node};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,7 +21,10 @@ fn bench_node_insertion_single(c: &mut Criterion) {
                 let graph = create_test_graph();
                 for i in 0..size {
                     let mut props = Properties::new();
-                    props.insert("name".to_string(), PropertyValue::String(format!("node_{}", i)));
+                    props.insert(
+                        "name".to_string(),
+                        PropertyValue::String(format!("node_{}", i)),
+                    );
                     props.insert("value".to_string(), PropertyValue::Integer(i as i64));
 
                     let node_id = NodeId(format!("node_{}", i));
@@ -41,20 +44,27 @@ fn bench_node_insertion_batch(c: &mut Criterion) {
 
     for batch_size in [100, 1000, 10000].iter() {
         group.throughput(Throughput::Elements(*batch_size as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(batch_size), batch_size, |b, &batch_size| {
-            b.iter(|| {
-                let graph = create_test_graph();
-                for i in 0..batch_size {
-                    let mut props = Properties::new();
-                    props.insert("name".to_string(), PropertyValue::String(format!("node_{}", i)));
-                    props.insert("value".to_string(), PropertyValue::Integer(i as i64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(batch_size),
+            batch_size,
+            |b, &batch_size| {
+                b.iter(|| {
+                    let graph = create_test_graph();
+                    for i in 0..batch_size {
+                        let mut props = Properties::new();
+                        props.insert(
+                            "name".to_string(),
+                            PropertyValue::String(format!("node_{}", i)),
+                        );
+                        props.insert("value".to_string(), PropertyValue::Integer(i as i64));
 
-                    let node_id = NodeId(format!("batch_node_{}", i));
-                    let node = Node::new(node_id, vec!["Person".to_string()], props);
-                    black_box(graph.create_node(node).unwrap());
-                }
-            });
-        });
+                        let node_id = NodeId(format!("batch_node_{}", i));
+                        let node = Node::new(node_id, vec!["Person".to_string()], props);
+                        black_box(graph.create_node(node).unwrap());
+                    }
+                });
+            },
+        );
     }
 
     group.finish();
@@ -67,20 +77,27 @@ fn bench_node_insertion_bulk(c: &mut Criterion) {
 
     for bulk_size in [10000, 100000].iter() {
         group.throughput(Throughput::Elements(*bulk_size as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(bulk_size), bulk_size, |b, &bulk_size| {
-            b.iter(|| {
-                let graph = create_test_graph();
-                for i in 0..bulk_size {
-                    let mut props = Properties::new();
-                    props.insert("id".to_string(), PropertyValue::Integer(i as i64));
-                    props.insert("name".to_string(), PropertyValue::String(format!("user_{}", i)));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(bulk_size),
+            bulk_size,
+            |b, &bulk_size| {
+                b.iter(|| {
+                    let graph = create_test_graph();
+                    for i in 0..bulk_size {
+                        let mut props = Properties::new();
+                        props.insert("id".to_string(), PropertyValue::Integer(i as i64));
+                        props.insert(
+                            "name".to_string(),
+                            PropertyValue::String(format!("user_{}", i)),
+                        );
 
-                    let node_id = NodeId(format!("bulk_user_{}", i));
-                    let node = Node::new(node_id, vec!["User".to_string()], props);
-                    black_box(graph.create_node(node).unwrap());
-                }
-            });
-        });
+                        let node_id = NodeId(format!("bulk_user_{}", i));
+                        let node = Node::new(node_id, vec!["User".to_string()], props);
+                        black_box(graph.create_node(node).unwrap());
+                    }
+                });
+            },
+        );
     }
 
     group.finish();
@@ -104,23 +121,33 @@ fn bench_edge_creation(c: &mut Criterion) {
 
     for num_edges in [100, 1000].iter() {
         group.throughput(Throughput::Elements(*num_edges as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(num_edges), num_edges, |b, &num_edges| {
-            let graph = graph.clone();
-            let node_ids = node_ids.clone();
-            b.iter(|| {
-                for i in 0..num_edges {
-                    let from = &node_ids[i % node_ids.len()];
-                    let to = &node_ids[(i + 1) % node_ids.len()];
+        group.bench_with_input(
+            BenchmarkId::from_parameter(num_edges),
+            num_edges,
+            |b, &num_edges| {
+                let graph = graph.clone();
+                let node_ids = node_ids.clone();
+                b.iter(|| {
+                    for i in 0..num_edges {
+                        let from = &node_ids[i % node_ids.len()];
+                        let to = &node_ids[(i + 1) % node_ids.len()];
 
-                    let mut props = Properties::new();
-                    props.insert("weight".to_string(), PropertyValue::Float(i as f64));
+                        let mut props = Properties::new();
+                        props.insert("weight".to_string(), PropertyValue::Float(i as f64));
 
-                    let edge_id = EdgeId(format!("edge_{}", i));
-                    let edge = Edge::new(edge_id, from.clone(), to.clone(), "KNOWS".to_string(), props);
-                    black_box(graph.create_edge(edge).unwrap());
-                }
-            });
-        });
+                        let edge_id = EdgeId(format!("edge_{}", i));
+                        let edge = Edge::new(
+                            edge_id,
+                            from.clone(),
+                            to.clone(),
+                            "KNOWS".to_string(),
+                            props,
+                        );
+                        black_box(graph.create_edge(edge).unwrap());
+                    }
+                });
+            },
+        );
     }
 
     group.finish();
@@ -183,7 +210,7 @@ fn bench_query_edge_lookup(c: &mut Criterion) {
                 node_ids[i].clone(),
                 node_ids[to_idx].clone(),
                 "KNOWS".to_string(),
-                Properties::new()
+                Properties::new(),
             );
             graph.create_edge(edge).unwrap();
             edge_ids.push(edge_id);
@@ -244,32 +271,39 @@ fn bench_memory_usage(c: &mut Criterion) {
 
     for num_nodes in [1000, 10000].iter() {
         group.throughput(Throughput::Elements(*num_nodes as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(num_nodes), num_nodes, |b, &num_nodes| {
-            b.iter_custom(|iters| {
-                let mut total_duration = Duration::ZERO;
+        group.bench_with_input(
+            BenchmarkId::from_parameter(num_nodes),
+            num_nodes,
+            |b, &num_nodes| {
+                b.iter_custom(|iters| {
+                    let mut total_duration = Duration::ZERO;
 
-                for _ in 0..iters {
-                    let graph = create_test_graph();
+                    for _ in 0..iters {
+                        let graph = create_test_graph();
 
-                    let start = std::time::Instant::now();
-                    for i in 0..*num_nodes {
-                        let mut props = Properties::new();
-                        props.insert("id".to_string(), PropertyValue::Integer(i as i64));
-                        props.insert("name".to_string(), PropertyValue::String(format!("node_{}", i)));
+                        let start = std::time::Instant::now();
+                        for i in 0..*num_nodes {
+                            let mut props = Properties::new();
+                            props.insert("id".to_string(), PropertyValue::Integer(i as i64));
+                            props.insert(
+                                "name".to_string(),
+                                PropertyValue::String(format!("node_{}", i)),
+                            );
 
-                        let node_id = NodeId(format!("mem_node_{}", i));
-                        let node = Node::new(node_id, vec!["TestNode".to_string()], props);
-                        graph.create_node(node).unwrap();
+                            let node_id = NodeId(format!("mem_node_{}", i));
+                            let node = Node::new(node_id, vec!["TestNode".to_string()], props);
+                            graph.create_node(node).unwrap();
+                        }
+                        total_duration += start.elapsed();
+
+                        // Force drop to measure cleanup
+                        drop(graph);
                     }
-                    total_duration += start.elapsed();
 
-                    // Force drop to measure cleanup
-                    drop(graph);
-                }
-
-                total_duration
-            });
-        });
+                    total_duration
+                });
+            },
+        );
     }
 
     group.finish();

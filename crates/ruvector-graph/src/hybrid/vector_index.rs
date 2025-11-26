@@ -3,16 +3,16 @@
 //! Integrates RuVector's index (HNSW or Flat) with graph nodes, edges, and hyperedges.
 
 use crate::error::{GraphError, Result};
-use crate::types::{NodeId, EdgeId, PropertyValue, Properties};
-#[cfg(feature = "hnsw_rs")]
-use ruvector_core::index::hnsw::HnswIndex;
-use ruvector_core::index::flat::FlatIndex;
-use ruvector_core::index::VectorIndex;
-use ruvector_core::types::{DistanceMetric, SearchResult};
-#[cfg(feature = "hnsw_rs")]
-use ruvector_core::types::HnswConfig;
+use crate::types::{EdgeId, NodeId, Properties, PropertyValue};
 use dashmap::DashMap;
 use parking_lot::RwLock;
+use ruvector_core::index::flat::FlatIndex;
+#[cfg(feature = "hnsw_rs")]
+use ruvector_core::index::hnsw::HnswIndex;
+use ruvector_core::index::VectorIndex;
+#[cfg(feature = "hnsw_rs")]
+use ruvector_core::types::HnswConfig;
+use ruvector_core::types::{DistanceMetric, SearchResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -100,7 +100,8 @@ impl HybridIndex {
             self.config.dimensions,
             self.config.metric,
             self.config.hnsw_config.clone(),
-        ).map_err(|e| GraphError::IndexError(format!("Failed to create HNSW index: {}", e)))?;
+        )
+        .map_err(|e| GraphError::IndexError(format!("Failed to create HNSW index: {}", e)))?;
 
         match index_type {
             VectorIndexType::Node => {
@@ -148,12 +149,13 @@ impl HybridIndex {
         }
 
         let mut index_guard = self.node_index.write();
-        let index = index_guard.as_mut().ok_or_else(|| {
-            GraphError::IndexError("Node index not initialized".to_string())
-        })?;
+        let index = index_guard
+            .as_mut()
+            .ok_or_else(|| GraphError::IndexError("Node index not initialized".to_string()))?;
 
         let vector_id = format!("node_{}", node_id);
-        index.add(vector_id.clone(), embedding)
+        index
+            .add(vector_id.clone(), embedding)
             .map_err(|e| GraphError::IndexError(format!("Failed to add node embedding: {}", e)))?;
 
         self.node_id_map.insert(node_id, vector_id);
@@ -171,12 +173,13 @@ impl HybridIndex {
         }
 
         let mut index_guard = self.edge_index.write();
-        let index = index_guard.as_mut().ok_or_else(|| {
-            GraphError::IndexError("Edge index not initialized".to_string())
-        })?;
+        let index = index_guard
+            .as_mut()
+            .ok_or_else(|| GraphError::IndexError("Edge index not initialized".to_string()))?;
 
         let vector_id = format!("edge_{}", edge_id);
-        index.add(vector_id.clone(), embedding)
+        index
+            .add(vector_id.clone(), embedding)
             .map_err(|e| GraphError::IndexError(format!("Failed to add edge embedding: {}", e)))?;
 
         self.edge_id_map.insert(edge_id, vector_id);
@@ -194,13 +197,14 @@ impl HybridIndex {
         }
 
         let mut index_guard = self.hyperedge_index.write();
-        let index = index_guard.as_mut().ok_or_else(|| {
-            GraphError::IndexError("Hyperedge index not initialized".to_string())
-        })?;
+        let index = index_guard
+            .as_mut()
+            .ok_or_else(|| GraphError::IndexError("Hyperedge index not initialized".to_string()))?;
 
         let vector_id = format!("hyperedge_{}", hyperedge_id);
-        index.add(vector_id.clone(), embedding)
-            .map_err(|e| GraphError::IndexError(format!("Failed to add hyperedge embedding: {}", e)))?;
+        index.add(vector_id.clone(), embedding).map_err(|e| {
+            GraphError::IndexError(format!("Failed to add hyperedge embedding: {}", e))
+        })?;
 
         self.hyperedge_id_map.insert(hyperedge_id, vector_id);
         Ok(())
@@ -209,14 +213,16 @@ impl HybridIndex {
     /// Search for similar nodes
     pub fn search_similar_nodes(&self, query: &[f32], k: usize) -> Result<Vec<(NodeId, f32)>> {
         let index_guard = self.node_index.read();
-        let index = index_guard.as_ref().ok_or_else(|| {
-            GraphError::IndexError("Node index not initialized".to_string())
-        })?;
+        let index = index_guard
+            .as_ref()
+            .ok_or_else(|| GraphError::IndexError("Node index not initialized".to_string()))?;
 
-        let results = index.search(query, k)
+        let results = index
+            .search(query, k)
             .map_err(|e| GraphError::IndexError(format!("Search failed: {}", e)))?;
 
-        Ok(results.into_iter()
+        Ok(results
+            .into_iter()
             .filter_map(|result| {
                 // Remove "node_" prefix to get original ID
                 let node_id = result.id.strip_prefix("node_")?.to_string();
@@ -228,14 +234,16 @@ impl HybridIndex {
     /// Search for similar edges
     pub fn search_similar_edges(&self, query: &[f32], k: usize) -> Result<Vec<(EdgeId, f32)>> {
         let index_guard = self.edge_index.read();
-        let index = index_guard.as_ref().ok_or_else(|| {
-            GraphError::IndexError("Edge index not initialized".to_string())
-        })?;
+        let index = index_guard
+            .as_ref()
+            .ok_or_else(|| GraphError::IndexError("Edge index not initialized".to_string()))?;
 
-        let results = index.search(query, k)
+        let results = index
+            .search(query, k)
             .map_err(|e| GraphError::IndexError(format!("Search failed: {}", e)))?;
 
-        Ok(results.into_iter()
+        Ok(results
+            .into_iter()
             .filter_map(|result| {
                 let edge_id = result.id.strip_prefix("edge_")?.to_string();
                 Some((edge_id, result.score))
@@ -246,14 +254,16 @@ impl HybridIndex {
     /// Search for similar hyperedges
     pub fn search_similar_hyperedges(&self, query: &[f32], k: usize) -> Result<Vec<(String, f32)>> {
         let index_guard = self.hyperedge_index.read();
-        let index = index_guard.as_ref().ok_or_else(|| {
-            GraphError::IndexError("Hyperedge index not initialized".to_string())
-        })?;
+        let index = index_guard
+            .as_ref()
+            .ok_or_else(|| GraphError::IndexError("Hyperedge index not initialized".to_string()))?;
 
-        let results = index.search(query, k)
+        let results = index
+            .search(query, k)
             .map_err(|e| GraphError::IndexError(format!("Search failed: {}", e)))?;
 
-        Ok(results.into_iter()
+        Ok(results
+            .into_iter()
             .filter_map(|result| {
                 let hyperedge_id = result.id.strip_prefix("hyperedge_")?.to_string();
                 Some((hyperedge_id, result.score))
@@ -270,19 +280,20 @@ impl HybridIndex {
 
         match prop_value {
             PropertyValue::Array(arr) => {
-                let embedding: Result<Vec<f32>> = arr.iter()
+                let embedding: Result<Vec<f32>> = arr
+                    .iter()
                     .map(|v| match v {
                         PropertyValue::Float(f) => Ok(*f as f32),
                         PropertyValue::Integer(i) => Ok(*i as f32),
                         _ => Err(GraphError::InvalidEmbedding(
-                            "Embedding array must contain numbers".to_string()
+                            "Embedding array must contain numbers".to_string(),
                         )),
                     })
                     .collect();
                 embedding.map(Some)
             }
             _ => Err(GraphError::InvalidEmbedding(
-                "Embedding property must be an array".to_string()
+                "Embedding property must be an array".to_string(),
             )),
         }
     }

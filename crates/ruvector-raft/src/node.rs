@@ -80,10 +80,7 @@ pub struct CommandResult {
 #[derive(Debug)]
 enum InternalMessage {
     /// RPC message from another node
-    Rpc {
-        from: NodeId,
-        message: RaftMessage,
-    },
+    Rpc { from: NodeId, message: RaftMessage },
     /// Client command to replicate
     ClientCommand {
         command: Command,
@@ -245,10 +242,17 @@ impl RaftNode {
         *self.current_leader.write() = Some(req.leader_id.clone());
 
         // Reply false if log doesn't contain an entry at prevLogIndex with prevLogTerm
-        if !persistent.log.matches(req.prev_log_index, req.prev_log_term) {
+        if !persistent
+            .log
+            .matches(req.prev_log_index, req.prev_log_term)
+        {
             let conflict_index = req.prev_log_index;
             let conflict_term = persistent.log.term_at(conflict_index);
-            return AppendEntriesResponse::failure(persistent.current_term, Some(conflict_index), conflict_term);
+            return AppendEntriesResponse::failure(
+                persistent.current_term,
+                Some(conflict_index),
+                conflict_term,
+            );
         }
 
         // Append new entries
@@ -377,7 +381,10 @@ impl RaftNode {
     }
 
     /// Handle InstallSnapshot RPC
-    async fn handle_install_snapshot(&self, req: InstallSnapshotRequest) -> InstallSnapshotResponse {
+    async fn handle_install_snapshot(
+        &self,
+        req: InstallSnapshotRequest,
+    ) -> InstallSnapshotResponse {
         let persistent = self.persistent.write();
 
         if req.term < persistent.current_term {
@@ -390,7 +397,11 @@ impl RaftNode {
     }
 
     /// Handle InstallSnapshot response
-    async fn handle_install_snapshot_response(&self, _from: NodeId, _resp: InstallSnapshotResponse) {
+    async fn handle_install_snapshot_response(
+        &self,
+        _from: NodeId,
+        _resp: InstallSnapshotResponse,
+    ) {
         // TODO: Implement snapshot response handling
     }
 
@@ -415,9 +426,7 @@ impl RaftNode {
 
         // Trigger immediate replication
         drop(persistent);
-        let _ = self
-            .internal_tx
-            .send(InternalMessage::HeartbeatTimeout);
+        let _ = self.internal_tx.send(InternalMessage::HeartbeatTimeout);
     }
 
     /// Handle election timeout
@@ -475,7 +484,10 @@ impl RaftNode {
 
     /// Become leader after winning election
     async fn become_leader(&self) {
-        info!("Becoming leader for term {}", self.persistent.read().current_term);
+        info!(
+            "Becoming leader for term {}",
+            self.persistent.read().current_term
+        );
 
         *self.state.write() = RaftState::Leader;
         *self.current_leader.write() = Some(self.config.node_id.clone());
@@ -524,8 +536,11 @@ impl RaftNode {
 
         for member in &self.config.cluster_members {
             if member != &self.config.node_id {
-                let request =
-                    AppendEntriesRequest::heartbeat(term, self.config.node_id.clone(), commit_index);
+                let request = AppendEntriesRequest::heartbeat(
+                    term,
+                    self.config.node_id.clone(),
+                    commit_index,
+                );
                 // TODO: Send heartbeat to member
                 debug!("Would send heartbeat to {}", member);
             }
@@ -602,7 +617,11 @@ mod tests {
     fn test_node_creation() {
         let config = RaftNodeConfig::new(
             "node1".to_string(),
-            vec!["node1".to_string(), "node2".to_string(), "node3".to_string()],
+            vec![
+                "node1".to_string(),
+                "node2".to_string(),
+                "node3".to_string(),
+            ],
         );
 
         let node = RaftNode::new(config);

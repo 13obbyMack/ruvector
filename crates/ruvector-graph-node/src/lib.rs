@@ -9,21 +9,21 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use ruvector_core::advanced::hypergraph::{
-    Hyperedge as CoreHyperedge, HypergraphIndex as CoreHypergraphIndex,
-    TemporalHyperedge as CoreTemporalHyperedge, TemporalGranularity as CoreTemporalGranularity,
-    HypergraphStats as CoreHypergraphStats, CausalMemory as CoreCausalMemory,
+    CausalMemory as CoreCausalMemory, Hyperedge as CoreHyperedge,
+    HypergraphIndex as CoreHypergraphIndex, HypergraphStats as CoreHypergraphStats,
+    TemporalGranularity as CoreTemporalGranularity, TemporalHyperedge as CoreTemporalHyperedge,
 };
 use ruvector_core::DistanceMetric;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-mod types;
 mod streaming;
 mod transactions;
+mod types;
 
-pub use types::*;
 pub use streaming::*;
 pub use transactions::*;
+pub use types::*;
 
 /// Graph database for complex relationship queries
 #[napi]
@@ -209,7 +209,10 @@ impl GraphDatabase {
     /// });
     /// ```
     #[napi]
-    pub async fn search_hyperedges(&self, query: JsHyperedgeQuery) -> Result<Vec<JsHyperedgeResult>> {
+    pub async fn search_hyperedges(
+        &self,
+        query: JsHyperedgeQuery,
+    ) -> Result<Vec<JsHyperedgeResult>> {
         let hypergraph = self.hypergraph.clone();
         let embedding = query.embedding.to_vec();
         let k = query.k as usize;
@@ -348,10 +351,7 @@ impl GraphDatabase {
                 edge_ids.push(edge_id);
             }
 
-            Ok::<JsBatchResult, Error>(JsBatchResult {
-                node_ids,
-                edge_ids,
-            })
+            Ok::<JsBatchResult, Error>(JsBatchResult { node_ids, edge_ids })
         })
         .await
         .map_err(|e| Error::from_reason(format!("Task failed: {}", e)))?

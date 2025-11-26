@@ -15,6 +15,8 @@ use anyhow::Result;
 #[cfg(feature = "storage")]
 use bincode::config;
 #[cfg(feature = "storage")]
+use once_cell::sync::Lazy;
+#[cfg(feature = "storage")]
 use parking_lot::Mutex;
 #[cfg(feature = "storage")]
 use redb::{Database, ReadableTable, TableDefinition};
@@ -24,8 +26,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "storage")]
 use std::sync::Arc;
-#[cfg(feature = "storage")]
-use once_cell::sync::Lazy;
 
 #[cfg(feature = "storage")]
 // Table definitions
@@ -40,9 +40,8 @@ const METADATA_TABLE: TableDefinition<&str, &str> = TableDefinition::new("metada
 #[cfg(feature = "storage")]
 // Global database connection pool to allow multiple GraphStorage instances
 // to share the same underlying database file
-static DB_POOL: Lazy<Mutex<HashMap<PathBuf, Arc<Database>>>> = Lazy::new(|| {
-    Mutex::new(HashMap::new())
-});
+static DB_POOL: Lazy<Mutex<HashMap<PathBuf, Arc<Database>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 #[cfg(feature = "storage")]
 /// Storage backend for graph database
@@ -57,7 +56,9 @@ impl GraphStorage {
     /// Uses a global connection pool to allow multiple GraphStorage
     /// instances to share the same underlying database file
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let path_buf = path.as_ref().canonicalize()
+        let path_buf = path
+            .as_ref()
+            .canonicalize()
             .unwrap_or_else(|_| path.as_ref().to_path_buf());
 
         // Check if we already have a Database instance for this path
@@ -134,7 +135,8 @@ impl GraphStorage {
             return Ok(None);
         };
 
-        let (node, _): (Node, usize) = bincode::decode_from_slice(node_data.value(), config::standard())?;
+        let (node, _): (Node, usize) =
+            bincode::decode_from_slice(node_data.value(), config::standard())?;
         Ok(Some(node))
     }
 
@@ -211,7 +213,8 @@ impl GraphStorage {
             return Ok(None);
         };
 
-        let (edge, _): (Edge, usize) = bincode::decode_from_slice(edge_data.value(), config::standard())?;
+        let (edge, _): (Edge, usize) =
+            bincode::decode_from_slice(edge_data.value(), config::standard())?;
         Ok(Some(edge))
     }
 
@@ -288,7 +291,8 @@ impl GraphStorage {
             return Ok(None);
         };
 
-        let (hyperedge, _): (Hyperedge, usize) = bincode::decode_from_slice(hyperedge_data.value(), config::standard())?;
+        let (hyperedge, _): (Hyperedge, usize) =
+            bincode::decode_from_slice(hyperedge_data.value(), config::standard())?;
         Ok(Some(hyperedge))
     }
 
@@ -369,9 +373,9 @@ impl GraphStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::NodeBuilder;
     use crate::edge::EdgeBuilder;
     use crate::hyperedge::HyperedgeBuilder;
+    use crate::node::NodeBuilder;
     use tempfile::tempdir;
 
     #[test]
@@ -438,7 +442,7 @@ mod tests {
 
         let hyperedge = HyperedgeBuilder::new(
             vec!["n1".to_string(), "n2".to_string(), "n3".to_string()],
-            "MEETING"
+            "MEETING",
         )
         .description("Team meeting")
         .build();

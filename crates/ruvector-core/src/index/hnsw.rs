@@ -4,10 +4,10 @@ use crate::distance::distance;
 use crate::error::{Result, RuvectorError};
 use crate::index::VectorIndex;
 use crate::types::{DistanceMetric, HnswConfig, SearchResult, VectorId};
+use bincode::{Decode, Encode};
 use dashmap::DashMap;
 use hnsw_rs::prelude::*;
 use parking_lot::RwLock;
-use bincode::{Decode, Encode};
 use std::sync::Arc;
 
 /// Distance function wrapper for hnsw_rs
@@ -137,9 +137,21 @@ impl HnswIndex {
         let inner = self.inner.read();
 
         let state = HnswState {
-            vectors: inner.vectors.iter().map(|entry| (entry.key().clone(), entry.value().clone())).collect(),
-            id_to_idx: inner.id_to_idx.iter().map(|entry| (entry.key().clone(), *entry.value())).collect(),
-            idx_to_id: inner.idx_to_id.iter().map(|entry| (*entry.key(), entry.value().clone())).collect(),
+            vectors: inner
+                .vectors
+                .iter()
+                .map(|entry| (entry.key().clone(), entry.value().clone()))
+                .collect(),
+            id_to_idx: inner
+                .id_to_idx
+                .iter()
+                .map(|entry| (entry.key().clone(), *entry.value()))
+                .collect(),
+            idx_to_id: inner
+                .idx_to_id
+                .iter()
+                .map(|entry| (*entry.key(), entry.value().clone()))
+                .collect(),
             next_idx: inner.next_idx,
             config: SerializableHnswConfig {
                 m: self.config.m,
@@ -151,14 +163,20 @@ impl HnswIndex {
             metric: self.metric.into(),
         };
 
-        bincode::encode_to_vec(&state, bincode::config::standard())
-            .map_err(|e| RuvectorError::SerializationError(format!("Failed to serialize HNSW index: {}", e)))
+        bincode::encode_to_vec(&state, bincode::config::standard()).map_err(|e| {
+            RuvectorError::SerializationError(format!("Failed to serialize HNSW index: {}", e))
+        })
     }
 
     /// Deserialize the index from bytes using bincode
     pub fn deserialize(bytes: &[u8]) -> Result<Self> {
-        let (state, _): (HnswState, usize) = bincode::decode_from_slice(bytes, bincode::config::standard())
-            .map_err(|e| RuvectorError::SerializationError(format!("Failed to deserialize HNSW index: {}", e)))?;
+        let (state, _): (HnswState, usize) =
+            bincode::decode_from_slice(bytes, bincode::config::standard()).map_err(|e| {
+                RuvectorError::SerializationError(format!(
+                    "Failed to deserialize HNSW index: {}",
+                    e
+                ))
+            })?;
 
         let config = HnswConfig {
             m: state.config.m,
@@ -210,7 +228,12 @@ impl HnswIndex {
     }
 
     /// Search with custom efSearch parameter
-    pub fn search_with_ef(&self, query: &[f32], k: usize, ef_search: usize) -> Result<Vec<SearchResult>> {
+    pub fn search_with_ef(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef_search: usize,
+    ) -> Result<Vec<SearchResult>> {
         if query.len() != self.dimensions {
             return Err(RuvectorError::DimensionMismatch {
                 expected: self.dimensions,
@@ -343,11 +366,7 @@ mod tests {
         let mut rng = rand::thread_rng();
 
         (0..count)
-            .map(|_| {
-                (0..dimensions)
-                    .map(|_| rng.gen::<f32>())
-                    .collect()
-            })
+            .map(|_| (0..dimensions).map(|_| rng.gen::<f32>()).collect())
             .collect()
     }
 

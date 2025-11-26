@@ -1,8 +1,8 @@
 //! Edge (relationship) implementation
 
 use crate::types::{EdgeId, NodeId, Properties, PropertyValue};
-use bincode::{Encode, Decode};
-use serde::{Serialize, Deserialize};
+use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -24,7 +24,13 @@ impl Edge {
         edge_type: String,
         properties: Properties,
     ) -> Self {
-        Self { id, from, to, edge_type, properties }
+        Self {
+            id,
+            from,
+            to,
+            edge_type,
+            properties,
+        }
     }
 
     /// Create a new edge with auto-generated ID and empty properties

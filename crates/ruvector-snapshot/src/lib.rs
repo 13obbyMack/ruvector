@@ -8,7 +8,7 @@ mod manager;
 mod snapshot;
 mod storage;
 
-pub use error::{SnapshotError, Result};
+pub use error::{Result, SnapshotError};
 pub use manager::SnapshotManager;
 pub use snapshot::{Snapshot, SnapshotData, SnapshotMetadata, VectorRecord};
 pub use storage::{LocalStorage, SnapshotStorage};

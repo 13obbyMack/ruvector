@@ -7,15 +7,15 @@
 //! - Hybrid Search combining vector and keyword matching
 //! - Conformal Prediction for uncertainty quantification
 
-pub mod product_quantization;
-pub mod filtered_search;
-pub mod mmr;
-pub mod hybrid_search;
 pub mod conformal_prediction;
+pub mod filtered_search;
+pub mod hybrid_search;
+pub mod mmr;
+pub mod product_quantization;
 
 // Re-exports
-pub use product_quantization::{EnhancedPQ, PQConfig, LookupTable};
-pub use filtered_search::{FilteredSearch, FilterStrategy, FilterExpression};
-pub use mmr::{MMRSearch, MMRConfig};
-pub use hybrid_search::{HybridSearch, HybridConfig, BM25};
-pub use conformal_prediction::{ConformalPredictor, ConformalConfig, PredictionSet};
+pub use conformal_prediction::{ConformalConfig, ConformalPredictor, PredictionSet};
+pub use filtered_search::{FilterExpression, FilterStrategy, FilteredSearch};
+pub use hybrid_search::{HybridConfig, HybridSearch, BM25};
+pub use mmr::{MMRConfig, MMRSearch};
+pub use product_quantization::{EnhancedPQ, LookupTable, PQConfig};

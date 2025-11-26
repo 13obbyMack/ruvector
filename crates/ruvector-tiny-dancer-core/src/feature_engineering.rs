@@ -141,9 +141,8 @@ impl FeatureEngineer {
         }
 
         // Use simsimd for SIMD-accelerated cosine similarity
-        let similarity = f32::cosine(a, b).ok_or_else(|| {
-            TinyDancerError::FeatureError("Cosine similarity failed".to_string())
-        })?;
+        let similarity = f32::cosine(a, b)
+            .ok_or_else(|| TinyDancerError::FeatureError("Cosine similarity failed".to_string()))?;
 
         // Convert distance to similarity (simsimd returns distance as f64)
         Ok(1.0_f32 - similarity as f32)

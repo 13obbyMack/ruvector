@@ -38,10 +38,16 @@ impl SoAVectorStorage {
     /// Panics if dimensions or capacity exceed safe limits or would cause overflow.
     pub fn new(dimensions: usize, initial_capacity: usize) -> Self {
         // Security: Validate inputs to prevent integer overflow
-        assert!(dimensions > 0 && dimensions <= Self::MAX_DIMENSIONS,
-            "dimensions must be between 1 and {}", Self::MAX_DIMENSIONS);
-        assert!(initial_capacity <= Self::MAX_CAPACITY,
-            "initial_capacity exceeds maximum of {}", Self::MAX_CAPACITY);
+        assert!(
+            dimensions > 0 && dimensions <= Self::MAX_DIMENSIONS,
+            "dimensions must be between 1 and {}",
+            Self::MAX_DIMENSIONS
+        );
+        assert!(
+            initial_capacity <= Self::MAX_CAPACITY,
+            "initial_capacity exceeds maximum of {}",
+            Self::MAX_CAPACITY
+        );
 
         let capacity = initial_capacity.next_power_of_two();
 
@@ -53,10 +59,8 @@ impl SoAVectorStorage {
             .checked_mul(std::mem::size_of::<f32>())
             .expect("total size overflow");
 
-        let layout = Layout::from_size_align(
-            total_bytes,
-            CACHE_LINE_SIZE,
-        ).expect("invalid memory layout");
+        let layout =
+            Layout::from_size_align(total_bytes, CACHE_LINE_SIZE).expect("invalid memory layout");
 
         let data = unsafe { alloc(layout) as *mut f32 };
 
@@ -108,18 +112,14 @@ impl SoAVectorStorage {
     pub fn dimension_slice(&self, dim_idx: usize) -> &[f32] {
         assert!(dim_idx < self.dimensions);
         let offset = dim_idx * self.capacity;
-        unsafe {
-            std::slice::from_raw_parts(self.data.add(offset), self.count)
-        }
+        unsafe { std::slice::from_raw_parts(self.data.add(offset), self.count) }
     }
 
     /// Get a mutable slice of a specific dimension
     pub fn dimension_slice_mut(&mut self, dim_idx: usize) -> &mut [f32] {
         assert!(dim_idx < self.dimensions);
         let offset = dim_idx * self.capacity;
-        unsafe {
-            std::slice::from_raw_parts_mut(self.data.add(offset), self.count)
-        }
+        unsafe { std::slice::from_raw_parts_mut(self.data.add(offset), self.count) }
     }
 
     /// Number of vectors stored
@@ -145,7 +145,8 @@ impl SoAVectorStorage {
         let new_layout = Layout::from_size_align(
             new_total_elements * std::mem::size_of::<f32>(),
             CACHE_LINE_SIZE,
-        ).unwrap();
+        )
+        .unwrap();
 
         let new_data = unsafe { alloc(new_layout) as *mut f32 };
 
@@ -167,7 +168,8 @@ impl SoAVectorStorage {
         let old_layout = Layout::from_size_align(
             self.dimensions * self.capacity * std::mem::size_of::<f32>(),
             CACHE_LINE_SIZE,
-        ).unwrap();
+        )
+        .unwrap();
 
         unsafe {
             dealloc(self.data as *mut u8, old_layout);
@@ -210,7 +212,8 @@ impl Drop for SoAVectorStorage {
         let layout = Layout::from_size_align(
             self.dimensions * self.capacity * std::mem::size_of::<f32>(),
             CACHE_LINE_SIZE,
-        ).unwrap();
+        )
+        .unwrap();
 
         unsafe {
             dealloc(self.data as *mut u8, layout);

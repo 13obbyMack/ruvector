@@ -319,8 +319,8 @@ mod tests {
         // With lambda=0.0, should maximize diversity
         assert_eq!(results.len(), 2);
         // Should not select both doc1 and doc2 (they're too similar)
-        let has_both_similar = results.iter().any(|r| r.id == "doc1")
-            && results.iter().any(|r| r.id == "doc2");
+        let has_both_similar =
+            results.iter().any(|r| r.id == "doc1") && results.iter().any(|r| r.id == "doc2");
         assert!(!has_both_similar);
     }
 

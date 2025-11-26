@@ -1,6 +1,6 @@
 //! MCP transport layers (STDIO and SSE)
 
-use super::{protocol::*, handlers::McpHandler};
+use super::{handlers::McpHandler, protocol::*};
 use anyhow::Result;
 use axum::{
     extract::State,
@@ -143,12 +143,11 @@ async fn mcp_sse_handler(
         }
     };
 
-    Sse::new(stream)
-        .keep_alive(
-            axum::response::sse::KeepAlive::new()
-                .interval(tokio::time::Duration::from_secs(30))
-                .text("keep-alive"),
-        )
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(tokio::time::Duration::from_secs(30))
+            .text("keep-alive"),
+    )
 }
 
 #[cfg(test)]

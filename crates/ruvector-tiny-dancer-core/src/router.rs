@@ -6,9 +6,9 @@ use crate::feature_engineering::FeatureEngineer;
 use crate::model::FastGRNN;
 use crate::types::{RouterConfig, RoutingDecision, RoutingRequest, RoutingResponse};
 use crate::uncertainty::UncertaintyEstimator;
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::Instant;
-use parking_lot::RwLock;
 
 /// Main router for AI agent routing
 pub struct Router {
@@ -79,7 +79,9 @@ impl Router {
             match model.forward(&features.features, None) {
                 Ok(score) => {
                     // Estimate uncertainty
-                    let uncertainty = self.uncertainty_estimator.estimate(&features.features, score);
+                    let uncertainty = self
+                        .uncertainty_estimator
+                        .estimate(&features.features, score);
 
                     // Determine routing decision
                     let use_lightweight = score >= self.config.confidence_threshold

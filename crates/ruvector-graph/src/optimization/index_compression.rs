@@ -5,10 +5,10 @@
 //! - Delta encoding for sorted ID lists
 //! - Dictionary encoding for string properties
 
+use parking_lot::RwLock;
 use roaring::RoaringBitmap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 
 /// Compressed index using multiple encoding strategies
 pub struct CompressedIndex {
@@ -32,14 +32,16 @@ impl CompressedIndex {
     /// Add node to label index
     pub fn add_to_label_index(&self, label: &str, node_id: u64) {
         let mut indexes = self.label_indexes.write();
-        indexes.entry(label.to_string())
+        indexes
+            .entry(label.to_string())
             .or_insert_with(RoaringBitmap::new)
             .insert(node_id as u32);
     }
 
     /// Get all nodes with a specific label
     pub fn get_nodes_by_label(&self, label: &str) -> Vec<u64> {
-        self.label_indexes.read()
+        self.label_indexes
+            .read()
             .get(label)
             .map(|bitmap| bitmap.iter().map(|id| id as u64).collect())
             .unwrap_or_default()
@@ -47,7 +49,8 @@ impl CompressedIndex {
 
     /// Check if node has label (fast bitmap lookup)
     pub fn has_label(&self, label: &str, node_id: u64) -> bool {
-        self.label_indexes.read()
+        self.label_indexes
+            .read()
             .get(label)
             .map(|bitmap| bitmap.contains(node_id as u32))
             .unwrap_or(false)
@@ -55,7 +58,8 @@ impl CompressedIndex {
 
     /// Count nodes with label
     pub fn count_label(&self, label: &str) -> u64 {
-        self.label_indexes.read()
+        self.label_indexes
+            .read()
             .get(label)
             .map(|bitmap| bitmap.len())
             .unwrap_or(0)
@@ -69,7 +73,8 @@ impl CompressedIndex {
             return Vec::new();
         }
 
-        let mut result = indexes.get(labels[0])
+        let mut result = indexes
+            .get(labels[0])
             .cloned()
             .unwrap_or_else(RoaringBitmap::new);
 
@@ -168,7 +173,9 @@ impl RoaringBitmapIndex {
     /// Serialize to bytes
     pub fn serialize(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        self.bitmap.serialize_into(&mut bytes).expect("Failed to serialize bitmap");
+        self.bitmap
+            .serialize_into(&mut bytes)
+            .expect("Failed to serialize bitmap");
         bytes
     }
 
@@ -209,7 +216,8 @@ impl DeltaEncodedList {
         }
 
         let base = ids[0];
-        let deltas = ids.windows(2)
+        let deltas = ids
+            .windows(2)
             .map(|pair| (pair[1] - pair[0]) as u32)
             .collect();
 

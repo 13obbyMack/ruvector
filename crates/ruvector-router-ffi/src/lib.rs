@@ -5,8 +5,8 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use ruvector_router_core::{
-    DistanceMetric as CoreDistanceMetric, SearchQuery as CoreSearchQuery,
-    VectorDB as CoreVectorDB, VectorEntry as CoreVectorEntry,
+    DistanceMetric as CoreDistanceMetric, SearchQuery as CoreSearchQuery, VectorDB as CoreVectorDB,
+    VectorEntry as CoreVectorEntry,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -50,8 +50,7 @@ pub struct VectorDB {
 impl VectorDB {
     #[napi(constructor)]
     pub fn new(options: DbOptions) -> Result<Self> {
-        let mut builder = CoreVectorDB::builder()
-            .dimensions(options.dimensions as usize);
+        let mut builder = CoreVectorDB::builder().dimensions(options.dimensions as usize);
 
         if let Some(max_elements) = options.max_elements {
             builder = builder.max_elements(max_elements as usize);

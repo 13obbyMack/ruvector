@@ -168,11 +168,7 @@ mod tests {
 
     #[test]
     fn test_vector_record_creation() {
-        let record = VectorRecord::new(
-            "test-1".to_string(),
-            vec![1.0, 2.0, 3.0],
-            None,
-        );
+        let record = VectorRecord::new("test-1".to_string(), vec![1.0, 2.0, 3.0], None);
         assert_eq!(record.id, "test-1");
         assert_eq!(record.dimension(), 3);
     }

@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use ruvector_core::distance::*;
 use ruvector_core::types::DistanceMetric;
 
@@ -10,9 +10,7 @@ fn bench_euclidean(c: &mut Criterion) {
         let b: Vec<f32> = (0..*size).map(|i| (i + 1) as f32).collect();
 
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |bench, _| {
-            bench.iter(|| {
-                euclidean_distance(black_box(&a), black_box(&b))
-            });
+            bench.iter(|| euclidean_distance(black_box(&a), black_box(&b)));
         });
     }
 
@@ -27,9 +25,7 @@ fn bench_cosine(c: &mut Criterion) {
         let b: Vec<f32> = (0..*size).map(|i| (i + 1) as f32).collect();
 
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |bench, _| {
-            bench.iter(|| {
-                cosine_distance(black_box(&a), black_box(&b))
-            });
+            bench.iter(|| cosine_distance(black_box(&a), black_box(&b)));
         });
     }
 
@@ -44,9 +40,7 @@ fn bench_dot_product(c: &mut Criterion) {
         let b: Vec<f32> = (0..*size).map(|i| (i + 1) as f32).collect();
 
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |bench, _| {
-            bench.iter(|| {
-                dot_product_distance(black_box(&a), black_box(&b))
-            });
+            bench.iter(|| dot_product_distance(black_box(&a), black_box(&b)));
         });
     }
 
@@ -64,7 +58,7 @@ fn bench_batch_distances(c: &mut Criterion) {
             batch_distances(
                 black_box(&query),
                 black_box(&vectors),
-                DistanceMetric::Cosine
+                DistanceMetric::Cosine,
             )
         });
     });

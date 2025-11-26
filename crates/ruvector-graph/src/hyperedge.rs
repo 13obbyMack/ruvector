@@ -3,7 +3,7 @@
 //! Extends the basic edge model to support relationships connecting multiple nodes
 
 use crate::types::{NodeId, Properties, PropertyValue};
-use bincode::{Encode, Decode};
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -42,11 +42,7 @@ impl Hyperedge {
     }
 
     /// Create a new hyperedge with specific ID
-    pub fn with_id<S: Into<String>>(
-        id: HyperedgeId,
-        nodes: Vec<NodeId>,
-        edge_type: S,
-    ) -> Self {
+    pub fn with_id<S: Into<String>>(id: HyperedgeId, nodes: Vec<NodeId>, edge_type: S) -> Self {
         Self {
             id,
             nodes,
@@ -149,11 +145,7 @@ impl HyperedgeBuilder {
     }
 
     /// Create builder with specific ID
-    pub fn with_id<S: Into<String>>(
-        id: HyperedgeId,
-        nodes: Vec<NodeId>,
-        edge_type: S,
-    ) -> Self {
+    pub fn with_id<S: Into<String>>(id: HyperedgeId, nodes: Vec<NodeId>, edge_type: S) -> Self {
         Self {
             hyperedge: Hyperedge::with_id(id, nodes, edge_type),
         }
@@ -232,7 +224,11 @@ mod tests {
 
     #[test]
     fn test_hyperedge_creation() {
-        let nodes = vec!["node1".to_string(), "node2".to_string(), "node3".to_string()];
+        let nodes = vec![
+            "node1".to_string(),
+            "node2".to_string(),
+            "node3".to_string(),
+        ];
         let hedge = Hyperedge::new(nodes, "MEETING");
 
         assert!(!hedge.id.is_empty());
@@ -243,7 +239,11 @@ mod tests {
 
     #[test]
     fn test_hyperedge_contains() {
-        let nodes = vec!["node1".to_string(), "node2".to_string(), "node3".to_string()];
+        let nodes = vec![
+            "node1".to_string(),
+            "node2".to_string(),
+            "node3".to_string(),
+        ];
         let hedge = Hyperedge::new(nodes, "MEETING");
 
         assert!(hedge.contains_node(&"node1".to_string()));
@@ -270,12 +270,19 @@ mod tests {
         assert_eq!(hedge.edge_type, "COLLABORATION");
         assert_eq!(hedge.confidence, 0.95);
         assert!(hedge.description.is_some());
-        assert_eq!(hedge.get_property("project"), Some(&PropertyValue::String("X".to_string())));
+        assert_eq!(
+            hedge.get_property("project"),
+            Some(&PropertyValue::String("X".to_string()))
+        );
     }
 
     #[test]
     fn test_hyperedge_with_roles() {
-        let nodes = vec!["alice".to_string(), "bob".to_string(), "charlie".to_string()];
+        let nodes = vec![
+            "alice".to_string(),
+            "bob".to_string(),
+            "charlie".to_string(),
+        ];
         let hedge = Hyperedge::new(nodes, "MEETING");
 
         let mut hedge_with_roles = HyperedgeWithRoles::new(hedge);

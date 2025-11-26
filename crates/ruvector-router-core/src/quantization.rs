@@ -39,9 +39,7 @@ pub fn quantize(vector: &[f32], qtype: QuantizationType) -> Result<QuantizedVect
     match qtype {
         QuantizationType::None => Ok(QuantizedVector::None(vector.to_vec())),
         QuantizationType::Scalar => Ok(scalar_quantize(vector)),
-        QuantizationType::Product { subspaces, k } => {
-            product_quantize(vector, subspaces, k)
-        }
+        QuantizationType::Product { subspaces, k } => product_quantize(vector, subspaces, k),
         QuantizationType::Binary => Ok(binary_quantize(vector)),
     }
 }
@@ -50,16 +48,12 @@ pub fn quantize(vector: &[f32], qtype: QuantizationType) -> Result<QuantizedVect
 pub fn dequantize(quantized: &QuantizedVector) -> Vec<f32> {
     match quantized {
         QuantizedVector::None(v) => v.clone(),
-        QuantizedVector::Scalar { data, min, scale } => {
-            scalar_dequantize(data, *min, *scale)
-        }
+        QuantizedVector::Scalar { data, min, scale } => scalar_dequantize(data, *min, *scale),
         QuantizedVector::Product { codes, subspaces } => {
             // Placeholder - would need codebooks stored separately
             vec![0.0; codes.len() * (codes.len() / subspaces)]
         }
-        QuantizedVector::Binary { data, threshold } => {
-            binary_dequantize(data, *threshold)
-        }
+        QuantizedVector::Binary { data, threshold } => binary_dequantize(data, *threshold),
     }
 }
 
@@ -68,11 +62,7 @@ fn scalar_quantize(vector: &[f32]) -> QuantizedVector {
     let min = vector.iter().copied().fold(f32::INFINITY, f32::min);
     let max = vector.iter().copied().fold(f32::NEG_INFINITY, f32::max);
 
-    let scale = if max > min {
-        255.0 / (max - min)
-    } else {
-        1.0
-    };
+    let scale = if max > min { 255.0 / (max - min) } else { 1.0 };
 
     let data: Vec<u8> = vector
         .iter()
@@ -84,17 +74,11 @@ fn scalar_quantize(vector: &[f32]) -> QuantizedVector {
 
 /// Dequantize scalar quantized vector
 fn scalar_dequantize(data: &[u8], min: f32, scale: f32) -> Vec<f32> {
-    data.iter()
-        .map(|&v| (v as f32) / scale + min)
-        .collect()
+    data.iter().map(|&v| (v as f32) / scale + min).collect()
 }
 
 /// Product quantization (simplified version)
-fn product_quantize(
-    vector: &[f32],
-    subspaces: usize,
-    _k: usize,
-) -> Result<QuantizedVector> {
+fn product_quantize(vector: &[f32], subspaces: usize, _k: usize) -> Result<QuantizedVector> {
     if !vector.len().is_multiple_of(subspaces) {
         return Err(VectorDbError::Quantization(
             "Vector length must be divisible by number of subspaces".to_string(),
@@ -141,7 +125,11 @@ fn binary_dequantize(data: &[u8], threshold: f32) -> Vec<f32> {
     for &byte in data {
         for bit_idx in 0..8 {
             let bit = (byte >> bit_idx) & 1;
-            result.push(if bit == 1 { threshold + 1.0 } else { threshold - 1.0 });
+            result.push(if bit == 1 {
+                threshold + 1.0
+            } else {
+                threshold - 1.0
+            });
         }
     }
 
@@ -149,10 +137,7 @@ fn binary_dequantize(data: &[u8], threshold: f32) -> Vec<f32> {
 }
 
 /// Calculate memory savings from quantization
-pub fn calculate_compression_ratio(
-    original_dims: usize,
-    qtype: QuantizationType,
-) -> f32 {
+pub fn calculate_compression_ratio(original_dims: usize, qtype: QuantizationType) -> f32 {
     let original_bytes = original_dims * 4; // float32 = 4 bytes
     let quantized_bytes = match qtype {
         QuantizationType::None => original_bytes,

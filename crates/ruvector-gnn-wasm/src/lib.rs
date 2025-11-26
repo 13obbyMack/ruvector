@@ -7,13 +7,13 @@
 //! - Differentiable search with soft attention
 //! - Hierarchical forward propagation
 
-use wasm_bindgen::prelude::*;
-use serde::{Deserialize, Serialize};
 use ruvector_gnn::{
-    RuvectorLayer, TensorCompress, CompressedTensor, CompressionLevel,
     differentiable_search as core_differentiable_search,
-    hierarchical_forward as core_hierarchical_forward,
+    hierarchical_forward as core_hierarchical_forward, CompressedTensor, CompressionLevel,
+    RuvectorLayer, TensorCompress,
 };
+use serde::{Deserialize, Serialize};
+use wasm_bindgen::prelude::*;
 
 /// Initialize panic hook for better error messages
 #[wasm_bindgen(start)]
@@ -75,7 +75,12 @@ impl JsRuvectorLayer {
     /// * `heads` - Number of attention heads
     /// * `dropout` - Dropout rate (0.0 to 1.0)
     #[wasm_bindgen(constructor)]
-    pub fn new(input_dim: usize, hidden_dim: usize, heads: usize, dropout: f32) -> Result<JsRuvectorLayer, JsValue> {
+    pub fn new(
+        input_dim: usize,
+        hidden_dim: usize,
+        heads: usize,
+        dropout: f32,
+    ) -> Result<JsRuvectorLayer, JsValue> {
         if dropout < 0.0 || dropout > 1.0 {
             return Err(JsValue::from_str("Dropout must be between 0.0 and 1.0"));
         }
@@ -104,7 +109,9 @@ impl JsRuvectorLayer {
     ) -> Result<Vec<f32>, JsValue> {
         // Convert neighbor embeddings from JS value
         let neighbors: Vec<Vec<f32>> = serde_wasm_bindgen::from_value(neighbor_embeddings)
-            .map_err(|e| JsValue::from_str(&format!("Failed to parse neighbor embeddings: {}", e)))?;
+            .map_err(|e| {
+                JsValue::from_str(&format!("Failed to parse neighbor embeddings: {}", e))
+            })?;
 
         // Validate inputs
         if neighbors.len() != edge_weights.len() {
@@ -116,7 +123,9 @@ impl JsRuvectorLayer {
         }
 
         // Call core forward
-        let result = self.inner.forward(&node_embedding, &neighbors, &edge_weights);
+        let result = self
+            .inner
+            .forward(&node_embedding, &neighbors, &edge_weights);
 
         Ok(result)
     }
@@ -163,7 +172,8 @@ impl JsTensorCompress {
     /// Compressed tensor as JsValue
     #[wasm_bindgen]
     pub fn compress(&self, embedding: Vec<f32>, access_freq: f32) -> Result<JsValue, JsValue> {
-        let compressed = self.inner
+        let compressed = self
+            .inner
             .compress(&embedding, access_freq)
             .map_err(|e| JsValue::from_str(&format!("Compression failed: {}", e)))?;
 
@@ -181,7 +191,11 @@ impl JsTensorCompress {
     /// # Returns
     /// Compressed tensor as JsValue
     #[wasm_bindgen(js_name = compressWithLevel)]
-    pub fn compress_with_level(&self, embedding: Vec<f32>, level: &str) -> Result<JsValue, JsValue> {
+    pub fn compress_with_level(
+        &self,
+        embedding: Vec<f32>,
+        level: &str,
+    ) -> Result<JsValue, JsValue> {
         let compression_level = match level {
             "none" => CompressionLevel::None,
             "half" => CompressionLevel::Half { scale: 1.0 },
@@ -194,10 +208,16 @@ impl JsTensorCompress {
                 outlier_threshold: 3.0,
             },
             "binary" => CompressionLevel::Binary { threshold: 0.0 },
-            _ => return Err(JsValue::from_str(&format!("Unknown compression level: {}", level))),
+            _ => {
+                return Err(JsValue::from_str(&format!(
+                    "Unknown compression level: {}",
+                    level
+                )))
+            }
         };
 
-        let compressed = self.inner
+        let compressed = self
+            .inner
             .compress_with_level(&embedding, &compression_level)
             .map_err(|e| JsValue::from_str(&format!("Compression failed: {}", e)))?;
 
@@ -218,7 +238,8 @@ impl JsTensorCompress {
         let compressed_tensor: CompressedTensor = serde_wasm_bindgen::from_value(compressed)
             .map_err(|e| JsValue::from_str(&format!("Deserialization failed: {}", e)))?;
 
-        let decompressed = self.inner
+        let decompressed = self
+            .inner
             .decompress(&compressed_tensor)
             .map_err(|e| JsValue::from_str(&format!("Decompression failed: {}", e)))?;
 
@@ -272,12 +293,8 @@ pub fn differentiable_search(
         .map_err(|e| JsValue::from_str(&format!("Failed to parse candidate embeddings: {}", e)))?;
 
     // Call core search function
-    let (indices, weights) = core_differentiable_search(
-        &query,
-        &candidates,
-        config.k,
-        config.temperature,
-    );
+    let (indices, weights) =
+        core_differentiable_search(&query, &candidates, config.k, config.temperature);
 
     let result = SearchResultInternal { indices, weights };
     serde_wasm_bindgen::to_value(&result)

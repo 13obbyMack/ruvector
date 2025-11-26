@@ -199,8 +199,12 @@ mod tests {
         let result = euclidean_distance_avx2(&a, &b);
         let expected = euclidean_distance_scalar(&a, &b);
 
-        assert!((result - expected).abs() < 0.001,
-            "AVX2 result {} differs from scalar result {}", result, expected);
+        assert!(
+            (result - expected).abs() < 0.001,
+            "AVX2 result {} differs from scalar result {}",
+            result,
+            expected
+        );
     }
 
     #[test]

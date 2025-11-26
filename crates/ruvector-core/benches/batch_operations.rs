@@ -1,6 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use ruvector_core::{VectorDB, DbOptions, VectorEntry};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use ruvector_core::types::{DistanceMetric, SearchQuery};
+use ruvector_core::{DbOptions, VectorDB, VectorEntry};
 use tempfile::tempdir;
 
 fn bench_batch_insert(c: &mut Criterion) {
@@ -16,7 +16,8 @@ fn bench_batch_insert(c: &mut Criterion) {
                         // Setup: Create DB and vectors
                         let dir = tempdir().unwrap();
                         let mut options = DbOptions::default();
-                        options.storage_path = dir.path().join("bench.db").to_string_lossy().to_string();
+                        options.storage_path =
+                            dir.path().join("bench.db").to_string_lossy().to_string();
                         options.dimensions = 128;
                         options.hnsw_config = None; // Use flat index for faster insertion
 
@@ -100,9 +101,7 @@ fn bench_individual_insert_vs_batch(c: &mut Criterion) {
 
                 (db, vectors, dir)
             },
-            |(db, vectors, _dir)| {
-                db.insert_batch(black_box(vectors)).unwrap()
-            },
+            |(db, vectors, _dir)| db.insert_batch(black_box(vectors)).unwrap(),
             criterion::BatchSize::LargeInput,
         );
     });
@@ -113,7 +112,11 @@ fn bench_individual_insert_vs_batch(c: &mut Criterion) {
 fn bench_parallel_searches(c: &mut Criterion) {
     let dir = tempdir().unwrap();
     let mut options = DbOptions::default();
-    options.storage_path = dir.path().join("search_bench.db").to_string_lossy().to_string();
+    options.storage_path = dir
+        .path()
+        .join("search_bench.db")
+        .to_string_lossy()
+        .to_string();
     options.dimensions = 128;
     options.distance_metric = DistanceMetric::Cosine;
     options.hnsw_config = None;
@@ -136,12 +139,14 @@ fn bench_parallel_searches(c: &mut Criterion) {
         bench.iter(|| {
             for i in 0..100 {
                 let query: Vec<f32> = (0..128).map(|j| ((i + j) as f32) * 0.01).collect();
-                let _ = db.search(SearchQuery {
-                    vector: black_box(query),
-                    k: 10,
-                    filter: None,
-                    ef_search: None,
-                }).unwrap();
+                let _ = db
+                    .search(SearchQuery {
+                        vector: black_box(query),
+                        k: 10,
+                        filter: None,
+                        ef_search: None,
+                    })
+                    .unwrap();
             }
         });
     });
@@ -151,42 +156,39 @@ fn bench_batch_delete(c: &mut Criterion) {
     let mut group = c.benchmark_group("batch_delete");
 
     for size in [100, 1000].iter() {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(size),
-            size,
-            |bench, &size| {
-                bench.iter_batched(
-                    || {
-                        // Setup: Create DB with vectors
-                        let dir = tempdir().unwrap();
-                        let mut options = DbOptions::default();
-                        options.storage_path = dir.path().join("bench.db").to_string_lossy().to_string();
-                        options.dimensions = 32;
-                        options.hnsw_config = None;
+        group.bench_with_input(BenchmarkId::from_parameter(size), size, |bench, &size| {
+            bench.iter_batched(
+                || {
+                    // Setup: Create DB with vectors
+                    let dir = tempdir().unwrap();
+                    let mut options = DbOptions::default();
+                    options.storage_path =
+                        dir.path().join("bench.db").to_string_lossy().to_string();
+                    options.dimensions = 32;
+                    options.hnsw_config = None;
 
-                        let db = VectorDB::new(options).unwrap();
+                    let db = VectorDB::new(options).unwrap();
 
-                        let vectors: Vec<VectorEntry> = (0..size)
-                            .map(|i| VectorEntry {
-                                id: Some(format!("vec_{}", i)),
-                                vector: vec![i as f32; 32],
-                                metadata: None,
-                            })
-                            .collect();
+                    let vectors: Vec<VectorEntry> = (0..size)
+                        .map(|i| VectorEntry {
+                            id: Some(format!("vec_{}", i)),
+                            vector: vec![i as f32; 32],
+                            metadata: None,
+                        })
+                        .collect();
 
-                        let ids = db.insert_batch(vectors).unwrap();
-                        (db, ids, dir)
-                    },
-                    |(db, ids, _dir)| {
-                        // Benchmark: Delete all
-                        for id in ids {
-                            db.delete(black_box(&id)).unwrap();
-                        }
-                    },
-                    criterion::BatchSize::LargeInput,
-                );
-            },
-        );
+                    let ids = db.insert_batch(vectors).unwrap();
+                    (db, ids, dir)
+                },
+                |(db, ids, _dir)| {
+                    // Benchmark: Delete all
+                    for id in ids {
+                        db.delete(black_box(&id)).unwrap();
+                    }
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        });
     }
 
     group.finish();

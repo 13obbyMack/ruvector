@@ -6,8 +6,8 @@
 use crossbeam::queue::SegQueue;
 use rayon::prelude::*;
 use std::collections::{HashSet, VecDeque};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
@@ -141,7 +141,11 @@ impl SimdTraversal {
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
-    unsafe fn batch_property_access_f32_avx2(&self, properties: &[f32], indices: &[usize]) -> Vec<f32> {
+    unsafe fn batch_property_access_f32_avx2(
+        &self,
+        properties: &[f32],
+        indices: &[usize],
+    ) -> Vec<f32> {
         let mut result = Vec::with_capacity(indices.len());
 
         // Gather operation using AVX2
@@ -204,7 +208,9 @@ impl SimdTraversal {
                                 active_workers.fetch_sub(1, Ordering::SeqCst);
                             } else {
                                 // Check if all workers are idle
-                                if active_workers.load(Ordering::SeqCst) == 0 && work_queue.is_empty() {
+                                if active_workers.load(Ordering::SeqCst) == 0
+                                    && work_queue.is_empty()
+                                {
                                     break;
                                 }
                                 std::thread::yield_now();
@@ -333,11 +339,11 @@ mod tests {
 
         // Create a simple graph: 0 -> [1, 2], 1 -> [3], 2 -> [4]
         let graph = vec![
-            vec![1, 2],  // Node 0
-            vec![3],     // Node 1
-            vec![4],     // Node 2
-            vec![],      // Node 3
-            vec![],      // Node 4
+            vec![1, 2], // Node 0
+            vec![3],    // Node 1
+            vec![4],    // Node 2
+            vec![],     // Node 3
+            vec![],     // Node 4
         ];
 
         let result = traversal.simd_bfs(&[0], |node| {
@@ -351,13 +357,7 @@ mod tests {
     fn test_parallel_dfs() {
         let traversal = SimdTraversal::new();
 
-        let graph = vec![
-            vec![1, 2],
-            vec![3],
-            vec![4],
-            vec![],
-            vec![],
-        ];
+        let graph = vec![vec![1, 2], vec![3], vec![4], vec![], vec![]];
 
         let result = traversal.parallel_dfs(0, |node| {
             graph.get(node as usize).cloned().unwrap_or_default()
@@ -370,13 +370,7 @@ mod tests {
     fn test_simd_bfs_iterator() {
         let mut iter = SimdBfsIterator::new(vec![0]);
 
-        let graph = vec![
-            vec![1, 2],
-            vec![3],
-            vec![4],
-            vec![],
-            vec![],
-        ];
+        let graph = vec![vec![1, 2], vec![3], vec![4], vec![], vec![]];
 
         let mut all_nodes = Vec::new();
         while !iter.is_empty() {

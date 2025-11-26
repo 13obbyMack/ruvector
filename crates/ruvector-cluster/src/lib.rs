@@ -279,7 +279,10 @@ impl ClusterManager {
 
     /// List all nodes in the cluster
     pub fn list_nodes(&self) -> Vec<ClusterNode> {
-        self.nodes.iter().map(|entry| entry.value().clone()).collect()
+        self.nodes
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
     }
 
     /// Get healthy nodes only
@@ -298,7 +301,10 @@ impl ClusterManager {
 
     /// List all shards
     pub fn list_shards(&self) -> Vec<ShardInfo> {
-        self.shards.iter().map(|entry| entry.value().clone()).collect()
+        self.shards
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
     }
 
     /// Assign a shard to nodes using consistent hashing

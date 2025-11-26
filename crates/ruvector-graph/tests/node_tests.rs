@@ -2,19 +2,24 @@
 //!
 //! Tests for creating, reading, updating, and deleting nodes in the graph database.
 
-use ruvector_graph::{GraphDB, Node, Label, Properties, PropertyValue};
+use ruvector_graph::{GraphDB, Label, Node, Properties, PropertyValue};
 
 #[test]
 fn test_create_node_basic() {
     let db = GraphDB::new();
 
     let mut properties = Properties::new();
-    properties.insert("name".to_string(), PropertyValue::String("Alice".to_string()));
+    properties.insert(
+        "name".to_string(),
+        PropertyValue::String("Alice".to_string()),
+    );
     properties.insert("age".to_string(), PropertyValue::Integer(30));
 
     let node = Node::new(
         "node1".to_string(),
-        vec![Label { name: "Person".to_string() }],
+        vec![Label {
+            name: "Person".to_string(),
+        }],
         properties,
     );
 
@@ -31,7 +36,9 @@ fn test_get_node_existing() {
 
     let node = Node::new(
         "node2".to_string(),
-        vec![Label { name: "Person".to_string() }],
+        vec![Label {
+            name: "Person".to_string(),
+        }],
         properties.clone(),
     );
 
@@ -39,7 +46,10 @@ fn test_get_node_existing() {
 
     let retrieved = db.get_node("node2").unwrap();
     assert_eq!(retrieved.id, "node2");
-    assert_eq!(retrieved.properties.get("name"), Some(&PropertyValue::String("Bob".to_string())));
+    assert_eq!(
+        retrieved.properties.get("name"),
+        Some(&PropertyValue::String("Bob".to_string()))
+    );
 }
 
 #[test]
@@ -54,13 +64,22 @@ fn test_node_with_multiple_labels() {
     let db = GraphDB::new();
 
     let labels = vec![
-        Label { name: "Person".to_string() },
-        Label { name: "Employee".to_string() },
-        Label { name: "Manager".to_string() },
+        Label {
+            name: "Person".to_string(),
+        },
+        Label {
+            name: "Employee".to_string(),
+        },
+        Label {
+            name: "Manager".to_string(),
+        },
     ];
 
     let mut properties = Properties::new();
-    properties.insert("name".to_string(), PropertyValue::String("Charlie".to_string()));
+    properties.insert(
+        "name".to_string(),
+        PropertyValue::String("Charlie".to_string()),
+    );
 
     let node = Node::new("node3".to_string(), labels, properties);
     db.create_node(node).unwrap();
@@ -74,18 +93,26 @@ fn test_node_with_complex_properties() {
     let db = GraphDB::new();
 
     let mut properties = Properties::new();
-    properties.insert("name".to_string(), PropertyValue::String("David".to_string()));
+    properties.insert(
+        "name".to_string(),
+        PropertyValue::String("David".to_string()),
+    );
     properties.insert("age".to_string(), PropertyValue::Integer(35));
     properties.insert("height".to_string(), PropertyValue::Float(1.82));
     properties.insert("active".to_string(), PropertyValue::Boolean(true));
-    properties.insert("tags".to_string(), PropertyValue::List(vec![
-        PropertyValue::String("developer".to_string()),
-        PropertyValue::String("team-lead".to_string()),
-    ]));
+    properties.insert(
+        "tags".to_string(),
+        PropertyValue::List(vec![
+            PropertyValue::String("developer".to_string()),
+            PropertyValue::String("team-lead".to_string()),
+        ]),
+    );
 
     let node = Node::new(
         "node4".to_string(),
-        vec![Label { name: "Person".to_string() }],
+        vec![Label {
+            name: "Person".to_string(),
+        }],
         properties,
     );
 
@@ -93,7 +120,10 @@ fn test_node_with_complex_properties() {
 
     let retrieved = db.get_node("node4").unwrap();
     assert_eq!(retrieved.properties.len(), 5);
-    assert!(matches!(retrieved.properties.get("tags"), Some(PropertyValue::List(_))));
+    assert!(matches!(
+        retrieved.properties.get("tags"),
+        Some(PropertyValue::List(_))
+    ));
 }
 
 #[test]
@@ -102,7 +132,9 @@ fn test_node_with_empty_properties() {
 
     let node = Node::new(
         "node5".to_string(),
-        vec![Label { name: "EmptyNode".to_string() }],
+        vec![Label {
+            name: "EmptyNode".to_string(),
+        }],
         Properties::new(),
     );
 
@@ -117,7 +149,10 @@ fn test_node_with_no_labels() {
     let db = GraphDB::new();
 
     let mut properties = Properties::new();
-    properties.insert("data".to_string(), PropertyValue::String("test".to_string()));
+    properties.insert(
+        "data".to_string(),
+        PropertyValue::String("test".to_string()),
+    );
 
     let node = Node::new("node6".to_string(), vec![], properties);
 
@@ -136,7 +171,9 @@ fn test_node_property_update() {
 
     let node = Node::new(
         "node7".to_string(),
-        vec![Label { name: "Counter".to_string() }],
+        vec![Label {
+            name: "Counter".to_string(),
+        }],
         properties,
     );
 
@@ -149,14 +186,19 @@ fn test_node_property_update() {
 
     let updated_node = Node::new(
         "node7".to_string(),
-        vec![Label { name: "Counter".to_string() }],
+        vec![Label {
+            name: "Counter".to_string(),
+        }],
         updated_properties,
     );
 
     db.create_node(updated_node).unwrap();
 
     let retrieved = db.get_node("node7").unwrap();
-    assert_eq!(retrieved.properties.get("counter"), Some(&PropertyValue::Integer(1)));
+    assert_eq!(
+        retrieved.properties.get("counter"),
+        Some(&PropertyValue::Integer(1))
+    );
 }
 
 #[test]
@@ -169,7 +211,9 @@ fn test_create_1000_nodes() {
 
         let node = Node::new(
             format!("node_{}", i),
-            vec![Label { name: "TestNode".to_string() }],
+            vec![Label {
+                name: "TestNode".to_string(),
+            }],
             properties,
         );
 
@@ -192,14 +236,19 @@ fn test_node_property_null_value() {
 
     let node = Node::new(
         "node8".to_string(),
-        vec![Label { name: "NullTest".to_string() }],
+        vec![Label {
+            name: "NullTest".to_string(),
+        }],
         properties,
     );
 
     db.create_node(node).unwrap();
 
     let retrieved = db.get_node("node8").unwrap();
-    assert_eq!(retrieved.properties.get("nullable"), Some(&PropertyValue::Null));
+    assert_eq!(
+        retrieved.properties.get("nullable"),
+        Some(&PropertyValue::Null)
+    );
 }
 
 #[test]
@@ -207,20 +256,19 @@ fn test_node_nested_list_properties() {
     let db = GraphDB::new();
 
     let mut properties = Properties::new();
-    properties.insert("matrix".to_string(), PropertyValue::List(vec![
+    properties.insert(
+        "matrix".to_string(),
         PropertyValue::List(vec![
-            PropertyValue::Integer(1),
-            PropertyValue::Integer(2),
+            PropertyValue::List(vec![PropertyValue::Integer(1), PropertyValue::Integer(2)]),
+            PropertyValue::List(vec![PropertyValue::Integer(3), PropertyValue::Integer(4)]),
         ]),
-        PropertyValue::List(vec![
-            PropertyValue::Integer(3),
-            PropertyValue::Integer(4),
-        ]),
-    ]));
+    );
 
     let node = Node::new(
         "node9".to_string(),
-        vec![Label { name: "Matrix".to_string() }],
+        vec![Label {
+            name: "Matrix".to_string(),
+        }],
         properties,
     );
 
@@ -260,7 +308,9 @@ mod property_tests {
         prop_oneof![
             any::<String>().prop_map(PropertyValue::String),
             any::<i64>().prop_map(PropertyValue::Integer),
-            any::<f64>().prop_filter("Must be finite", |x| x.is_finite()).prop_map(PropertyValue::Float),
+            any::<f64>()
+                .prop_filter("Must be finite", |x| x.is_finite())
+                .prop_map(PropertyValue::Float),
             any::<bool>().prop_map(PropertyValue::Boolean),
             Just(PropertyValue::Null),
         ]

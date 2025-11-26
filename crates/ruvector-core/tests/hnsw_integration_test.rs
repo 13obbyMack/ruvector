@@ -70,10 +70,7 @@ fn test_hnsw_100_vectors() -> Result<()> {
 
     // Generate and insert vectors
     let vectors = generate_random_vectors(num_vectors, dimensions, 42);
-    let normalized_vectors: Vec<_> = vectors
-        .iter()
-        .map(|v| normalize_vector(v))
-        .collect();
+    let normalized_vectors: Vec<_> = vectors.iter().map(|v| normalize_vector(v)).collect();
 
     for (i, vector) in normalized_vectors.iter().enumerate() {
         index.add(format!("vec_{}", i), vector.clone())?;
@@ -107,10 +104,17 @@ fn test_hnsw_100_vectors() -> Result<()> {
     }
 
     let avg_recall = total_recall / num_queries as f32;
-    println!("100 vectors - Average recall@{}: {:.2}%", k, avg_recall * 100.0);
+    println!(
+        "100 vectors - Average recall@{}: {:.2}%",
+        k,
+        avg_recall * 100.0
+    );
 
     // For small datasets, we expect very high recall
-    assert!(avg_recall >= 0.90, "Recall should be at least 90% for 100 vectors");
+    assert!(
+        avg_recall >= 0.90,
+        "Recall should be at least 90% for 100 vectors"
+    );
 
     Ok(())
 }
@@ -132,10 +136,7 @@ fn test_hnsw_1k_vectors() -> Result<()> {
 
     // Generate and insert vectors
     let vectors = generate_random_vectors(num_vectors, dimensions, 12345);
-    let normalized_vectors: Vec<_> = vectors
-        .iter()
-        .map(|v| normalize_vector(v))
-        .collect();
+    let normalized_vectors: Vec<_> = vectors.iter().map(|v| normalize_vector(v)).collect();
 
     // Use batch insert for better performance
     let entries: Vec<_> = normalized_vectors
@@ -170,10 +171,17 @@ fn test_hnsw_1k_vectors() -> Result<()> {
     }
 
     let avg_recall = total_recall / num_queries as f32;
-    println!("1K vectors - Average recall@{}: {:.2}%", k, avg_recall * 100.0);
+    println!(
+        "1K vectors - Average recall@{}: {:.2}%",
+        k,
+        avg_recall * 100.0
+    );
 
     // Should achieve at least 95% recall with ef_search=200
-    assert!(avg_recall >= 0.95, "Recall should be at least 95% for 1K vectors with ef_search=200");
+    assert!(
+        avg_recall >= 0.95,
+        "Recall should be at least 95% for 1K vectors with ef_search=200"
+    );
 
     Ok(())
 }
@@ -195,10 +203,7 @@ fn test_hnsw_10k_vectors() -> Result<()> {
 
     println!("Generating {} vectors...", num_vectors);
     let vectors = generate_random_vectors(num_vectors, dimensions, 98765);
-    let normalized_vectors: Vec<_> = vectors
-        .iter()
-        .map(|v| normalize_vector(v))
-        .collect();
+    let normalized_vectors: Vec<_> = vectors.iter().map(|v| normalize_vector(v)).collect();
 
     println!("Inserting vectors in batches...");
     // Insert in batches for better performance
@@ -245,11 +250,18 @@ fn test_hnsw_10k_vectors() -> Result<()> {
     }
 
     let avg_recall = total_recall / num_queries as f32;
-    println!("10K vectors - Average recall@{}: {:.2}%", k, avg_recall * 100.0);
+    println!(
+        "10K vectors - Average recall@{}: {:.2}%",
+        k,
+        avg_recall * 100.0
+    );
 
     // Should achieve at least 95% recall with ef_search=200
     // Note: This is comparing against a sample, so we allow slightly lower recall
-    assert!(avg_recall >= 0.85, "Recall should be at least 85% for 10K vectors");
+    assert!(
+        avg_recall >= 0.85,
+        "Recall should be at least 85% for 10K vectors"
+    );
 
     Ok(())
 }
@@ -270,10 +282,7 @@ fn test_hnsw_ef_search_tuning() -> Result<()> {
     let mut index = HnswIndex::new(dimensions, DistanceMetric::Cosine, config)?;
 
     let vectors = generate_random_vectors(num_vectors, dimensions, 54321);
-    let normalized_vectors: Vec<_> = vectors
-        .iter()
-        .map(|v| normalize_vector(v))
-        .collect();
+    let normalized_vectors: Vec<_> = vectors.iter().map(|v| normalize_vector(v)).collect();
 
     let entries: Vec<_> = normalized_vectors
         .iter()
@@ -303,13 +312,19 @@ fn test_hnsw_ef_search_tuning() -> Result<()> {
                 .map(|(idx, v)| (format!("vec_{}", idx), v.clone()))
                 .collect();
 
-            let ground_truth = brute_force_search(query, &vectors_with_ids, k, DistanceMetric::Cosine);
+            let ground_truth =
+                brute_force_search(query, &vectors_with_ids, k, DistanceMetric::Cosine);
             let recall = calculate_recall(&ground_truth, &result_ids);
             total_recall += recall;
         }
 
         let avg_recall = total_recall / num_queries as f32;
-        println!("ef_search={} - Average recall@{}: {:.2}%", ef, k, avg_recall * 100.0);
+        println!(
+            "ef_search={} - Average recall@{}: {:.2}%",
+            ef,
+            k,
+            avg_recall * 100.0
+        );
     }
 
     // Verify that ef_search=200 achieves at least 95% recall
@@ -335,7 +350,10 @@ fn test_hnsw_ef_search_tuning() -> Result<()> {
     }
 
     let avg_recall = total_recall / num_queries as f32;
-    assert!(avg_recall >= 0.95, "ef_search=200 should achieve at least 95% recall");
+    assert!(
+        avg_recall >= 0.95,
+        "ef_search=200 should achieve at least 95% recall"
+    );
 
     Ok(())
 }
@@ -355,10 +373,7 @@ fn test_hnsw_serialization_large() -> Result<()> {
     let mut index = HnswIndex::new(dimensions, DistanceMetric::Cosine, config)?;
 
     let vectors = generate_random_vectors(num_vectors, dimensions, 11111);
-    let normalized_vectors: Vec<_> = vectors
-        .iter()
-        .map(|v| normalize_vector(v))
-        .collect();
+    let normalized_vectors: Vec<_> = vectors.iter().map(|v| normalize_vector(v)).collect();
 
     let entries: Vec<_> = normalized_vectors
         .iter()
@@ -371,7 +386,11 @@ fn test_hnsw_serialization_large() -> Result<()> {
     // Serialize
     println!("Serializing index with {} vectors...", num_vectors);
     let bytes = index.serialize()?;
-    println!("Serialized size: {} bytes ({:.2} KB)", bytes.len(), bytes.len() as f32 / 1024.0);
+    println!(
+        "Serialized size: {} bytes ({:.2} KB)",
+        bytes.len(),
+        bytes.len() as f32 / 1024.0
+    );
 
     // Deserialize
     println!("Deserializing index...");
@@ -417,10 +436,7 @@ fn test_hnsw_different_metrics() -> Result<()> {
         let mut index = HnswIndex::new(dimensions, metric, config)?;
 
         let vectors = generate_random_vectors(num_vectors, dimensions, 99999);
-        let normalized_vectors: Vec<_> = vectors
-            .iter()
-            .map(|v| normalize_vector(v))
-            .collect();
+        let normalized_vectors: Vec<_> = vectors.iter().map(|v| normalize_vector(v)).collect();
 
         for (i, vector) in normalized_vectors.iter().enumerate() {
             index.add(format!("vec_{}", i), vector.clone())?;
@@ -452,10 +468,7 @@ fn test_hnsw_parallel_batch_insert() -> Result<()> {
     let mut index = HnswIndex::new(dimensions, DistanceMetric::Cosine, config)?;
 
     let vectors = generate_random_vectors(num_vectors, dimensions, 77777);
-    let normalized_vectors: Vec<_> = vectors
-        .iter()
-        .map(|v| normalize_vector(v))
-        .collect();
+    let normalized_vectors: Vec<_> = vectors.iter().map(|v| normalize_vector(v)).collect();
 
     let entries: Vec<_> = normalized_vectors
         .iter()
@@ -469,7 +482,10 @@ fn test_hnsw_parallel_batch_insert() -> Result<()> {
     let duration = start.elapsed();
 
     println!("Batch inserted {} vectors in {:?}", num_vectors, duration);
-    println!("Throughput: {:.0} vectors/sec", num_vectors as f64 / duration.as_secs_f64());
+    println!(
+        "Throughput: {:.0} vectors/sec",
+        num_vectors as f64 / duration.as_secs_f64()
+    );
 
     assert_eq!(index.len(), num_vectors);
 

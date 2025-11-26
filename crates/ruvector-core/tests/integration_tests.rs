@@ -2,8 +2,8 @@
 //!
 //! These tests verify that all components work together correctly.
 
-use ruvector_core::{VectorDB, DbOptions, VectorEntry};
 use ruvector_core::types::*;
+use ruvector_core::{DbOptions, VectorDB, VectorEntry};
 use std::collections::HashMap;
 use tempfile::tempdir;
 
@@ -46,12 +46,14 @@ fn test_complete_insert_search_workflow() {
 
     // Search for similar vectors
     let query: Vec<f32> = (0..128).map(|j| (j as f32) * 0.01).collect();
-    let results = db.search(SearchQuery {
-        vector: query,
-        k: 10,
-        filter: None,
-        ef_search: Some(100),
-    }).unwrap();
+    let results = db
+        .search(SearchQuery {
+            vector: query,
+            k: 10,
+            filter: None,
+            ef_search: Some(100),
+        })
+        .unwrap();
 
     assert_eq!(results.len(), 10);
     assert!(results[0].vector.is_some());
@@ -93,12 +95,14 @@ fn test_batch_operations_10k_vectors() {
     println!("Performing searches...");
     for i in 0..10 {
         let query: Vec<f32> = (0..384).map(|j| ((i * 100 + j) as f32) * 0.001).collect();
-        let results = db.search(SearchQuery {
-            vector: query,
-            k: 10,
-            filter: None,
-            ef_search: None,
-        }).unwrap();
+        let results = db
+            .search(SearchQuery {
+                vector: query,
+                k: 10,
+                filter: None,
+                ef_search: None,
+            })
+            .unwrap();
 
         assert_eq!(results.len(), 10);
     }
@@ -107,7 +111,11 @@ fn test_batch_operations_10k_vectors() {
 #[test]
 fn test_persistence_and_reload() {
     let dir = tempdir().unwrap();
-    let db_path = dir.path().join("persistent.db").to_string_lossy().to_string();
+    let db_path = dir
+        .path()
+        .join("persistent.db")
+        .to_string_lossy()
+        .to_string();
 
     // Create and populate database
     {
@@ -123,7 +131,8 @@ fn test_persistence_and_reload() {
                 id: Some(format!("vec_{}", i)),
                 vector: vec![i as f32, (i * 2) as f32, (i * 3) as f32],
                 metadata: None,
-            }).unwrap();
+            })
+            .unwrap();
         }
 
         assert_eq!(db.len().unwrap(), 10);
@@ -179,18 +188,21 @@ fn test_mixed_operations_workflow() {
             id: Some(format!("vec_{}", i)),
             vector: (0..64).map(|j| ((i + j) as f32) * 0.1).collect(),
             metadata: None,
-        }).unwrap();
+        })
+        .unwrap();
     }
     assert_eq!(db.len().unwrap(), 50);
 
     // Search
     let query: Vec<f32> = (0..64).map(|j| (j as f32) * 0.1).collect();
-    let results = db.search(SearchQuery {
-        vector: query,
-        k: 20,
-        filter: None,
-        ef_search: None,
-    }).unwrap();
+    let results = db
+        .search(SearchQuery {
+            vector: query,
+            k: 20,
+            filter: None,
+            ef_search: None,
+        })
+        .unwrap();
 
     assert!(results.len() > 0);
 }
@@ -224,17 +236,20 @@ fn test_all_distance_metrics() {
                 id: Some(format!("vec_{}", i)),
                 vector: (0..32).map(|j| ((i + j) as f32) * 0.1).collect(),
                 metadata: None,
-            }).unwrap();
+            })
+            .unwrap();
         }
 
         // Search
         let query: Vec<f32> = (0..32).map(|j| (j as f32) * 0.1).collect();
-        let results = db.search(SearchQuery {
-            vector: query,
-            k: 5,
-            filter: None,
-            ef_search: None,
-        }).unwrap();
+        let results = db
+            .search(SearchQuery {
+                vector: query,
+                k: 5,
+                filter: None,
+                ef_search: None,
+            })
+            .unwrap();
 
         assert_eq!(results.len(), 5, "Failed for metric {:?}", metric);
 
@@ -300,12 +315,14 @@ fn test_hnsw_different_configurations() {
 
         // Search with different ef_search values
         let query: Vec<f32> = (0..64).map(|j| (j as f32) * 0.01).collect();
-        let results = db.search(SearchQuery {
-            vector: query,
-            k: 10,
-            filter: None,
-            ef_search: Some(config.ef_search),
-        }).unwrap();
+        let results = db
+            .search(SearchQuery {
+                vector: query,
+                k: 10,
+                filter: None,
+                ef_search: Some(config.ef_search),
+            })
+            .unwrap();
 
         assert_eq!(results.len(), 10, "Failed for config M={}", config.m);
     }
@@ -335,7 +352,8 @@ fn test_complex_metadata_filtering() {
             id: Some(format!("vec_{}", i)),
             vector: (0..16).map(|j| ((i + j) as f32) * 0.1).collect(),
             metadata: Some(metadata),
-        }).unwrap();
+        })
+        .unwrap();
     }
 
     // Search with single filter
@@ -343,12 +361,14 @@ fn test_complex_metadata_filtering() {
     filter1.insert("category".to_string(), serde_json::json!(0));
 
     let query: Vec<f32> = (0..16).map(|j| (j as f32) * 0.1).collect();
-    let results1 = db.search(SearchQuery {
-        vector: query.clone(),
-        k: 100,
-        filter: Some(filter1),
-        ef_search: None,
-    }).unwrap();
+    let results1 = db
+        .search(SearchQuery {
+            vector: query.clone(),
+            k: 100,
+            filter: Some(filter1),
+            ef_search: None,
+        })
+        .unwrap();
 
     // Should only get vectors where i % 3 == 0
     for result in &results1 {
@@ -360,12 +380,14 @@ fn test_complex_metadata_filtering() {
     let mut filter2 = HashMap::new();
     filter2.insert("value".to_string(), serde_json::json!(2));
 
-    let results2 = db.search(SearchQuery {
-        vector: query,
-        k: 100,
-        filter: Some(filter2),
-        ef_search: None,
-    }).unwrap();
+    let results2 = db
+        .search(SearchQuery {
+            vector: query,
+            k: 100,
+            filter: Some(filter2),
+            ef_search: None,
+        })
+        .unwrap();
 
     // Should only get vectors where i / 10 == 2 (i.e., i in 20..30)
     for result in &results2 {
@@ -412,7 +434,8 @@ fn test_search_with_wrong_dimension() {
         id: Some("v1".to_string()),
         vector: (0..64).map(|i| i as f32).collect(),
         metadata: None,
-    }).unwrap();
+    })
+    .unwrap();
 
     // Try to search with wrong dimension query
     // Note: This might not error in the current implementation, but should be validated

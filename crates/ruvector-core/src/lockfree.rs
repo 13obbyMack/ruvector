@@ -5,7 +5,7 @@
 
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use crossbeam::utils::CachePadded;
-use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// Lock-free counter with cache padding to prevent false sharing
@@ -58,7 +58,8 @@ impl LockFreeStats {
     #[inline]
     pub fn record_query(&self, latency_ns: u64) {
         self.queries.fetch_add(1, Ordering::Relaxed);
-        self.total_latency_ns.fetch_add(latency_ns, Ordering::Relaxed);
+        self.total_latency_ns
+            .fetch_add(latency_ns, Ordering::Relaxed);
     }
 
     #[inline]

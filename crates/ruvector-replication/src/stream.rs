@@ -3,7 +3,7 @@
 //! Provides mechanisms for streaming changes from the replication log
 //! with support for checkpointing, resumption, and backpressure handling.
 
-use crate::{LogEntry, ReplicationLog, Result, ReplicationError};
+use crate::{LogEntry, ReplicationError, ReplicationLog, Result};
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,12 @@ impl ChangeEvent {
     }
 
     /// Convert from a log entry
-    pub fn from_log_entry(entry: &LogEntry, operation: ChangeOperation, collection: String, document_id: String) -> Self {
+    pub fn from_log_entry(
+        entry: &LogEntry,
+        operation: ChangeOperation,
+        collection: String,
+        document_id: String,
+    ) -> Self {
         Self {
             id: entry.id,
             sequence: entry.sequence,
@@ -202,10 +207,8 @@ impl ReplicationStream {
 
             loop {
                 // Get batch of entries
-                let entries = log.get_range(
-                    current_sequence + 1,
-                    current_sequence + batch_size as u64,
-                );
+                let entries =
+                    log.get_range(current_sequence + 1, current_sequence + batch_size as u64);
 
                 if entries.is_empty() {
                     // No new entries, wait a bit
@@ -348,8 +351,7 @@ mod tests {
 
     #[test]
     fn test_checkpoint() {
-        let cp = Checkpoint::new(100, "consumer-1")
-            .with_group("group-1");
+        let cp = Checkpoint::new(100, "consumer-1").with_group("group-1");
 
         assert_eq!(cp.sequence, 100);
         assert_eq!(cp.consumer_id, "consumer-1");

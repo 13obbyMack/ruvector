@@ -46,7 +46,10 @@ impl ConsistentHashRing {
         }
 
         self.nodes.insert(node_id, VIRTUAL_NODE_COUNT);
-        debug!("Added node to hash ring with {} virtual nodes", VIRTUAL_NODE_COUNT);
+        debug!(
+            "Added node to hash ring with {} virtual nodes",
+            VIRTUAL_NODE_COUNT
+        );
     }
 
     /// Remove a node from the ring
@@ -172,7 +175,9 @@ impl ShardRouter {
         while j < num_buckets as i64 {
             b = j;
             hash = hash.wrapping_mul(2862933555777941757).wrapping_add(1);
-            j = ((b.wrapping_add(1) as f64) * ((1i64 << 31) as f64 / ((hash >> 33).wrapping_add(1) as f64))) as i64;
+            j = ((b.wrapping_add(1) as f64)
+                * ((1i64 << 31) as f64 / ((hash >> 33).wrapping_add(1) as f64)))
+                as i64;
         }
 
         b as u32
@@ -290,7 +295,9 @@ impl LoadBalancer {
             .min_by(|&&a, &&b| {
                 let load_a = loads.get(&a).copied().unwrap_or(0.0);
                 let load_b = loads.get(&b).copied().unwrap_or(0.0);
-                load_a.partial_cmp(&load_b).unwrap_or(std::cmp::Ordering::Equal)
+                load_a
+                    .partial_cmp(&load_b)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             })
             .copied()
     }

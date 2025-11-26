@@ -2,10 +2,10 @@
 //!
 //! Implements data parallelism for graph queries
 
-use crate::executor::plan::PhysicalPlan;
-use crate::executor::pipeline::{RowBatch, ExecutionContext};
 use crate::executor::operators::Operator;
-use crate::executor::{Result, ExecutionError};
+use crate::executor::pipeline::{ExecutionContext, RowBatch};
+use crate::executor::plan::PhysicalPlan;
+use crate::executor::{ExecutionError, Result};
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex};
 
@@ -281,11 +281,7 @@ impl ParallelJoin {
     }
 
     /// Execute parallel join
-    pub fn execute(
-        &self,
-        left: Vec<RowBatch>,
-        right: Vec<RowBatch>,
-    ) -> Result<Vec<RowBatch>> {
+    pub fn execute(&self, left: Vec<RowBatch>, right: Vec<RowBatch>) -> Result<Vec<RowBatch>> {
         match self.strategy {
             ParallelJoinStrategy::Broadcast => self.broadcast_join(left, right),
             ParallelJoinStrategy::PartitionedHash => self.partitioned_hash_join(left, right),
@@ -315,11 +311,7 @@ impl ParallelJoin {
         Ok(Vec::new())
     }
 
-    fn sort_merge_join(
-        &self,
-        left: Vec<RowBatch>,
-        right: Vec<RowBatch>,
-    ) -> Result<Vec<RowBatch>> {
+    fn sort_merge_join(&self, left: Vec<RowBatch>, right: Vec<RowBatch>) -> Result<Vec<RowBatch>> {
         // Sort both sides in parallel, then merge
         Ok(Vec::new())
     }

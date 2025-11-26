@@ -84,14 +84,14 @@ pub struct HyperedgePattern {
     pub properties: Option<PropertyMap>,
     pub from: Box<NodePattern>,
     pub to: Vec<NodePattern>, // Multiple target nodes for N-ary relationships
-    pub arity: usize,          // Number of participating nodes (including source)
+    pub arity: usize,         // Number of participating nodes (including source)
 }
 
 /// Relationship direction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Direction {
-    Outgoing,  // ->
-    Incoming,  // <-
+    Outgoing,   // ->
+    Incoming,   // <-
     Undirected, // -
 }
 
@@ -171,10 +171,7 @@ pub struct RemoveClause {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum RemoveItem {
     /// Remove a property: REMOVE n.property
-    Property {
-        variable: String,
-        property: String,
-    },
+    Property { variable: String, property: String },
     /// Remove labels: REMOVE n:Label1:Label2
     Labels {
         variable: String,
@@ -345,17 +342,25 @@ impl Query {
 
     /// Check if query contains only read operations
     pub fn is_read_only(&self) -> bool {
-        self.statements.iter().all(|stmt| matches!(
-            stmt,
-            Statement::Match(_) | Statement::Return(_) | Statement::With(_)
-        ))
+        self.statements.iter().all(|stmt| {
+            matches!(
+                stmt,
+                Statement::Match(_) | Statement::Return(_) | Statement::With(_)
+            )
+        })
     }
 
     /// Check if query contains hyperedges
     pub fn has_hyperedges(&self) -> bool {
         self.statements.iter().any(|stmt| match stmt {
-            Statement::Match(m) => m.patterns.iter().any(|p| matches!(p, Pattern::Hyperedge(_))),
-            Statement::Create(c) => c.patterns.iter().any(|p| matches!(p, Pattern::Hyperedge(_))),
+            Statement::Match(m) => m
+                .patterns
+                .iter()
+                .any(|p| matches!(p, Pattern::Hyperedge(_))),
+            Statement::Create(c) => c
+                .patterns
+                .iter()
+                .any(|p| matches!(p, Pattern::Hyperedge(_))),
             Statement::Merge(m) => matches!(&m.pattern, Pattern::Hyperedge(_)),
             _ => false,
         })

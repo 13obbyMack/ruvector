@@ -7,12 +7,12 @@
 //! - Early stopping and learning rate scheduling
 //! - Model evaluation and saving
 
+use rand::Rng;
 use ruvector_tiny_dancer_core::{
     model::{FastGRNN, FastGRNNConfig},
-    training::{TrainingConfig, TrainingDataset, Trainer, generate_teacher_predictions},
+    training::{generate_teacher_predictions, Trainer, TrainingConfig, TrainingDataset},
     Result,
 };
-use rand::Rng;
 use std::path::PathBuf;
 
 fn main() -> Result<()> {
@@ -48,11 +48,8 @@ fn main() -> Result<()> {
     println!("Setting up knowledge distillation...");
     let teacher_model = create_pretrained_teacher(&model_config)?;
     let temperature = 3.0;
-    let soft_targets = generate_teacher_predictions(
-        &teacher_model,
-        &dataset.features,
-        temperature
-    )?;
+    let soft_targets =
+        generate_teacher_predictions(&teacher_model, &dataset.features, temperature)?;
     dataset = dataset.with_soft_targets(soft_targets)?;
     println!("Generated soft targets from teacher model\n");
 
@@ -86,16 +83,30 @@ fn main() -> Result<()> {
     if let Some(last_metrics) = metrics.last() {
         println!("Final train loss: {:.4}", last_metrics.train_loss);
         println!("Final val loss: {:.4}", last_metrics.val_loss);
-        println!("Final train accuracy: {:.2}%", last_metrics.train_accuracy * 100.0);
-        println!("Final val accuracy: {:.2}%", last_metrics.val_accuracy * 100.0);
+        println!(
+            "Final train accuracy: {:.2}%",
+            last_metrics.train_accuracy * 100.0
+        );
+        println!(
+            "Final val accuracy: {:.2}%",
+            last_metrics.val_accuracy * 100.0
+        );
     }
 
     // 8. Find best epoch
-    if let Some(best) = metrics.iter().min_by(|a, b|
-        a.val_loss.partial_cmp(&b.val_loss).unwrap()
-    ) {
-        println!("\nBest validation loss: {:.4} at epoch {}", best.val_loss, best.epoch + 1);
-        println!("Best validation accuracy: {:.2}%", best.val_accuracy * 100.0);
+    if let Some(best) = metrics
+        .iter()
+        .min_by(|a, b| a.val_loss.partial_cmp(&b.val_loss).unwrap())
+    {
+        println!(
+            "\nBest validation loss: {:.4} at epoch {}",
+            best.val_loss,
+            best.epoch + 1
+        );
+        println!(
+            "Best validation accuracy: {:.2}%",
+            best.val_accuracy * 100.0
+        );
     }
 
     // 9. Test inference on sample data
@@ -124,8 +135,10 @@ fn main() -> Result<()> {
     model.quantize()?;
     let quantized_size = model.size_bytes();
     println!("Quantized model size: {} bytes", quantized_size);
-    println!("Size reduction: {:.1}%",
-        (1.0 - quantized_size as f32 / original_size as f32) * 100.0);
+    println!(
+        "Size reduction: {:.1}%",
+        (1.0 - quantized_size as f32 / original_size as f32) * 100.0
+    );
 
     println!("\n=== Training Complete ===");
 
@@ -160,13 +173,15 @@ fn generate_synthetic_data(n_samples: usize) -> (Vec<Vec<f32>>, Vec<f32>) {
         // Generate label based on heuristic rules
         // High similarity + high success rate + low complexity -> lightweight (1.0)
         // Low similarity + low success rate + high complexity -> powerful (0.0)
-        let lightweight_score = similarity * 0.4
-            + success_rate * 0.3
-            + (1.0 - complexity) * 0.3;
+        let lightweight_score = similarity * 0.4 + success_rate * 0.3 + (1.0 - complexity) * 0.3;
 
         // Add some noise and threshold
         let noise: f32 = rng.gen_range(-0.1..0.1);
-        let label = if lightweight_score + noise > 0.6 { 1.0 } else { 0.0 };
+        let label = if lightweight_score + noise > 0.6 {
+            1.0
+        } else {
+            0.0
+        };
 
         features.push(feature_vec);
         labels.push(label);

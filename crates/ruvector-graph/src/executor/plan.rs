@@ -2,14 +2,14 @@
 //!
 //! Provides logical and physical query plan structures for graph queries
 
-use crate::executor::operators::{Operator, ScanMode, JoinType, AggregateFunction};
+use crate::executor::operators::{AggregateFunction, JoinType, Operator, ScanMode};
 use crate::executor::stats::Statistics;
-use crate::executor::{Result, ExecutionError};
+use crate::executor::{ExecutionError, Result};
 use ordered_float::OrderedFloat;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 
 /// Logical query plan (high-level, optimizer input)
 #[derive(Debug, Clone)]
@@ -106,7 +106,12 @@ impl PhysicalPlan {
                     predicate.clone(),
                 )));
             }
-            PlanNode::Join { left, right, join_type, on } => {
+            PlanNode::Join {
+                left,
+                right,
+                join_type,
+                on,
+            } => {
                 Self::compile_node(left, stats, operators, pipeline_breakers)?;
                 pipeline_breakers.push(operators.len());
                 Self::compile_node(right, stats, operators, pipeline_breakers)?;
@@ -115,7 +120,11 @@ impl PhysicalPlan {
                     on.clone(),
                 )));
             }
-            PlanNode::Aggregate { input, group_by, aggregates } => {
+            PlanNode::Aggregate {
+                input,
+                group_by,
+                aggregates,
+            } => {
                 Self::compile_node(input, stats, operators, pipeline_breakers)?;
                 pipeline_breakers.push(operators.len());
                 operators.push(Box::new(crate::executor::operators::Aggregate::new(
@@ -130,11 +139,14 @@ impl PhysicalPlan {
                     order_by.clone(),
                 )));
             }
-            PlanNode::Limit { input, limit, offset } => {
+            PlanNode::Limit {
+                input,
+                limit,
+                offset,
+            } => {
                 Self::compile_node(input, stats, operators, pipeline_breakers)?;
                 operators.push(Box::new(crate::executor::operators::Limit::new(
-                    *limit,
-                    *offset,
+                    *limit, *offset,
                 )));
             }
             PlanNode::Project { input, columns } => {
@@ -353,13 +365,11 @@ mod tests {
 
     #[test]
     fn test_logical_plan_creation() {
-        let schema = QuerySchema::new(vec![
-            ColumnDef {
-                name: "id".to_string(),
-                data_type: DataType::Int64,
-                nullable: false,
-            },
-        ]);
+        let schema = QuerySchema::new(vec![ColumnDef {
+            name: "id".to_string(),
+            data_type: DataType::Int64,
+            nullable: false,
+        }]);
 
         let plan = LogicalPlan::new(
             PlanNode::NodeScan {

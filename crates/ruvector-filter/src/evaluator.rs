@@ -25,15 +25,22 @@ impl<'a> FilterEvaluator<'a> {
             FilterExpression::Gte { field, value } => self.evaluate_gte(field, value),
             FilterExpression::Lt { field, value } => self.evaluate_lt(field, value),
             FilterExpression::Lte { field, value } => self.evaluate_lte(field, value),
-            FilterExpression::Range { field, gte, lte } => self.evaluate_range(field, gte.as_ref(), lte.as_ref()),
+            FilterExpression::Range { field, gte, lte } => {
+                self.evaluate_range(field, gte.as_ref(), lte.as_ref())
+            }
             FilterExpression::In { field, values } => self.evaluate_in(field, values),
             FilterExpression::Match { field, text } => self.evaluate_match(field, text),
-            FilterExpression::GeoRadius { field, lat, lon, radius_m } => {
-                self.evaluate_geo_radius(field, *lat, *lon, *radius_m)
-            }
-            FilterExpression::GeoBoundingBox { field, top_left, bottom_right } => {
-                self.evaluate_geo_bbox(field, *top_left, *bottom_right)
-            }
+            FilterExpression::GeoRadius {
+                field,
+                lat,
+                lon,
+                radius_m,
+            } => self.evaluate_geo_radius(field, *lat, *lon, *radius_m),
+            FilterExpression::GeoBoundingBox {
+                field,
+                top_left,
+                bottom_right,
+            } => self.evaluate_geo_bbox(field, *top_left, *bottom_right),
             FilterExpression::And(filters) => self.evaluate_and(filters),
             FilterExpression::Or(filters) => self.evaluate_or(filters),
             FilterExpression::Not(filter) => self.evaluate_not(filter),
@@ -51,29 +58,43 @@ impl<'a> FilterEvaluator<'a> {
             FilterExpression::Ne { field, value } => {
                 Self::get_field_value(payload, field).map_or(true, |v| v != value)
             }
-            FilterExpression::Gt { field, value } => {
-                Self::get_field_value(payload, field).map_or(false, |v| Self::compare_values(v, value) == Some(std::cmp::Ordering::Greater))
-            }
+            FilterExpression::Gt { field, value } => Self::get_field_value(payload, field)
+                .map_or(false, |v| {
+                    Self::compare_values(v, value) == Some(std::cmp::Ordering::Greater)
+                }),
             FilterExpression::Gte { field, value } => {
                 Self::get_field_value(payload, field).map_or(false, |v| {
-                    matches!(Self::compare_values(v, value), Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal))
+                    matches!(
+                        Self::compare_values(v, value),
+                        Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+                    )
                 })
             }
-            FilterExpression::Lt { field, value } => {
-                Self::get_field_value(payload, field).map_or(false, |v| Self::compare_values(v, value) == Some(std::cmp::Ordering::Less))
-            }
+            FilterExpression::Lt { field, value } => Self::get_field_value(payload, field)
+                .map_or(false, |v| {
+                    Self::compare_values(v, value) == Some(std::cmp::Ordering::Less)
+                }),
             FilterExpression::Lte { field, value } => {
                 Self::get_field_value(payload, field).map_or(false, |v| {
-                    matches!(Self::compare_values(v, value), Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
+                    matches!(
+                        Self::compare_values(v, value),
+                        Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                    )
                 })
             }
             FilterExpression::Range { field, gte, lte } => {
                 if let Some(v) = Self::get_field_value(payload, field) {
                     let gte_match = gte.as_ref().map_or(true, |gte_val| {
-                        matches!(Self::compare_values(v, gte_val), Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal))
+                        matches!(
+                            Self::compare_values(v, gte_val),
+                            Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
+                        )
                     });
                     let lte_match = lte.as_ref().map_or(true, |lte_val| {
-                        matches!(Self::compare_values(v, lte_val), Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
+                        matches!(
+                            Self::compare_values(v, lte_val),
+                            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                        )
                     });
                     gte_match && lte_match
                 } else {
@@ -83,23 +104,13 @@ impl<'a> FilterEvaluator<'a> {
             FilterExpression::In { field, values } => {
                 Self::get_field_value(payload, field).map_or(false, |v| values.contains(v))
             }
-            FilterExpression::Match { field, text } => {
-                Self::get_field_value(payload, field).and_then(|v| v.as_str()).map_or(false, |s| {
-                    s.to_lowercase().contains(&text.to_lowercase())
-                })
-            }
-            FilterExpression::And(filters) => {
-                filters.iter().all(|f| self.matches(payload, f))
-            }
-            FilterExpression::Or(filters) => {
-                filters.iter().any(|f| self.matches(payload, f))
-            }
-            FilterExpression::Not(filter) => {
-                !self.matches(payload, filter)
-            }
-            FilterExpression::Exists { field } => {
-                Self::get_field_value(payload, field).is_some()
-            }
+            FilterExpression::Match { field, text } => Self::get_field_value(payload, field)
+                .and_then(|v| v.as_str())
+                .map_or(false, |s| s.to_lowercase().contains(&text.to_lowercase())),
+            FilterExpression::And(filters) => filters.iter().all(|f| self.matches(payload, f)),
+            FilterExpression::Or(filters) => filters.iter().any(|f| self.matches(payload, f)),
+            FilterExpression::Not(filter) => !self.matches(payload, filter),
+            FilterExpression::Exists { field } => Self::get_field_value(payload, field).is_some(),
             FilterExpression::IsNull { field } => {
                 Self::get_field_value(payload, field).map_or(true, |v| v.is_null())
             }
@@ -108,7 +119,10 @@ impl<'a> FilterEvaluator<'a> {
     }
 
     fn evaluate_eq(&self, field: &str, value: &Value) -> Result<HashSet<String>> {
-        let index = self.indices.get_index(field).ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
+        let index = self
+            .indices
+            .get_index(field)
+            .ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
 
         match index {
             PayloadIndex::Integer(map) => {
@@ -150,12 +164,19 @@ impl<'a> FilterEvaluator<'a> {
     }
 
     fn evaluate_gt(&self, field: &str, value: &Value) -> Result<HashSet<String>> {
-        let index = self.indices.get_index(field).ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
+        let index = self
+            .indices
+            .get_index(field)
+            .ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
 
         match index {
             PayloadIndex::Integer(map) => {
                 if let Some(num) = value.as_i64() {
-                    Ok(map.range((num + 1)..).flat_map(|(_, ids)| ids).cloned().collect())
+                    Ok(map
+                        .range((num + 1)..)
+                        .flat_map(|(_, ids)| ids)
+                        .cloned()
+                        .collect())
                 } else {
                     Ok(HashSet::new())
                 }
@@ -163,7 +184,8 @@ impl<'a> FilterEvaluator<'a> {
             PayloadIndex::Float(map) => {
                 if let Some(num) = value.as_f64() {
                     let threshold = OrderedFloat(num);
-                    Ok(map.range(threshold..)
+                    Ok(map
+                        .range(threshold..)
                         .filter(|(k, _)| **k > threshold)
                         .flat_map(|(_, ids)| ids)
                         .cloned()
@@ -177,7 +199,10 @@ impl<'a> FilterEvaluator<'a> {
     }
 
     fn evaluate_gte(&self, field: &str, value: &Value) -> Result<HashSet<String>> {
-        let index = self.indices.get_index(field).ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
+        let index = self
+            .indices
+            .get_index(field)
+            .ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
 
         match index {
             PayloadIndex::Integer(map) => {
@@ -189,7 +214,11 @@ impl<'a> FilterEvaluator<'a> {
             }
             PayloadIndex::Float(map) => {
                 if let Some(num) = value.as_f64() {
-                    Ok(map.range(OrderedFloat(num)..).flat_map(|(_, ids)| ids).cloned().collect())
+                    Ok(map
+                        .range(OrderedFloat(num)..)
+                        .flat_map(|(_, ids)| ids)
+                        .cloned()
+                        .collect())
                 } else {
                     Ok(HashSet::new())
                 }
@@ -199,7 +228,10 @@ impl<'a> FilterEvaluator<'a> {
     }
 
     fn evaluate_lt(&self, field: &str, value: &Value) -> Result<HashSet<String>> {
-        let index = self.indices.get_index(field).ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
+        let index = self
+            .indices
+            .get_index(field)
+            .ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
 
         match index {
             PayloadIndex::Integer(map) => {
@@ -211,7 +243,11 @@ impl<'a> FilterEvaluator<'a> {
             }
             PayloadIndex::Float(map) => {
                 if let Some(num) = value.as_f64() {
-                    Ok(map.range(..OrderedFloat(num)).flat_map(|(_, ids)| ids).cloned().collect())
+                    Ok(map
+                        .range(..OrderedFloat(num))
+                        .flat_map(|(_, ids)| ids)
+                        .cloned()
+                        .collect())
                 } else {
                     Ok(HashSet::new())
                 }
@@ -221,19 +257,30 @@ impl<'a> FilterEvaluator<'a> {
     }
 
     fn evaluate_lte(&self, field: &str, value: &Value) -> Result<HashSet<String>> {
-        let index = self.indices.get_index(field).ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
+        let index = self
+            .indices
+            .get_index(field)
+            .ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
 
         match index {
             PayloadIndex::Integer(map) => {
                 if let Some(num) = value.as_i64() {
-                    Ok(map.range(..=num).flat_map(|(_, ids)| ids).cloned().collect())
+                    Ok(map
+                        .range(..=num)
+                        .flat_map(|(_, ids)| ids)
+                        .cloned()
+                        .collect())
                 } else {
                     Ok(HashSet::new())
                 }
             }
             PayloadIndex::Float(map) => {
                 if let Some(num) = value.as_f64() {
-                    Ok(map.range(..=OrderedFloat(num)).flat_map(|(_, ids)| ids).cloned().collect())
+                    Ok(map
+                        .range(..=OrderedFloat(num))
+                        .flat_map(|(_, ids)| ids)
+                        .cloned()
+                        .collect())
                 } else {
                     Ok(HashSet::new())
                 }
@@ -242,7 +289,12 @@ impl<'a> FilterEvaluator<'a> {
         }
     }
 
-    fn evaluate_range(&self, field: &str, gte: Option<&Value>, lte: Option<&Value>) -> Result<HashSet<String>> {
+    fn evaluate_range(
+        &self,
+        field: &str,
+        gte: Option<&Value>,
+        lte: Option<&Value>,
+    ) -> Result<HashSet<String>> {
         let mut result = self.get_all_ids_for_field(field)?;
 
         if let Some(gte_val) = gte {
@@ -268,7 +320,10 @@ impl<'a> FilterEvaluator<'a> {
     }
 
     fn evaluate_match(&self, field: &str, text: &str) -> Result<HashSet<String>> {
-        let index = self.indices.get_index(field).ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
+        let index = self
+            .indices
+            .get_index(field)
+            .ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
 
         match index {
             PayloadIndex::Text(map) => {
@@ -285,8 +340,17 @@ impl<'a> FilterEvaluator<'a> {
         }
     }
 
-    fn evaluate_geo_radius(&self, field: &str, lat: f64, lon: f64, radius_m: f64) -> Result<HashSet<String>> {
-        let index = self.indices.get_index(field).ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
+    fn evaluate_geo_radius(
+        &self,
+        field: &str,
+        lat: f64,
+        lon: f64,
+        radius_m: f64,
+    ) -> Result<HashSet<String>> {
+        let index = self
+            .indices
+            .get_index(field)
+            .ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
 
         match index {
             PayloadIndex::Geo(points) => {
@@ -303,8 +367,16 @@ impl<'a> FilterEvaluator<'a> {
         }
     }
 
-    fn evaluate_geo_bbox(&self, field: &str, top_left: (f64, f64), bottom_right: (f64, f64)) -> Result<HashSet<String>> {
-        let index = self.indices.get_index(field).ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
+    fn evaluate_geo_bbox(
+        &self,
+        field: &str,
+        top_left: (f64, f64),
+        bottom_right: (f64, f64),
+    ) -> Result<HashSet<String>> {
+        let index = self
+            .indices
+            .get_index(field)
+            .ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
 
         match index {
             PayloadIndex::Geo(points) => {
@@ -371,7 +443,10 @@ impl<'a> FilterEvaluator<'a> {
     }
 
     fn get_all_ids_for_field(&self, field: &str) -> Result<HashSet<String>> {
-        let index = self.indices.get_index(field).ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
+        let index = self
+            .indices
+            .get_index(field)
+            .ok_or_else(|| FilterError::IndexNotFound(field.to_string()))?;
 
         let ids = match index {
             PayloadIndex::Integer(map) => map.values().flatten().cloned().collect(),
@@ -411,7 +486,8 @@ fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let delta_lat = (lat2 - lat1).to_radians();
     let delta_lon = (lon2 - lon1).to_radians();
 
-    let a = (delta_lat / 2.0).sin().powi(2) + lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
+    let a = (delta_lat / 2.0).sin().powi(2)
+        + lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
     let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
 
     EARTH_RADIUS_M * c
@@ -428,9 +504,15 @@ mod tests {
         let mut manager = PayloadIndexManager::new();
         manager.create_index("status", IndexType::Keyword).unwrap();
 
-        manager.index_payload("v1", &json!({"status": "active"})).unwrap();
-        manager.index_payload("v2", &json!({"status": "active"})).unwrap();
-        manager.index_payload("v3", &json!({"status": "inactive"})).unwrap();
+        manager
+            .index_payload("v1", &json!({"status": "active"}))
+            .unwrap();
+        manager
+            .index_payload("v2", &json!({"status": "active"}))
+            .unwrap();
+        manager
+            .index_payload("v3", &json!({"status": "inactive"}))
+            .unwrap();
 
         let evaluator = FilterEvaluator::new(&manager);
         let filter = FilterExpression::eq("status", json!("active"));
@@ -465,9 +547,15 @@ mod tests {
         manager.create_index("age", IndexType::Integer).unwrap();
         manager.create_index("status", IndexType::Keyword).unwrap();
 
-        manager.index_payload("v1", &json!({"age": 25, "status": "active"})).unwrap();
-        manager.index_payload("v2", &json!({"age": 30, "status": "active"})).unwrap();
-        manager.index_payload("v3", &json!({"age": 25, "status": "inactive"})).unwrap();
+        manager
+            .index_payload("v1", &json!({"age": 25, "status": "active"}))
+            .unwrap();
+        manager
+            .index_payload("v2", &json!({"age": 30, "status": "active"}))
+            .unwrap();
+        manager
+            .index_payload("v3", &json!({"age": 25, "status": "inactive"}))
+            .unwrap();
 
         let evaluator = FilterEvaluator::new(&manager);
         let filter = FilterExpression::and(vec![

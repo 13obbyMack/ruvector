@@ -52,9 +52,8 @@ fn test_parse_create_node() {
 
 #[test]
 fn test_parse_create_relationship() {
-    let result = parse_cypher(
-        "CREATE (a:Person {name: 'Alice'})-[r:KNOWS]->(b:Person {name: 'Bob'})"
-    );
+    let result =
+        parse_cypher("CREATE (a:Person {name: 'Alice'})-[r:KNOWS]->(b:Person {name: 'Bob'})");
     assert!(result.is_ok());
 }
 
@@ -126,9 +125,7 @@ fn test_parse_aggregate_avg() {
 
 #[test]
 fn test_parse_with_clause() {
-    let result = parse_cypher(
-        "MATCH (n:Person) WITH n.age AS age WHERE age > 25 RETURN age"
-    );
+    let result = parse_cypher("MATCH (n:Person) WITH n.age AS age WHERE age > 25 RETURN age");
     assert!(result.is_ok());
 }
 
@@ -145,7 +142,8 @@ fn test_parse_optional_match() {
 #[test]
 #[ignore = "Complex multi-direction patterns with <- not yet fully implemented"]
 fn test_parse_complex_graph_pattern() {
-    let result = parse_cypher("
+    let result = parse_cypher(
+        "
         MATCH (user:User)-[:PURCHASED]->(product:Product)<-[:PURCHASED]-(other:User)
         WHERE other.id <> 123
         WITH other, COUNT(*) AS commonProducts
@@ -153,32 +151,34 @@ fn test_parse_complex_graph_pattern() {
         RETURN other.name
         ORDER BY commonProducts DESC
         LIMIT 10
-    ");
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_parse_variable_length_path() {
-    let result = parse_cypher(
-        "MATCH (a:Person)-[:KNOWS*1..5]->(b:Person) WHERE a.name = 'Alice' RETURN b"
+    ",
     );
     assert!(result.is_ok());
 }
 
 #[test]
+fn test_parse_variable_length_path() {
+    let result =
+        parse_cypher("MATCH (a:Person)-[:KNOWS*1..5]->(b:Person) WHERE a.name = 'Alice' RETURN b");
+    assert!(result.is_ok());
+}
+
+#[test]
 fn test_parse_multiple_patterns() {
-    let result = parse_cypher("
+    let result = parse_cypher(
+        "
         MATCH (a:Person)-[:KNOWS]->(b:Person)
         MATCH (b)-[:WORKS_AT]->(c:Company)
         RETURN a.name, b.name, c.name
-    ");
+    ",
+    );
     assert!(result.is_ok());
 }
 
 #[test]
 fn test_parse_collect_aggregation() {
     let result = parse_cypher(
-        "MATCH (p:Person)-[:KNOWS]->(f:Person) RETURN p.name, COLLECT(f.name) AS friends"
+        "MATCH (p:Person)-[:KNOWS]->(f:Person) RETURN p.name, COLLECT(f.name) AS friends",
     );
     assert!(result.is_ok());
 }

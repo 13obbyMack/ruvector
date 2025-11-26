@@ -3,11 +3,11 @@
 //! Implements hypergraph structures for representing complex multi-entity relationships
 //! beyond traditional pairwise similarity. Based on HyperGraphRAG (NeurIPS 2025) architecture.
 
-use crate::types::{VectorId, DistanceMetric};
 use crate::error::{Result, RuvectorError};
+use crate::types::{DistanceMetric, VectorId};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
 /// Hyperedge connecting multiple vectors with description and embedding
@@ -150,7 +150,9 @@ impl HypergraphIndex {
     /// Add an entity node
     pub fn add_entity(&mut self, id: VectorId, embedding: Vec<f32>) {
         self.entities.insert(id.clone(), embedding);
-        self.entity_to_hyperedges.entry(id).or_insert_with(HashSet::new);
+        self.entity_to_hyperedges
+            .entry(id)
+            .or_insert_with(HashSet::new);
     }
 
     /// Add a hyperedge
@@ -160,9 +162,10 @@ impl HypergraphIndex {
         // Verify all nodes exist
         for node in &hyperedge.nodes {
             if !self.entities.contains_key(node) {
-                return Err(RuvectorError::InvalidInput(
-                    format!("Entity {} not found in hypergraph", node)
-                ));
+                return Err(RuvectorError::InvalidInput(format!(
+                    "Entity {} not found in hypergraph",
+                    node
+                )));
             }
         }
 
@@ -175,7 +178,8 @@ impl HypergraphIndex {
         }
 
         let nodes_set: HashSet<VectorId> = hyperedge.nodes.iter().cloned().collect();
-        self.hyperedge_to_entities.insert(edge_id.clone(), nodes_set);
+        self.hyperedge_to_entities
+            .insert(edge_id.clone(), nodes_set);
 
         self.hyperedges.insert(edge_id, hyperedge);
         Ok(())
@@ -197,12 +201,9 @@ impl HypergraphIndex {
     }
 
     /// Search hyperedges by embedding similarity
-    pub fn search_hyperedges(
-        &self,
-        query_embedding: &[f32],
-        k: usize,
-    ) -> Vec<(String, f32)> {
-        let mut results: Vec<(String, f32)> = self.hyperedges
+    pub fn search_hyperedges(&self, query_embedding: &[f32], k: usize) -> Vec<(String, f32)> {
+        let mut results: Vec<(String, f32)> = self
+            .hyperedges
             .iter()
             .map(|(id, edge)| {
                 let distance = self.compute_distance(query_embedding, &edge.embedding);
@@ -221,7 +222,7 @@ impl HypergraphIndex {
         let mut visited = HashSet::new();
         let mut current_layer = HashSet::new();
         current_layer.insert(start_node.clone());
-        visited.insert(start_node);  // Start node is at distance 0
+        visited.insert(start_node); // Start node is at distance 0
 
         for _hop in 0..k {
             let mut next_layer = HashSet::new();
@@ -253,11 +254,7 @@ impl HypergraphIndex {
     }
 
     /// Query temporal hyperedges in a time range
-    pub fn query_temporal_range(
-        &self,
-        start_bucket: u64,
-        end_bucket: u64,
-    ) -> Vec<String> {
+    pub fn query_temporal_range(&self, start_bucket: u64, end_bucket: u64) -> Vec<String> {
         let mut results = Vec::new();
         for bucket in start_bucket..=end_bucket {
             if let Some(edges) = self.temporal_index.get(&bucket) {
@@ -277,9 +274,11 @@ impl HypergraphIndex {
         let total_edges = self.hyperedges.len();
         let total_entities = self.entities.len();
         let avg_degree = if total_entities > 0 {
-            self.entity_to_hyperedges.values()
+            self.entity_to_hyperedges
+                .values()
                 .map(|edges| edges.len())
-                .sum::<usize>() as f32 / total_entities as f32
+                .sum::<usize>() as f32
+                / total_entities as f32
         } else {
             0.0
         };
@@ -313,9 +312,9 @@ pub struct CausalMemory {
     /// Action latencies: action_id -> avg_latency_ms
     latencies: HashMap<VectorId, f32>,
     /// Utility function weights
-    alpha: f32,  // similarity weight
-    beta: f32,   // causal uplift weight
-    gamma: f32,  // latency penalty weight
+    alpha: f32, // similarity weight
+    beta: f32,  // causal uplift weight
+    gamma: f32, // latency penalty weight
 }
 
 impl CausalMemory {
@@ -357,7 +356,10 @@ impl CausalMemory {
         self.index.add_hyperedge(hyperedge)?;
 
         // Update causal counts
-        *self.causal_counts.entry((cause.clone(), effect.clone())).or_insert(0) += 1;
+        *self
+            .causal_counts
+            .entry((cause.clone(), effect.clone()))
+            .or_insert(0) += 1;
 
         // Update latency
         let entry = self.latencies.entry(cause).or_insert(0.0);
@@ -373,16 +375,20 @@ impl CausalMemory {
         action_id: VectorId,
         k: usize,
     ) -> Vec<(String, f32)> {
-        let mut results: Vec<(String, f32)> = self.index.hyperedges
+        let mut results: Vec<(String, f32)> = self
+            .index
+            .hyperedges
             .iter()
             .filter(|(_, edge)| edge.contains_node(&action_id))
             .map(|(id, edge)| {
-                let similarity = 1.0 - self.index.compute_distance(query_embedding, &edge.embedding);
+                let similarity = 1.0
+                    - self
+                        .index
+                        .compute_distance(query_embedding, &edge.embedding);
                 let causal_uplift = self.compute_causal_uplift(&edge.nodes);
                 let latency = self.latencies.get(&action_id).copied().unwrap_or(0.0);
 
-                let utility = self.alpha * similarity
-                    + self.beta * causal_uplift
+                let utility = self.alpha * similarity + self.beta * causal_uplift
                     - self.gamma * (latency / 1000.0); // Normalize latency to 0-1 range
 
                 (id.clone(), utility)
@@ -405,7 +411,10 @@ impl CausalMemory {
 
         for i in 0..nodes.len() - 1 {
             for j in i + 1..nodes.len() {
-                if let Some(&success_count) = self.causal_counts.get(&(nodes[i].clone(), nodes[j].clone())) {
+                if let Some(&success_count) = self
+                    .causal_counts
+                    .get(&(nodes[i].clone(), nodes[j].clone()))
+                {
                     total_uplift += (success_count as f32).ln_1p(); // Log scale
                     count += 1;
                 }
@@ -509,14 +518,16 @@ mod tests {
         memory.index.add_entity(1, vec![1.0, 0.0]);
         memory.index.add_entity(2, vec![0.0, 1.0]);
 
-        memory.add_causal_edge(
-            1,
-            2,
-            vec![],
-            "Action 1 causes effect 2".to_string(),
-            vec![0.5, 0.5],
-            100.0,
-        ).unwrap();
+        memory
+            .add_causal_edge(
+                1,
+                2,
+                vec![],
+                "Action 1 causes effect 2".to_string(),
+                vec![0.5, 0.5],
+                100.0,
+            )
+            .unwrap();
 
         let results = memory.query_with_utility(&[0.6, 0.4], 1, 5);
         assert!(!results.is_empty());

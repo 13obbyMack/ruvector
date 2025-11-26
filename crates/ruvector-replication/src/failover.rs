@@ -211,8 +211,7 @@ impl FailoverManager {
                     // Trigger failover if needed (after lock is dropped)
                     if should_failover {
                         if let Err(e) =
-                            Self::trigger_failover(&replica_set, &failover_in_progress)
-                                .await
+                            Self::trigger_failover(&replica_set, &failover_in_progress).await
                         {
                             tracing::error!("Failover failed: {}", e);
                         }
@@ -250,16 +249,10 @@ impl FailoverManager {
                 } else if replica.is_healthy() {
                     HealthCheck::healthy(replica_id.to_string(), 10)
                 } else {
-                    HealthCheck::unhealthy(
-                        replica_id.to_string(),
-                        "Replica is lagging".to_string(),
-                    )
+                    HealthCheck::unhealthy(replica_id.to_string(), "Replica is lagging".to_string())
                 }
             }
-            None => HealthCheck::unhealthy(
-                replica_id.to_string(),
-                "Replica not found".to_string(),
-            ),
+            None => HealthCheck::unhealthy(replica_id.to_string(), "Replica not found".to_string()),
         }
     }
 
@@ -329,11 +322,7 @@ impl FailoverManager {
         }
 
         // Sort by priority (highest first), then by lowest lag
-        candidates.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then(a.lag_ms.cmp(&b.lag_ms))
-        });
+        candidates.sort_by(|a, b| b.priority.cmp(&a.priority).then(a.lag_ms.cmp(&b.lag_ms)));
 
         Ok(candidates[0].clone())
     }
@@ -359,7 +348,10 @@ impl FailoverManager {
 
         set.promote_to_primary(&target.id)?;
 
-        tracing::info!("Manual failover completed: promoted {} to primary", target.id);
+        tracing::info!(
+            "Manual failover completed: promoted {} to primary",
+            target.id
+        );
         Ok(())
     }
 

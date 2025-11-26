@@ -2,8 +2,8 @@
 //!
 //! These tests push the system to its limits to verify robustness.
 
-use ruvector_core::{VectorDB, DbOptions, VectorEntry};
 use ruvector_core::types::*;
+use ruvector_core::{DbOptions, VectorDB, VectorEntry};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use tempfile::tempdir;
@@ -40,7 +40,9 @@ fn test_million_vector_insertion() {
                 let global_idx = batch_idx * batch_size + i;
                 VectorEntry {
                     id: Some(format!("vec_{}", global_idx)),
-                    vector: (0..128).map(|j| ((global_idx + j) as f32) * 0.0001).collect(),
+                    vector: (0..128)
+                        .map(|j| ((global_idx + j) as f32) * 0.0001)
+                        .collect(),
                     metadata: None,
                 }
             })
@@ -58,17 +60,26 @@ fn test_million_vector_insertion() {
     // Perform some searches to verify functionality
     println!("Testing search on 1M vectors...");
     for i in 0..10 {
-        let query: Vec<f32> = (0..128).map(|j| ((i * 10000 + j) as f32) * 0.0001).collect();
+        let query: Vec<f32> = (0..128)
+            .map(|j| ((i * 10000 + j) as f32) * 0.0001)
+            .collect();
         let start = std::time::Instant::now();
-        let results = db.search(SearchQuery {
-            vector: query,
-            k: 10,
-            filter: None,
-            ef_search: Some(50),
-        }).unwrap();
+        let results = db
+            .search(SearchQuery {
+                vector: query,
+                k: 10,
+                filter: None,
+                ef_search: Some(50),
+            })
+            .unwrap();
         let duration = start.elapsed();
 
-        println!("Search {} took: {:?}, found {} results", i + 1, duration, results.len());
+        println!(
+            "Search {} took: {:?}, found {} results",
+            i + 1,
+            duration,
+            results.len()
+        );
         assert_eq!(results.len(), 10);
     }
 }
@@ -81,7 +92,11 @@ fn test_million_vector_insertion() {
 fn test_concurrent_queries() {
     let dir = tempdir().unwrap();
     let mut options = DbOptions::default();
-    options.storage_path = dir.path().join("concurrent.db").to_string_lossy().to_string();
+    options.storage_path = dir
+        .path()
+        .join("concurrent.db")
+        .to_string_lossy()
+        .to_string();
     options.dimensions = 64;
     options.hnsw_config = Some(HnswConfig::default());
 
@@ -122,18 +137,23 @@ fn test_concurrent_queries() {
                     .map(|j| ((thread_id * 1000 + i + j) as f32) * 0.01)
                     .collect();
 
-                let results = db_clone.search(SearchQuery {
-                    vector: query,
-                    k: 10,
-                    filter: None,
-                    ef_search: None,
-                }).unwrap();
+                let results = db_clone
+                    .search(SearchQuery {
+                        vector: query,
+                        k: 10,
+                        filter: None,
+                        ef_search: None,
+                    })
+                    .unwrap();
 
                 assert_eq!(results.len(), 10);
             }
 
             let duration = start.elapsed();
-            println!("Thread {} completed {} queries in {:?}", thread_id, queries_per_thread, duration);
+            println!(
+                "Thread {} completed {} queries in {:?}",
+                thread_id, queries_per_thread, duration
+            );
             duration
         });
 
@@ -149,14 +169,21 @@ fn test_concurrent_queries() {
 
     let total_queries = num_threads * queries_per_thread;
     println!("Total queries: {}", total_queries);
-    println!("Average duration per thread: {:?}", total_duration / num_threads as u32);
+    println!(
+        "Average duration per thread: {:?}",
+        total_duration / num_threads as u32
+    );
 }
 
 #[test]
 fn test_concurrent_inserts_and_queries() {
     let dir = tempdir().unwrap();
     let mut options = DbOptions::default();
-    options.storage_path = dir.path().join("mixed_concurrent.db").to_string_lossy().to_string();
+    options.storage_path = dir
+        .path()
+        .join("mixed_concurrent.db")
+        .to_string_lossy()
+        .to_string();
     options.dimensions = 32;
     options.hnsw_config = Some(HnswConfig::default());
 
@@ -188,13 +215,17 @@ fn test_concurrent_inserts_and_queries() {
             barrier_clone.wait();
 
             for i in 0..50 {
-                let query: Vec<f32> = (0..32).map(|j| ((reader_id * 100 + i + j) as f32) * 0.1).collect();
-                let results = db_clone.search(SearchQuery {
-                    vector: query,
-                    k: 5,
-                    filter: None,
-                    ef_search: None,
-                }).unwrap();
+                let query: Vec<f32> = (0..32)
+                    .map(|j| ((reader_id * 100 + i + j) as f32) * 0.1)
+                    .collect();
+                let results = db_clone
+                    .search(SearchQuery {
+                        vector: query,
+                        k: 5,
+                        filter: None,
+                        ef_search: None,
+                    })
+                    .unwrap();
 
                 assert!(results.len() > 0 && results.len() <= 5);
             }
@@ -216,7 +247,9 @@ fn test_concurrent_inserts_and_queries() {
             for i in 0..20 {
                 let entry = VectorEntry {
                     id: Some(format!("writer_{}_{}", writer_id, i)),
-                    vector: (0..32).map(|j| ((writer_id * 1000 + i + j) as f32) * 0.1).collect(),
+                    vector: (0..32)
+                        .map(|j| ((writer_id * 1000 + i + j) as f32) * 0.1)
+                        .collect(),
                     metadata: None,
                 };
 
@@ -249,7 +282,11 @@ fn test_concurrent_inserts_and_queries() {
 fn test_memory_pressure_large_vectors() {
     let dir = tempdir().unwrap();
     let mut options = DbOptions::default();
-    options.storage_path = dir.path().join("large_vectors.db").to_string_lossy().to_string();
+    options.storage_path = dir
+        .path()
+        .join("large_vectors.db")
+        .to_string_lossy()
+        .to_string();
     options.dimensions = 2048; // Very large vectors
     options.hnsw_config = Some(HnswConfig {
         m: 8,
@@ -270,14 +307,20 @@ fn test_memory_pressure_large_vectors() {
                 let global_idx = batch_idx * batch_size + i;
                 VectorEntry {
                     id: Some(format!("vec_{}", global_idx)),
-                    vector: (0..2048).map(|j| ((global_idx + j) as f32) * 0.0001).collect(),
+                    vector: (0..2048)
+                        .map(|j| ((global_idx + j) as f32) * 0.0001)
+                        .collect(),
                     metadata: None,
                 }
             })
             .collect();
 
         db.insert_batch(vectors).unwrap();
-        println!("Inserted batch {}/{}", batch_idx + 1, num_vectors / batch_size);
+        println!(
+            "Inserted batch {}/{}",
+            batch_idx + 1,
+            num_vectors / batch_size
+        );
     }
 
     println!("Database size: {}", db.len().unwrap());
@@ -285,13 +328,17 @@ fn test_memory_pressure_large_vectors() {
 
     // Perform searches
     for i in 0..5 {
-        let query: Vec<f32> = (0..2048).map(|j| ((i * 1000 + j) as f32) * 0.0001).collect();
-        let results = db.search(SearchQuery {
-            vector: query,
-            k: 10,
-            filter: None,
-            ef_search: None,
-        }).unwrap();
+        let query: Vec<f32> = (0..2048)
+            .map(|j| ((i * 1000 + j) as f32) * 0.0001)
+            .collect();
+        let results = db
+            .search(SearchQuery {
+                vector: query,
+                k: 10,
+                filter: None,
+                ef_search: None,
+            })
+            .unwrap();
 
         assert_eq!(results.len(), 10);
     }
@@ -330,11 +377,13 @@ fn test_invalid_operations_dont_crash() {
 
     // 4. Insert and immediately delete in rapid succession
     for i in 0..100 {
-        let id = db.insert(VectorEntry {
-            id: Some(format!("temp_{}", i)),
-            vector: vec![1.0; 32],
-            metadata: None,
-        }).unwrap();
+        let id = db
+            .insert(VectorEntry {
+                id: Some(format!("temp_{}", i)),
+                vector: vec![1.0; 32],
+                metadata: None,
+            })
+            .unwrap();
 
         db.delete(&id).unwrap();
     }
@@ -344,7 +393,8 @@ fn test_invalid_operations_dont_crash() {
         id: Some("final".to_string()),
         vector: vec![1.0; 32],
         metadata: None,
-    }).unwrap();
+    })
+    .unwrap();
 
     assert!(db.get("final").unwrap().is_some());
 }
@@ -405,27 +455,32 @@ fn test_extreme_k_values() {
             id: Some(format!("vec_{}", i)),
             vector: vec![i as f32; 16],
             metadata: None,
-        }).unwrap();
+        })
+        .unwrap();
     }
 
     // Search with k larger than database size
-    let results = db.search(SearchQuery {
-        vector: vec![1.0; 16],
-        k: 1000,
-        filter: None,
-        ef_search: None,
-    }).unwrap();
+    let results = db
+        .search(SearchQuery {
+            vector: vec![1.0; 16],
+            k: 1000,
+            filter: None,
+            ef_search: None,
+        })
+        .unwrap();
 
     // Should return at most 10 results
     assert!(results.len() <= 10);
 
     // Search with k=1
-    let results = db.search(SearchQuery {
-        vector: vec![1.0; 16],
-        k: 1,
-        filter: None,
-        ef_search: None,
-    }).unwrap();
+    let results = db
+        .search(SearchQuery {
+            vector: vec![1.0; 16],
+            k: 1,
+            filter: None,
+            ef_search: None,
+        })
+        .unwrap();
 
     assert_eq!(results.len(), 1);
 }

@@ -8,19 +8,16 @@
 //! - IndexedDB persistence
 //! - Zero-copy transfers via transferable objects
 
-use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::JsFuture;
 use js_sys::{Array, Float32Array, Object, Promise, Reflect, Uint8Array};
-use web_sys::{console, IdbDatabase, IdbFactory, IdbObjectStore, IdbRequest, IdbTransaction, Window};
+use parking_lot::Mutex;
+#[cfg(feature = "collections")]
+use ruvector_collections::{
+    CollectionConfig as CoreCollectionConfig, CollectionManager as CoreCollectionManager,
+};
 use ruvector_core::{
     error::RuvectorError,
     types::{DbOptions, DistanceMetric, HnswConfig, SearchQuery, SearchResult, VectorEntry},
     vector_db::VectorDB as CoreVectorDB,
-};
-#[cfg(feature = "collections")]
-use ruvector_collections::{
-    CollectionManager as CoreCollectionManager,
-    CollectionConfig as CoreCollectionConfig,
 };
 #[cfg(feature = "collections")]
 use ruvector_filter::FilterExpression as CoreFilterExpression;
@@ -28,7 +25,11 @@ use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::{from_value, to_value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::Mutex;
+use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{
+    console, IdbDatabase, IdbFactory, IdbObjectStore, IdbRequest, IdbTransaction, Window,
+};
 
 /// Initialize panic hook for better error messages in browser console
 #[wasm_bindgen(start)]
@@ -77,7 +78,11 @@ const MAX_VECTOR_DIMENSIONS: usize = 65536;
 #[wasm_bindgen]
 impl JsVectorEntry {
     #[wasm_bindgen(constructor)]
-    pub fn new(vector: Float32Array, id: Option<String>, metadata: Option<JsValue>) -> Result<JsVectorEntry, JsValue> {
+    pub fn new(
+        vector: Float32Array,
+        id: Option<String>,
+        metadata: Option<JsValue>,
+    ) -> Result<JsVectorEntry, JsValue> {
         // Security: Validate vector dimensions before allocation
         let vec_len = vector.length() as usize;
         if vec_len == 0 {
@@ -93,7 +98,10 @@ impl JsVectorEntry {
         let vector_data: Vec<f32> = vector.to_vec();
 
         let metadata = if let Some(meta) = metadata {
-            Some(from_value(meta).map_err(|e| JsValue::from_str(&format!("Invalid metadata: {}", e)))?)
+            Some(
+                from_value(meta)
+                    .map_err(|e| JsValue::from_str(&format!("Invalid metadata: {}", e)))?,
+            )
         } else {
             None
         };
@@ -143,7 +151,10 @@ impl JsSearchResult {
 
     #[wasm_bindgen(getter)]
     pub fn vector(&self) -> Option<Float32Array> {
-        self.inner.vector.as_ref().map(|v| Float32Array::from(&v[..]))
+        self.inner
+            .vector
+            .as_ref()
+            .map(|v| Float32Array::from(&v[..]))
     }
 
     #[wasm_bindgen(getter)]
@@ -169,7 +180,11 @@ impl VectorDB {
     /// * `metric` - Distance metric ("euclidean", "cosine", "dotproduct", "manhattan")
     /// * `use_hnsw` - Whether to use HNSW index for faster search
     #[wasm_bindgen(constructor)]
-    pub fn new(dimensions: usize, metric: Option<String>, use_hnsw: Option<bool>) -> Result<VectorDB, JsValue> {
+    pub fn new(
+        dimensions: usize,
+        metric: Option<String>,
+        use_hnsw: Option<bool>,
+    ) -> Result<VectorDB, JsValue> {
         let distance_metric = match metric.as_deref() {
             Some("euclidean") => DistanceMetric::Euclidean,
             Some("cosine") => DistanceMetric::Cosine,
@@ -193,8 +208,7 @@ impl VectorDB {
             quantization: None, // Disable quantization for WASM (for now)
         };
 
-        let db = CoreVectorDB::new(options)
-            .map_err(|e| JsValue::from(WasmError::from(e)))?;
+        let db = CoreVectorDB::new(options).map_err(|e| JsValue::from(WasmError::from(e)))?;
 
         Ok(VectorDB {
             db: Arc::new(Mutex::new(db)),
@@ -213,11 +227,17 @@ impl VectorDB {
     /// # Returns
     /// The vector ID
     #[wasm_bindgen]
-    pub fn insert(&self, vector: Float32Array, id: Option<String>, metadata: Option<JsValue>) -> Result<String, JsValue> {
+    pub fn insert(
+        &self,
+        vector: Float32Array,
+        id: Option<String>,
+        metadata: Option<JsValue>,
+    ) -> Result<String, JsValue> {
         let entry = JsVectorEntry::new(vector, id, metadata)?;
 
         let db = self.db.lock();
-        let vector_id = db.insert(entry.inner)
+        let vector_id = db
+            .insert(entry.inner)
             .map_err(|e| JsValue::from(WasmError::from(e)))?;
 
         Ok(vector_id)
@@ -233,7 +253,8 @@ impl VectorDB {
     #[wasm_bindgen(js_name = insertBatch)]
     pub fn insert_batch(&self, entries: JsValue) -> Result<Vec<String>, JsValue> {
         // Convert JsValue to Array using reflection
-        let entries_array: js_sys::Array = entries.dyn_into()
+        let entries_array: js_sys::Array = entries
+            .dyn_into()
             .map_err(|_| JsValue::from_str("entries must be an array"))?;
 
         let mut vector_entries = Vec::new();
@@ -248,7 +269,8 @@ impl VectorDB {
         }
 
         let db = self.db.lock();
-        let ids = db.insert_batch(vector_entries)
+        let ids = db
+            .insert_batch(vector_entries)
             .map_err(|e| JsValue::from(WasmError::from(e)))?;
 
         Ok(ids)
@@ -264,7 +286,12 @@ impl VectorDB {
     /// # Returns
     /// Array of search results
     #[wasm_bindgen]
-    pub fn search(&self, query: Float32Array, k: usize, filter: Option<JsValue>) -> Result<Vec<JsSearchResult>, JsValue> {
+    pub fn search(
+        &self,
+        query: Float32Array,
+        k: usize,
+        filter: Option<JsValue>,
+    ) -> Result<Vec<JsSearchResult>, JsValue> {
         let query_vector: Vec<f32> = query.to_vec();
 
         if query_vector.len() != self.dimensions {
@@ -289,10 +316,14 @@ impl VectorDB {
         };
 
         let db = self.db.lock();
-        let results = db.search(search_query)
+        let results = db
+            .search(search_query)
             .map_err(|e| JsValue::from(WasmError::from(e)))?;
 
-        Ok(results.into_iter().map(|r| JsSearchResult { inner: r }).collect())
+        Ok(results
+            .into_iter()
+            .map(|r| JsSearchResult { inner: r })
+            .collect())
     }
 
     /// Delete a vector by ID
@@ -305,8 +336,7 @@ impl VectorDB {
     #[wasm_bindgen]
     pub fn delete(&self, id: &str) -> Result<bool, JsValue> {
         let db = self.db.lock();
-        db.delete(id)
-            .map_err(|e| JsValue::from(WasmError::from(e)))
+        db.delete(id).map_err(|e| JsValue::from(WasmError::from(e)))
     }
 
     /// Get a vector by ID
@@ -319,8 +349,7 @@ impl VectorDB {
     #[wasm_bindgen]
     pub fn get(&self, id: &str) -> Result<Option<JsVectorEntry>, JsValue> {
         let db = self.db.lock();
-        let entry = db.get(id)
-            .map_err(|e| JsValue::from(WasmError::from(e)))?;
+        let entry = db.get(id).map_err(|e| JsValue::from(WasmError::from(e)))?;
 
         Ok(entry.map(|e| JsVectorEntry { inner: e }))
     }
@@ -401,14 +430,22 @@ pub fn array_to_float32_array(arr: Vec<f32>) -> Float32Array {
 pub fn benchmark(name: &str, iterations: usize, dimensions: usize) -> Result<f64, JsValue> {
     use std::time::Instant;
 
-    console::log_1(&format!("Running benchmark '{}' with {} iterations...", name, iterations).into());
+    console::log_1(
+        &format!(
+            "Running benchmark '{}' with {} iterations...",
+            name, iterations
+        )
+        .into(),
+    );
 
     let db = VectorDB::new(dimensions, Some("cosine".to_string()), Some(false))?;
 
     let start = Instant::now();
 
     for i in 0..iterations {
-        let vector: Vec<f32> = (0..dimensions).map(|_| js_sys::Math::random() as f32).collect();
+        let vector: Vec<f32> = (0..dimensions)
+            .map(|_| js_sys::Math::random() as f32)
+            .collect();
         let vector_arr = Float32Array::from(&vector[..]);
         db.insert(vector_arr, Some(format!("vec_{}", i)), None)?;
     }
@@ -443,8 +480,9 @@ impl CollectionManager {
     pub fn new(base_path: Option<String>) -> Result<CollectionManager, JsValue> {
         let path = base_path.unwrap_or_else(|| ":memory:".to_string());
 
-        let manager = CoreCollectionManager::new(std::path::PathBuf::from(path))
-            .map_err(|e| JsValue::from_str(&format!("Failed to create collection manager: {}", e)))?;
+        let manager = CoreCollectionManager::new(std::path::PathBuf::from(path)).map_err(|e| {
+            JsValue::from_str(&format!("Failed to create collection manager: {}", e))
+        })?;
 
         Ok(CollectionManager {
             inner: Arc::new(Mutex::new(manager)),
@@ -482,7 +520,8 @@ impl CollectionManager {
         };
 
         let manager = self.inner.lock();
-        manager.create_collection(name, config)
+        manager
+            .create_collection(name, config)
             .map_err(|e| JsValue::from_str(&format!("Failed to create collection: {}", e)))?;
 
         Ok(())
@@ -508,7 +547,8 @@ impl CollectionManager {
     #[wasm_bindgen(js_name = deleteCollection)]
     pub fn delete_collection(&self, name: &str) -> Result<(), JsValue> {
         let manager = self.inner.lock();
-        manager.delete_collection(name)
+        manager
+            .delete_collection(name)
             .map_err(|e| JsValue::from_str(&format!("Failed to delete collection: {}", e)))?;
 
         Ok(())
@@ -525,7 +565,8 @@ impl CollectionManager {
     pub fn get_collection(&self, name: &str) -> Result<VectorDB, JsValue> {
         let manager = self.inner.lock();
 
-        let collection_ref = manager.get_collection(name)
+        let collection_ref = manager
+            .get_collection(name)
             .ok_or_else(|| JsValue::from_str(&format!("Collection '{}' not found", name)))?;
 
         let collection = collection_ref.read();
@@ -564,7 +605,8 @@ impl CollectionManager {
     #[wasm_bindgen(js_name = createAlias)]
     pub fn create_alias(&self, alias: &str, collection: &str) -> Result<(), JsValue> {
         let manager = self.inner.lock();
-        manager.create_alias(alias, collection)
+        manager
+            .create_alias(alias, collection)
             .map_err(|e| JsValue::from_str(&format!("Failed to create alias: {}", e)))?;
 
         Ok(())
@@ -577,7 +619,8 @@ impl CollectionManager {
     #[wasm_bindgen(js_name = deleteAlias)]
     pub fn delete_alias(&self, alias: &str) -> Result<(), JsValue> {
         let manager = self.inner.lock();
-        manager.delete_alias(alias)
+        manager
+            .delete_alias(alias)
             .map_err(|e| JsValue::from_str(&format!("Failed to delete alias: {}", e)))?;
 
         Ok(())
@@ -637,8 +680,8 @@ impl FilterBuilder {
     /// const filter = FilterBuilder.eq("status", "active");
     /// ```
     pub fn eq(field: &str, value: JsValue) -> Result<FilterBuilder, JsValue> {
-        let json_value: serde_json::Value = from_value(value)
-            .map_err(|e| JsValue::from_str(&format!("Invalid value: {}", e)))?;
+        let json_value: serde_json::Value =
+            from_value(value).map_err(|e| JsValue::from_str(&format!("Invalid value: {}", e)))?;
 
         Ok(FilterBuilder {
             inner: CoreFilterExpression::eq(field, json_value),
@@ -647,8 +690,8 @@ impl FilterBuilder {
 
     /// Create a not-equal filter
     pub fn ne(field: &str, value: JsValue) -> Result<FilterBuilder, JsValue> {
-        let json_value: serde_json::Value = from_value(value)
-            .map_err(|e| JsValue::from_str(&format!("Invalid value: {}", e)))?;
+        let json_value: serde_json::Value =
+            from_value(value).map_err(|e| JsValue::from_str(&format!("Invalid value: {}", e)))?;
 
         Ok(FilterBuilder {
             inner: CoreFilterExpression::ne(field, json_value),
@@ -657,8 +700,8 @@ impl FilterBuilder {
 
     /// Create a greater-than filter
     pub fn gt(field: &str, value: JsValue) -> Result<FilterBuilder, JsValue> {
-        let json_value: serde_json::Value = from_value(value)
-            .map_err(|e| JsValue::from_str(&format!("Invalid value: {}", e)))?;
+        let json_value: serde_json::Value =
+            from_value(value).map_err(|e| JsValue::from_str(&format!("Invalid value: {}", e)))?;
 
         Ok(FilterBuilder {
             inner: CoreFilterExpression::gt(field, json_value),
@@ -667,8 +710,8 @@ impl FilterBuilder {
 
     /// Create a greater-than-or-equal filter
     pub fn gte(field: &str, value: JsValue) -> Result<FilterBuilder, JsValue> {
-        let json_value: serde_json::Value = from_value(value)
-            .map_err(|e| JsValue::from_str(&format!("Invalid value: {}", e)))?;
+        let json_value: serde_json::Value =
+            from_value(value).map_err(|e| JsValue::from_str(&format!("Invalid value: {}", e)))?;
 
         Ok(FilterBuilder {
             inner: CoreFilterExpression::gte(field, json_value),
@@ -677,8 +720,8 @@ impl FilterBuilder {
 
     /// Create a less-than filter
     pub fn lt(field: &str, value: JsValue) -> Result<FilterBuilder, JsValue> {
-        let json_value: serde_json::Value = from_value(value)
-            .map_err(|e| JsValue::from_str(&format!("Invalid value: {}", e)))?;
+        let json_value: serde_json::Value =
+            from_value(value).map_err(|e| JsValue::from_str(&format!("Invalid value: {}", e)))?;
 
         Ok(FilterBuilder {
             inner: CoreFilterExpression::lt(field, json_value),
@@ -687,8 +730,8 @@ impl FilterBuilder {
 
     /// Create a less-than-or-equal filter
     pub fn lte(field: &str, value: JsValue) -> Result<FilterBuilder, JsValue> {
-        let json_value: serde_json::Value = from_value(value)
-            .map_err(|e| JsValue::from_str(&format!("Invalid value: {}", e)))?;
+        let json_value: serde_json::Value =
+            from_value(value).map_err(|e| JsValue::from_str(&format!("Invalid value: {}", e)))?;
 
         Ok(FilterBuilder {
             inner: CoreFilterExpression::lte(field, json_value),
@@ -741,10 +784,8 @@ impl FilterBuilder {
     /// # Arguments
     /// * `filters` - Array of FilterBuilder instances
     pub fn and(filters: Vec<FilterBuilder>) -> FilterBuilder {
-        let inner_filters: Vec<CoreFilterExpression> = filters
-            .into_iter()
-            .map(|f| f.inner)
-            .collect();
+        let inner_filters: Vec<CoreFilterExpression> =
+            filters.into_iter().map(|f| f.inner).collect();
 
         FilterBuilder {
             inner: CoreFilterExpression::and(inner_filters),
@@ -756,10 +797,8 @@ impl FilterBuilder {
     /// # Arguments
     /// * `filters` - Array of FilterBuilder instances
     pub fn or(filters: Vec<FilterBuilder>) -> FilterBuilder {
-        let inner_filters: Vec<CoreFilterExpression> = filters
-            .into_iter()
-            .map(|f| f.inner)
-            .collect();
+        let inner_filters: Vec<CoreFilterExpression> =
+            filters.into_iter().map(|f| f.inner).collect();
 
         FilterBuilder {
             inner: CoreFilterExpression::or(inner_filters),

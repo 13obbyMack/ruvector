@@ -9,9 +9,15 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use ruvector_gnn::{
-    compress::{CompressionLevel as RustCompressionLevel, CompressedTensor as RustCompressedTensor, TensorCompress as RustTensorCompress},
+    compress::{
+        CompressedTensor as RustCompressedTensor, CompressionLevel as RustCompressionLevel,
+        TensorCompress as RustTensorCompress,
+    },
     layer::RuvectorLayer as RustRuvectorLayer,
-    search::{differentiable_search as rust_differentiable_search, hierarchical_forward as rust_hierarchical_forward},
+    search::{
+        differentiable_search as rust_differentiable_search,
+        hierarchical_forward as rust_hierarchical_forward,
+    },
 };
 
 // ==================== RuvectorLayer Bindings ====================
@@ -96,15 +102,23 @@ impl RuvectorLayer {
     /// Serialize the layer to JSON
     #[napi]
     pub fn to_json(&self) -> Result<String> {
-        serde_json::to_string(&self.inner)
-            .map_err(|e| Error::new(Status::GenericFailure, format!("Serialization error: {}", e)))
+        serde_json::to_string(&self.inner).map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Serialization error: {}", e),
+            )
+        })
     }
 
     /// Deserialize the layer from JSON
     #[napi(factory)]
     pub fn from_json(json: String) -> Result<Self> {
-        let inner: RustRuvectorLayer = serde_json::from_str(&json)
-            .map_err(|e| Error::new(Status::GenericFailure, format!("Deserialization error: {}", e)))?;
+        let inner: RustRuvectorLayer = serde_json::from_str(&json).map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Deserialization error: {}", e),
+            )
+        })?;
         Ok(Self { inner })
     }
 }
@@ -193,12 +207,17 @@ impl TensorCompress {
     pub fn compress(&self, embedding: Vec<f64>, access_freq: f64) -> Result<String> {
         let embedding_f32: Vec<f32> = embedding.iter().map(|&x| x as f32).collect();
 
-        let compressed = self.inner
+        let compressed = self
+            .inner
             .compress(&embedding_f32, access_freq as f32)
             .map_err(|e| Error::new(Status::GenericFailure, format!("Compression error: {}", e)))?;
 
-        serde_json::to_string(&compressed)
-            .map_err(|e| Error::new(Status::GenericFailure, format!("Serialization error: {}", e)))
+        serde_json::to_string(&compressed).map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Serialization error: {}", e),
+            )
+        })
     }
 
     /// Compress with explicit compression level
@@ -225,12 +244,17 @@ impl TensorCompress {
         let embedding_f32: Vec<f32> = embedding.iter().map(|&x| x as f32).collect();
         let rust_level = level.to_rust()?;
 
-        let compressed = self.inner
+        let compressed = self
+            .inner
             .compress_with_level(&embedding_f32, &rust_level)
             .map_err(|e| Error::new(Status::GenericFailure, format!("Compression error: {}", e)))?;
 
-        serde_json::to_string(&compressed)
-            .map_err(|e| Error::new(Status::GenericFailure, format!("Serialization error: {}", e)))
+        serde_json::to_string(&compressed).map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Serialization error: {}", e),
+            )
+        })
     }
 
     /// Decompress a compressed tensor
@@ -247,12 +271,20 @@ impl TensorCompress {
     /// ```
     #[napi]
     pub fn decompress(&self, compressed_json: String) -> Result<Vec<f64>> {
-        let compressed: RustCompressedTensor = serde_json::from_str(&compressed_json)
-            .map_err(|e| Error::new(Status::GenericFailure, format!("Deserialization error: {}", e)))?;
+        let compressed: RustCompressedTensor =
+            serde_json::from_str(&compressed_json).map_err(|e| {
+                Error::new(
+                    Status::GenericFailure,
+                    format!("Deserialization error: {}", e),
+                )
+            })?;
 
-        let result = self.inner
-            .decompress(&compressed)
-            .map_err(|e| Error::new(Status::GenericFailure, format!("Decompression error: {}", e)))?;
+        let result = self.inner.decompress(&compressed).map_err(|e| {
+            Error::new(
+                Status::GenericFailure,
+                format!("Decompression error: {}", e),
+            )
+        })?;
 
         Ok(result.iter().map(|&x| x as f64).collect())
     }
@@ -301,12 +333,8 @@ pub fn differentiable_search(
         .map(|v| v.iter().map(|&x| x as f32).collect())
         .collect();
 
-    let (indices, weights) = rust_differentiable_search(
-        &query_f32,
-        &candidates_f32,
-        k as usize,
-        temperature as f32,
-    );
+    let (indices, weights) =
+        rust_differentiable_search(&query_f32, &candidates_f32, k as usize, temperature as f32);
 
     Ok(SearchResult {
         indices: indices.iter().map(|&i| i as u32).collect(),
@@ -353,8 +381,12 @@ pub fn hierarchical_forward(
     let gnn_layers: Vec<RustRuvectorLayer> = gnn_layers_json
         .iter()
         .map(|json| {
-            serde_json::from_str(json)
-                .map_err(|e| Error::new(Status::GenericFailure, format!("Layer deserialization error: {}", e)))
+            serde_json::from_str(json).map_err(|e| {
+                Error::new(
+                    Status::GenericFailure,
+                    format!("Layer deserialization error: {}", e),
+                )
+            })
         })
         .collect::<Result<Vec<_>>>()?;
 

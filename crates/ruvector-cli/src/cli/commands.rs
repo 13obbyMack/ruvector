@@ -1,10 +1,16 @@
 //! CLI command implementations
 
-use crate::cli::{ProgressTracker, format_search_results, format_stats, format_success, format_error, export_json, export_csv};
+use crate::cli::{
+    export_csv, export_json, format_error, format_search_results, format_stats, format_success,
+    ProgressTracker,
+};
 use crate::config::Config;
 use anyhow::{Context, Result};
 use colored::*;
-use ruvector_core::{VectorDB, types::{VectorEntry, SearchQuery, DbOptions}};
+use ruvector_core::{
+    types::{DbOptions, SearchQuery, VectorEntry},
+    VectorDB,
+};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -14,12 +20,14 @@ pub fn create_database(path: &str, dimensions: usize, config: &Config) -> Result
     db_options.storage_path = path.to_string();
     db_options.dimensions = dimensions;
 
-    println!("{}", format_success(&format!("Creating database at: {}", path)));
+    println!(
+        "{}",
+        format_success(&format!("Creating database at: {}", path))
+    );
     println!("  Dimensions: {}", dimensions.to_string().cyan());
     println!("  Distance metric: {:?}", db_options.distance_metric);
 
-    let _db = VectorDB::new(db_options)
-        .context("Failed to create database")?;
+    let _db = VectorDB::new(db_options).context("Failed to create database")?;
 
     println!("{}", format_success("Database created successfully!"));
     Ok(())
@@ -37,8 +45,7 @@ pub fn insert_vectors(
     let mut db_options = config.to_db_options();
     db_options.storage_path = db_path.to_string();
 
-    let db = VectorDB::new(db_options)
-        .context("Failed to open database")?;
+    let db = VectorDB::new(db_options).context("Failed to open database")?;
 
     // Parse input file
     let entries = match format {
@@ -49,7 +56,10 @@ pub fn insert_vectors(
     };
 
     let total = entries.len();
-    println!("{}", format_success(&format!("Loaded {} vectors from {}", total, input_file)));
+    println!(
+        "{}",
+        format_success(&format!("Loaded {} vectors from {}", total, input_file))
+    );
 
     // Insert with progress
     let start = Instant::now();
@@ -78,12 +88,15 @@ pub fn insert_vectors(
     }
 
     let elapsed = start.elapsed();
-    println!("{}", format_success(&format!(
-        "Inserted {} vectors in {:.2}s ({:.0} vectors/sec)",
-        total,
-        elapsed.as_secs_f64(),
-        total as f64 / elapsed.as_secs_f64()
-    )));
+    println!(
+        "{}",
+        format_success(&format!(
+            "Inserted {} vectors in {:.2}s ({:.0} vectors/sec)",
+            total,
+            elapsed.as_secs_f64(),
+            total as f64 / elapsed.as_secs_f64()
+        ))
+    );
 
     Ok(())
 }
@@ -99,22 +112,29 @@ pub fn search_vectors(
     let mut db_options = config.to_db_options();
     db_options.storage_path = db_path.to_string();
 
-    let db = VectorDB::new(db_options)
-        .context("Failed to open database")?;
+    let db = VectorDB::new(db_options).context("Failed to open database")?;
 
     let start = Instant::now();
-    let results = db.search(SearchQuery {
-        vector: query_vector,
-        k,
-        filter: None,
-        ef_search: None,
-    })
-    .context("Failed to search")?;
+    let results = db
+        .search(SearchQuery {
+            vector: query_vector,
+            k,
+            filter: None,
+            ef_search: None,
+        })
+        .context("Failed to search")?;
 
     let elapsed = start.elapsed();
 
     println!("{}", format_search_results(&results, show_vectors));
-    println!("\n{}", format!("Search completed in {:.2}ms", elapsed.as_secs_f64() * 1000.0).dimmed());
+    println!(
+        "\n{}",
+        format!(
+            "Search completed in {:.2}ms",
+            elapsed.as_secs_f64() * 1000.0
+        )
+        .dimmed()
+    );
 
     Ok(())
 }
@@ -124,8 +144,7 @@ pub fn show_info(db_path: &str, config: &Config) -> Result<()> {
     let mut db_options = config.to_db_options();
     db_options.storage_path = db_path.to_string();
 
-    let db = VectorDB::new(db_options)
-        .context("Failed to open database")?;
+    let db = VectorDB::new(db_options).context("Failed to open database")?;
 
     let count = db.len().context("Failed to get count")?;
     let dimensions = db.options().dimensions;
@@ -136,7 +155,10 @@ pub fn show_info(db_path: &str, config: &Config) -> Result<()> {
     if let Some(hnsw_config) = &db.options().hnsw_config {
         println!("{}", "HNSW Configuration:".bold().green());
         println!("  M: {}", hnsw_config.m.to_string().cyan());
-        println!("  ef_construction: {}", hnsw_config.ef_construction.to_string().cyan());
+        println!(
+            "  ef_construction: {}",
+            hnsw_config.ef_construction.to_string().cyan()
+        );
         println!("  ef_search: {}", hnsw_config.ef_search.to_string().cyan());
     }
 
@@ -148,8 +170,7 @@ pub fn run_benchmark(db_path: &str, config: &Config, num_queries: usize) -> Resu
     let mut db_options = config.to_db_options();
     db_options.storage_path = db_path.to_string();
 
-    let db = VectorDB::new(db_options)
-        .context("Failed to open database")?;
+    let db = VectorDB::new(db_options).context("Failed to open database")?;
 
     let dimensions = db.options().dimensions;
 
@@ -208,10 +229,12 @@ pub fn export_database(
     let mut db_options = config.to_db_options();
     db_options.storage_path = db_path.to_string();
 
-    let db = VectorDB::new(db_options)
-        .context("Failed to open database")?;
+    let db = VectorDB::new(db_options).context("Failed to open database")?;
 
-    println!("{}", format_success(&format!("Exporting database to: {}", output_file)));
+    println!(
+        "{}",
+        format_success(&format!("Exporting database to: {}", output_file))
+    );
 
     // Export is currently limited - would need to add all_ids() method to VectorDB
     // For now, return an error with a helpful message
@@ -233,7 +256,10 @@ pub fn import_from_external(
     source_path: &str,
     config: &Config,
 ) -> Result<()> {
-    println!("{}", format_success(&format!("Importing from {} database", source)));
+    println!(
+        "{}",
+        format_success(&format!("Importing from {} database", source))
+    );
 
     match source {
         "faiss" => {
@@ -255,15 +281,12 @@ pub fn import_from_external(
 // Helper functions
 
 fn parse_json_file(path: &str) -> Result<Vec<VectorEntry>> {
-    let content = std::fs::read_to_string(path)
-        .context("Failed to read JSON file")?;
-    serde_json::from_str(&content)
-        .context("Failed to parse JSON")
+    let content = std::fs::read_to_string(path).context("Failed to read JSON file")?;
+    serde_json::from_str(&content).context("Failed to parse JSON")
 }
 
 fn parse_csv_file(path: &str) -> Result<Vec<VectorEntry>> {
-    let mut reader = csv::Reader::from_path(path)
-        .context("Failed to open CSV file")?;
+    let mut reader = csv::Reader::from_path(path).context("Failed to open CSV file")?;
 
     let mut entries = Vec::new();
 
@@ -276,8 +299,9 @@ fn parse_csv_file(path: &str) -> Result<Vec<VectorEntry>> {
             Some(record.get(0).unwrap().to_string())
         };
 
-        let vector: Vec<f32> = serde_json::from_str(record.get(1).context("Missing vector column")?)
-            .context("Failed to parse vector")?;
+        let vector: Vec<f32> =
+            serde_json::from_str(record.get(1).context("Missing vector column")?)
+                .context("Failed to parse vector")?;
 
         let metadata = if let Some(meta_str) = record.get(2) {
             if !meta_str.is_empty() {
@@ -289,20 +313,22 @@ fn parse_csv_file(path: &str) -> Result<Vec<VectorEntry>> {
             None
         };
 
-        entries.push(VectorEntry { id, vector, metadata });
+        entries.push(VectorEntry {
+            id,
+            vector,
+            metadata,
+        });
     }
 
     Ok(entries)
 }
 
 fn parse_npy_file(path: &str) -> Result<Vec<VectorEntry>> {
-    use ndarray_npy::ReadNpyExt;
     use ndarray::Array2;
+    use ndarray_npy::ReadNpyExt;
 
-    let file = std::fs::File::open(path)
-        .context("Failed to open NPY file")?;
-    let array: Array2<f32> = Array2::read_npy(file)
-        .context("Failed to read NPY file")?;
+    let file = std::fs::File::open(path).context("Failed to open NPY file")?;
+    let array: Array2<f32> = Array2::read_npy(file).context("Failed to read NPY file")?;
 
     let entries: Vec<VectorEntry> = array
         .outer_iter()
@@ -316,4 +342,3 @@ fn parse_npy_file(path: &str) -> Result<Vec<VectorEntry>> {
 
     Ok(entries)
 }
-

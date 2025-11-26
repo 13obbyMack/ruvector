@@ -3,18 +3,18 @@
 //! A high-performance graph database layer built on RuVector with Neo4j compatibility.
 //! Supports property graphs, hypergraphs, Cypher queries, ACID transactions, and distributed queries.
 
-pub mod error;
-pub mod types;
-pub mod property;
-pub mod node;
+pub mod cypher;
 pub mod edge;
+pub mod error;
+pub mod executor;
+pub mod graph;
 pub mod hyperedge;
 pub mod index;
+pub mod node;
+pub mod property;
 pub mod storage;
-pub mod graph;
-pub mod cypher;
 pub mod transaction;
-pub mod executor;
+pub mod types;
 
 // Performance optimization modules
 pub mod optimization;
@@ -27,21 +27,21 @@ pub mod hybrid;
 pub mod distributed;
 
 // Core type re-exports
-pub use error::{GraphError, Result};
-pub use types::{NodeId, EdgeId, PropertyValue, Properties, Label, RelationType};
-pub use node::{Node, NodeBuilder};
 pub use edge::{Edge, EdgeBuilder};
-pub use hyperedge::{Hyperedge, HyperedgeBuilder, HyperedgeId};
+pub use error::{GraphError, Result};
 pub use graph::GraphDB;
+pub use hyperedge::{Hyperedge, HyperedgeBuilder, HyperedgeId};
+pub use node::{Node, NodeBuilder};
 #[cfg(feature = "storage")]
 pub use storage::GraphStorage;
-pub use transaction::{Transaction, TransactionManager, IsolationLevel};
+pub use transaction::{IsolationLevel, Transaction, TransactionManager};
+pub use types::{EdgeId, Label, NodeId, Properties, PropertyValue, RelationType};
 
 // Re-export hybrid query types when available
 #[cfg(not(feature = "minimal"))]
 pub use hybrid::{
-    HybridIndex, EmbeddingConfig, SemanticSearch, RagEngine, RagConfig,
-    VectorCypherParser, GraphNeuralEngine, GnnConfig,
+    EmbeddingConfig, GnnConfig, GraphNeuralEngine, HybridIndex, RagConfig, RagEngine,
+    SemanticSearch, VectorCypherParser,
 };
 
 // Re-export distributed types when feature is enabled

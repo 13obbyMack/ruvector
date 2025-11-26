@@ -119,7 +119,11 @@ impl PropertyIndex {
         let value_str = self.property_value_to_string(value);
         self.index
             .get(key)
-            .and_then(|value_map| value_map.get(&value_str).map(|set| set.iter().cloned().collect()))
+            .and_then(|value_map| {
+                value_map
+                    .get(&value_str)
+                    .map(|set| set.iter().cloned().collect())
+            })
             .unwrap_or_default()
     }
 
@@ -379,14 +383,9 @@ mod tests {
     fn test_label_index() {
         let index = LabelIndex::new();
 
-        let node1 = NodeBuilder::new()
-            .label("Person")
-            .label("User")
-            .build();
+        let node1 = NodeBuilder::new().label("Person").label("User").build();
 
-        let node2 = NodeBuilder::new()
-            .label("Person")
-            .build();
+        let node2 = NodeBuilder::new().label("Person").build();
 
         index.add_node(&node1);
         index.add_node(&node2);
@@ -417,7 +416,8 @@ mod tests {
         index.add_node(&node1);
         index.add_node(&node2);
 
-        let alice = index.get_nodes_by_property("name", &PropertyValue::String("Alice".to_string()));
+        let alice =
+            index.get_nodes_by_property("name", &PropertyValue::String("Alice".to_string()));
         assert_eq!(alice.len(), 1);
 
         let age_30 = index.get_nodes_by_property("age", &PropertyValue::Integer(30));

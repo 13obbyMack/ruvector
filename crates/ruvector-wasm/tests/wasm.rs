@@ -2,9 +2,9 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use wasm_bindgen_test::*;
-use ruvector_wasm::*;
 use js_sys::Float32Array;
+use ruvector_wasm::*;
+use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -59,7 +59,9 @@ fn test_delete() {
 
     // Insert
     let vector = Float32Array::from(&[1.0, 0.0, 0.0][..]);
-    let id = db.insert(vector, Some("test_delete".to_string()), None).unwrap();
+    let id = db
+        .insert(vector, Some("test_delete".to_string()), None)
+        .unwrap();
 
     // Delete
     let deleted = db.delete(&id);
@@ -78,7 +80,9 @@ fn test_get() {
 
     // Insert
     let vector = Float32Array::from(&[1.0, 2.0, 3.0][..]);
-    let id = db.insert(vector, Some("test_get".to_string()), None).unwrap();
+    let id = db
+        .insert(vector, Some("test_get".to_string()), None)
+        .unwrap();
 
     // Get
     let entry = db.get(&id);

@@ -5,9 +5,9 @@ use crate::error::Result;
 use crate::hyperedge::{Hyperedge, HyperedgeId};
 use crate::index::{AdjacencyIndex, EdgeTypeIndex, HyperedgeNodeIndex, LabelIndex, PropertyIndex};
 use crate::node::Node;
-use crate::types::{EdgeId, NodeId, PropertyValue};
 #[cfg(feature = "storage")]
 use crate::storage::GraphStorage;
+use crate::types::{EdgeId, NodeId, PropertyValue};
 use dashmap::DashMap;
 #[cfg(feature = "storage")]
 use std::path::Path;
@@ -92,7 +92,8 @@ impl GraphDB {
             // Load hyperedges
             for hyperedge_id in storage.all_hyperedge_ids()? {
                 if let Some(hyperedge) = storage.get_hyperedge(&hyperedge_id)? {
-                    self.hyperedges.insert(hyperedge_id.clone(), hyperedge.clone());
+                    self.hyperedges
+                        .insert(hyperedge_id.clone(), hyperedge.clone());
                     self.hyperedge_node_index.add_hyperedge(&hyperedge);
                 }
             }
@@ -173,7 +174,7 @@ impl GraphDB {
         // Verify nodes exist
         if !self.nodes.contains_key(&edge.from) || !self.nodes.contains_key(&edge.to) {
             return Err(crate::error::GraphError::NodeNotFound(
-                "Source or target node not found".to_string()
+                "Source or target node not found".to_string(),
             ));
         }
 
@@ -253,9 +254,10 @@ impl GraphDB {
         // Verify all nodes exist
         for node_id in &hyperedge.nodes {
             if !self.nodes.contains_key(node_id) {
-                return Err(crate::error::GraphError::NodeNotFound(
-                    format!("Node {} not found", node_id)
-                ));
+                return Err(crate::error::GraphError::NodeNotFound(format!(
+                    "Node {} not found",
+                    node_id
+                )));
             }
         }
 
@@ -398,12 +400,10 @@ mod tests {
         let id2 = db.create_node(node2).unwrap();
         let id3 = db.create_node(node3).unwrap();
 
-        let hyperedge = HyperedgeBuilder::new(
-            vec![id1.clone(), id2.clone(), id3.clone()],
-            "MEETING"
-        )
-        .description("Team meeting")
-        .build();
+        let hyperedge =
+            HyperedgeBuilder::new(vec![id1.clone(), id2.clone(), id3.clone()], "MEETING")
+                .description("Team meeting")
+                .build();
 
         let hedge_id = db.create_hyperedge(hyperedge).unwrap();
         assert_eq!(db.hyperedge_count(), 1);

@@ -3,7 +3,7 @@
 //! Provides GNN-based predictions: node classification, link prediction, graph embeddings.
 
 use crate::error::{GraphError, Result};
-use crate::types::{NodeId, EdgeId};
+use crate::types::{EdgeId, NodeId};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -99,11 +99,7 @@ impl GraphNeuralEngine {
     }
 
     /// Predict likelihood of a link between two nodes
-    pub fn predict_link(
-        &self,
-        node1: &NodeId,
-        node2: &NodeId,
-    ) -> Result<LinkPrediction> {
+    pub fn predict_link(&self, node1: &NodeId, node2: &NodeId) -> Result<LinkPrediction> {
         // Placeholder for link prediction
         // Real implementation would:
         // 1. Get embeddings for both nodes
@@ -166,17 +162,16 @@ impl GraphNeuralEngine {
         &self,
         nodes: &[(NodeId, Vec<f32>)],
     ) -> Result<Vec<NodeClassification>> {
-        nodes.iter()
+        nodes
+            .iter()
             .map(|(id, features)| self.classify_node(id, features))
             .collect()
     }
 
     /// Batch link prediction
-    pub fn predict_links_batch(
-        &self,
-        pairs: &[(NodeId, NodeId)],
-    ) -> Result<Vec<LinkPrediction>> {
-        pairs.iter()
+    pub fn predict_links_batch(&self, pairs: &[(NodeId, NodeId)]) -> Result<Vec<LinkPrediction>> {
+        pairs
+            .iter()
             .map(|(n1, n2)| self.predict_link(n1, n2))
             .collect()
     }

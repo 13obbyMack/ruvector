@@ -1,7 +1,7 @@
 //! Core types for graph database
 
-use bincode::{Encode, Decode};
-use serde::{Serialize, Deserialize};
+use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub type NodeId = String;
@@ -31,46 +31,72 @@ pub enum PropertyValue {
 // Convenience constructors for PropertyValue
 impl PropertyValue {
     /// Create a boolean value
-    pub fn boolean(b: bool) -> Self { PropertyValue::Boolean(b) }
+    pub fn boolean(b: bool) -> Self {
+        PropertyValue::Boolean(b)
+    }
     /// Create an integer value
-    pub fn integer(i: i64) -> Self { PropertyValue::Integer(i) }
+    pub fn integer(i: i64) -> Self {
+        PropertyValue::Integer(i)
+    }
     /// Create a float value
-    pub fn float(f: f64) -> Self { PropertyValue::Float(f) }
+    pub fn float(f: f64) -> Self {
+        PropertyValue::Float(f)
+    }
     /// Create a string value
-    pub fn string(s: impl Into<String>) -> Self { PropertyValue::String(s.into()) }
+    pub fn string(s: impl Into<String>) -> Self {
+        PropertyValue::String(s.into())
+    }
     /// Create an array value
-    pub fn array(arr: Vec<PropertyValue>) -> Self { PropertyValue::Array(arr) }
+    pub fn array(arr: Vec<PropertyValue>) -> Self {
+        PropertyValue::Array(arr)
+    }
     /// Create a map value
-    pub fn map(m: HashMap<String, PropertyValue>) -> Self { PropertyValue::Map(m) }
+    pub fn map(m: HashMap<String, PropertyValue>) -> Self {
+        PropertyValue::Map(m)
+    }
 }
 
 // From implementations for convenient property value creation
 impl From<bool> for PropertyValue {
-    fn from(b: bool) -> Self { PropertyValue::Boolean(b) }
+    fn from(b: bool) -> Self {
+        PropertyValue::Boolean(b)
+    }
 }
 
 impl From<i64> for PropertyValue {
-    fn from(i: i64) -> Self { PropertyValue::Integer(i) }
+    fn from(i: i64) -> Self {
+        PropertyValue::Integer(i)
+    }
 }
 
 impl From<i32> for PropertyValue {
-    fn from(i: i32) -> Self { PropertyValue::Integer(i as i64) }
+    fn from(i: i32) -> Self {
+        PropertyValue::Integer(i as i64)
+    }
 }
 
 impl From<f64> for PropertyValue {
-    fn from(f: f64) -> Self { PropertyValue::Float(f) }
+    fn from(f: f64) -> Self {
+        PropertyValue::Float(f)
+    }
 }
 
 impl From<f32> for PropertyValue {
-    fn from(f: f32) -> Self { PropertyValue::Float(f as f64) }
+    fn from(f: f32) -> Self {
+        PropertyValue::Float(f as f64)
+    }
 }
 
 impl From<String> for PropertyValue {
-    fn from(s: String) -> Self { PropertyValue::String(s) }
+    fn from(s: String) -> Self {
+        PropertyValue::String(s)
+    }
 }
 
 impl From<&str> for PropertyValue {
-    fn from(s: &str) -> Self { PropertyValue::String(s.to_string()) }
+    fn from(s: &str) -> Self {
+        PropertyValue::String(s.to_string())
+    }
 }
 
 impl<T: Into<PropertyValue>> From<Vec<T>> for PropertyValue {
@@ -80,7 +106,9 @@ impl<T: Into<PropertyValue>> From<Vec<T>> for PropertyValue {
 }
 
 impl From<HashMap<String, PropertyValue>> for PropertyValue {
-    fn from(m: HashMap<String, PropertyValue>) -> Self { PropertyValue::Map(m) }
+    fn from(m: HashMap<String, PropertyValue>) -> Self {
+        PropertyValue::Map(m)
+    }
 }
 
 pub type Properties = HashMap<String, PropertyValue>;

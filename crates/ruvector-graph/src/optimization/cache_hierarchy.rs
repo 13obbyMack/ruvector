@@ -68,7 +68,7 @@ impl CacheHierarchy {
 
         // Check if we need to evict before inserting (to avoid double eviction with HotStorage)
         if self.hot_storage.read().is_at_capacity() {
-            self.evict_one_to_cold(node_id);  // Don't evict the one we're about to insert
+            self.evict_one_to_cold(node_id); // Don't evict the one we're about to insert
         }
 
         // New data goes to hot storage
@@ -79,7 +79,7 @@ impl CacheHierarchy {
     fn promote_to_hot(&self, node_id: u64, data: NodeData) {
         // First evict if needed to make room
         if self.hot_storage.read().is_full() {
-            self.evict_one_to_cold(node_id);  // Pass node_id to avoid evicting the one we're promoting
+            self.evict_one_to_cold(node_id); // Pass node_id to avoid evicting the one we're promoting
         }
 
         self.hot_storage.write().insert(node_id, data);
@@ -159,7 +159,8 @@ impl HotStorage {
     }
 
     fn get(&self, node_id: u64) -> Option<NodeData> {
-        self.entries.iter()
+        self.entries
+            .iter()
             .find(|e| e.node_id == node_id)
             .map(|e| e.data.clone())
     }
@@ -265,7 +266,8 @@ impl AccessTracker {
     fn record_access(&mut self, node_id: u64) {
         self.timestamp += 1;
 
-        self.access_counts.entry(node_id)
+        self.access_counts
+            .entry(node_id)
             .and_modify(|count| *count += 1)
             .or_insert(1);
 
@@ -274,29 +276,42 @@ impl AccessTracker {
 
     fn should_promote(&self, node_id: u64) -> bool {
         // Promote if accessed more than 5 times
-        self.access_counts.get(&node_id)
+        self.access_counts
+            .get(&node_id)
             .map(|count| *count > 5)
             .unwrap_or(false)
     }
 
     fn get_lru_nodes(&self, count: usize) -> Vec<u64> {
-        let mut nodes: Vec<_> = self.last_access.iter()
+        let mut nodes: Vec<_> = self
+            .last_access
+            .iter()
             .map(|entry| (*entry.key(), *entry.value()))
             .collect();
 
         nodes.sort_by_key(|(_, timestamp)| *timestamp);
-        nodes.into_iter().take(count).map(|(node_id, _)| node_id).collect()
+        nodes
+            .into_iter()
+            .take(count)
+            .map(|(node_id, _)| node_id)
+            .collect()
     }
 
     /// Get least frequently accessed nodes (for smart eviction)
     fn get_lru_nodes_by_frequency(&self, count: usize) -> Vec<u64> {
-        let mut nodes: Vec<_> = self.access_counts.iter()
+        let mut nodes: Vec<_> = self
+            .access_counts
+            .iter()
             .map(|entry| (*entry.key(), *entry.value()))
             .collect();
 
         // Sort by access count (ascending - least frequently accessed first)
         nodes.sort_by_key(|(_, access_count)| *access_count);
-        nodes.into_iter().take(count).map(|(node_id, _)| node_id).collect()
+        nodes
+            .into_iter()
+            .take(count)
+            .map(|(node_id, _)| node_id)
+            .collect()
     }
 }
 
@@ -358,7 +373,10 @@ mod tests {
         let data = NodeData {
             id: 1,
             labels: vec!["Person".to_string()],
-            properties: vec![("name".to_string(), CachePropertyValue::String("Alice".to_string()))],
+            properties: vec![(
+                "name".to_string(),
+                CachePropertyValue::String("Alice".to_string()),
+            )],
         };
 
         cache.insert_node(1, data.clone());
@@ -373,11 +391,14 @@ mod tests {
 
         // Insert 3 nodes (exceeds hot capacity)
         for i in 1..=3 {
-            cache.insert_node(i, NodeData {
-                id: i,
-                labels: vec![],
-                properties: vec![],
-            });
+            cache.insert_node(
+                i,
+                NodeData {
+                    id: i,
+                    labels: vec![],
+                    properties: vec![],
+                },
+            );
         }
 
         // Access node 1 multiple times to trigger promotion

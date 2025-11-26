@@ -8,19 +8,17 @@
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use parking_lot::RwLock;
 use ruvector_tiny_dancer_core::{
-    Router as CoreRouter,
     types::{
-        RouterConfig as CoreRouterConfig,
-        RoutingRequest as CoreRoutingRequest,
+        Candidate as CoreCandidate, RouterConfig as CoreRouterConfig,
+        RoutingDecision as CoreRoutingDecision, RoutingRequest as CoreRoutingRequest,
         RoutingResponse as CoreRoutingResponse,
-        RoutingDecision as CoreRoutingDecision,
-        Candidate as CoreCandidate,
     },
+    Router as CoreRouter,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 
 /// Router configuration
 #[napi(object)]
@@ -76,7 +74,8 @@ pub struct Candidate {
 
 impl Candidate {
     fn to_core(&self) -> Result<CoreCandidate> {
-        let metadata: HashMap<String, serde_json::Value> = if let Some(ref meta_str) = self.metadata {
+        let metadata: HashMap<String, serde_json::Value> = if let Some(ref meta_str) = self.metadata
+        {
             serde_json::from_str(meta_str)
                 .map_err(|e| Error::from_reason(format!("Invalid metadata JSON: {}", e)))?
         } else {
@@ -87,7 +86,9 @@ impl Candidate {
             id: self.id.clone(),
             embedding: self.embedding.to_vec(),
             metadata,
-            created_at: self.created_at.unwrap_or_else(|| chrono::Utc::now().timestamp()),
+            created_at: self
+                .created_at
+                .unwrap_or_else(|| chrono::Utc::now().timestamp()),
             access_count: self.access_count.unwrap_or(0) as u64,
             success_rate: self.success_rate.unwrap_or(0.0) as f32,
         })
@@ -107,15 +108,14 @@ pub struct RoutingRequest {
 
 impl RoutingRequest {
     fn to_core(&self) -> Result<CoreRoutingRequest> {
-        let candidates: Result<Vec<CoreCandidate>> = self
-            .candidates
-            .iter()
-            .map(|c| c.to_core())
-            .collect();
+        let candidates: Result<Vec<CoreCandidate>> =
+            self.candidates.iter().map(|c| c.to_core()).collect();
 
         let metadata = if let Some(ref meta_str) = self.metadata {
-            Some(serde_json::from_str(meta_str)
-                .map_err(|e| Error::from_reason(format!("Invalid metadata JSON: {}", e)))?)
+            Some(
+                serde_json::from_str(meta_str)
+                    .map_err(|e| Error::from_reason(format!("Invalid metadata JSON: {}", e)))?,
+            )
         } else {
             None
         };

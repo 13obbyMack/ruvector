@@ -11,8 +11,7 @@ use crate::{GraphError, Result};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use ruvector_replication::{
-    Replica, ReplicaRole, ReplicaSet, ReplicationLog, SyncManager,
-    SyncMode,
+    Replica, ReplicaRole, ReplicaSet, ReplicationLog, SyncManager, SyncMode,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -107,7 +106,11 @@ impl GraphReplication {
 
         // Add primary replica
         replica_set
-            .add_replica(&primary_node, &format!("{}:9001", primary_node), ReplicaRole::Primary)
+            .add_replica(
+                &primary_node,
+                &format!("{}:9001", primary_node),
+                ReplicaRole::Primary,
+            )
             .map_err(|e| GraphError::ReplicationError(e))?;
 
         // Add secondary replicas
@@ -146,7 +149,8 @@ impl GraphReplication {
         // Determine replication strategy
         match self.config.strategy {
             ReplicationStrategy::FullShard => {
-                self.replicate_to_shard(shard_id, ReplicationOp::AddNode(node)).await
+                self.replicate_to_shard(shard_id, ReplicationOp::AddNode(node))
+                    .await
             }
             ReplicationStrategy::VertexCut => {
                 // Check if this is a high-degree node
@@ -155,11 +159,13 @@ impl GraphReplication {
                     // Replicate to multiple shards
                     self.replicate_high_degree_node(node).await
                 } else {
-                    self.replicate_to_shard(shard_id, ReplicationOp::AddNode(node)).await
+                    self.replicate_to_shard(shard_id, ReplicationOp::AddNode(node))
+                        .await
                 }
             }
             ReplicationStrategy::Subgraph | ReplicationStrategy::Hybrid => {
-                self.replicate_to_shard(shard_id, ReplicationOp::AddNode(node)).await
+                self.replicate_to_shard(shard_id, ReplicationOp::AddNode(node))
+                    .await
             }
         }
     }
@@ -175,7 +181,8 @@ impl GraphReplication {
         self.increment_node_degree(&edge.from);
         self.increment_node_degree(&edge.to);
 
-        self.replicate_to_shard(shard_id, ReplicationOp::AddEdge(edge)).await
+        self.replicate_to_shard(shard_id, ReplicationOp::AddEdge(edge))
+            .await
     }
 
     /// Replicate a node deletion
@@ -185,7 +192,8 @@ impl GraphReplication {
             node_id, shard_id
         );
 
-        self.replicate_to_shard(shard_id, ReplicationOp::DeleteNode(node_id)).await
+        self.replicate_to_shard(shard_id, ReplicationOp::DeleteNode(node_id))
+            .await
     }
 
     /// Replicate an edge deletion
@@ -195,7 +203,8 @@ impl GraphReplication {
             edge_id, shard_id
         );
 
-        self.replicate_to_shard(shard_id, ReplicationOp::DeleteEdge(edge_id)).await
+        self.replicate_to_shard(shard_id, ReplicationOp::DeleteEdge(edge_id))
+            .await
     }
 
     /// Replicate operation to all replicas of a shard
@@ -226,7 +235,8 @@ impl GraphReplication {
 
         // Replicate to additional shards based on degree
         let degree = self.get_node_degree(&node.id);
-        let replica_count = (degree / self.config.high_degree_threshold).min(self.config.replication_factor);
+        let replica_count =
+            (degree / self.config.high_degree_threshold).min(self.config.replication_factor);
 
         let mut replica_shards = Vec::new();
 
@@ -268,12 +278,16 @@ impl GraphReplication {
 
     /// Get replica set for a shard
     pub fn get_replica_set(&self, shard_id: ShardId) -> Option<Arc<ReplicaSet>> {
-        self.replica_sets.get(&shard_id).map(|r| Arc::clone(r.value()))
+        self.replica_sets
+            .get(&shard_id)
+            .map(|r| Arc::clone(r.value()))
     }
 
     /// Get sync manager for a shard
     pub fn get_sync_manager(&self, shard_id: ShardId) -> Option<Arc<SyncManager>> {
-        self.sync_managers.get(&shard_id).map(|s| Arc::clone(s.value()))
+        self.sync_managers
+            .get(&shard_id)
+            .map(|s| Arc::clone(s.value()))
     }
 
     /// Get replication statistics

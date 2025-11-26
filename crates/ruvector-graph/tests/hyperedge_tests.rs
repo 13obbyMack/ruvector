@@ -4,7 +4,7 @@
 //! Based on the existing hypergraph implementation in ruvector-core.
 
 use ruvector_core::advanced::hypergraph::{
-    HypergraphIndex, Hyperedge, TemporalHyperedge, TemporalGranularity,
+    Hyperedge, HypergraphIndex, TemporalGranularity, TemporalHyperedge,
 };
 use ruvector_core::types::DistanceMetric;
 
@@ -56,13 +56,28 @@ fn test_create_large_hyperedge() {
 
 #[test]
 fn test_hyperedge_confidence_clamping() {
-    let edge1 = Hyperedge::new(vec!["1".to_string(), "2".to_string()], "Test".to_string(), vec![0.1], 1.5);
+    let edge1 = Hyperedge::new(
+        vec!["1".to_string(), "2".to_string()],
+        "Test".to_string(),
+        vec![0.1],
+        1.5,
+    );
     assert_eq!(edge1.confidence, 1.0);
 
-    let edge2 = Hyperedge::new(vec!["1".to_string(), "2".to_string()], "Test".to_string(), vec![0.1], -0.5);
+    let edge2 = Hyperedge::new(
+        vec!["1".to_string(), "2".to_string()],
+        "Test".to_string(),
+        vec![0.1],
+        -0.5,
+    );
     assert_eq!(edge2.confidence, 0.0);
 
-    let edge3 = Hyperedge::new(vec!["1".to_string(), "2".to_string()], "Test".to_string(), vec![0.1], 0.75);
+    let edge3 = Hyperedge::new(
+        vec!["1".to_string(), "2".to_string()],
+        "Test".to_string(),
+        vec![0.1],
+        0.75,
+    );
     assert_eq!(edge3.confidence, 0.75);
 }
 
@@ -84,7 +99,12 @@ fn test_temporal_hyperedge_creation() {
 
 #[test]
 fn test_temporal_granularity_bucketing() {
-    let edge = Hyperedge::new(vec!["1".to_string(), "2".to_string()], "Test".to_string(), vec![0.1], 1.0);
+    let edge = Hyperedge::new(
+        vec!["1".to_string(), "2".to_string()],
+        "Test".to_string(),
+        vec![0.1],
+        1.0,
+    );
 
     let hourly = TemporalHyperedge::new(edge.clone(), TemporalGranularity::Hourly);
     let daily = TemporalHyperedge::new(edge.clone(), TemporalGranularity::Daily);
@@ -129,10 +149,41 @@ fn test_hypergraph_multiple_hyperedges() {
     }
 
     // Add multiple hyperedges with different orders
-    let edge1 = Hyperedge::new(vec!["1".to_string(), "2".to_string()], "Binary".to_string(), vec![0.5; 64], 1.0);
-    let edge2 = Hyperedge::new(vec!["1".to_string(), "2".to_string(), "3".to_string()], "Ternary".to_string(), vec![0.5; 64], 1.0);
-    let edge3 = Hyperedge::new(vec!["1".to_string(), "2".to_string(), "3".to_string(), "4".to_string()], "Quaternary".to_string(), vec![0.5; 64], 1.0);
-    let edge4 = Hyperedge::new(vec!["1".to_string(), "2".to_string(), "3".to_string(), "4".to_string(), "5".to_string()], "Quinary".to_string(), vec![0.5; 64], 1.0);
+    let edge1 = Hyperedge::new(
+        vec!["1".to_string(), "2".to_string()],
+        "Binary".to_string(),
+        vec![0.5; 64],
+        1.0,
+    );
+    let edge2 = Hyperedge::new(
+        vec!["1".to_string(), "2".to_string(), "3".to_string()],
+        "Ternary".to_string(),
+        vec![0.5; 64],
+        1.0,
+    );
+    let edge3 = Hyperedge::new(
+        vec![
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+        ],
+        "Quaternary".to_string(),
+        vec![0.5; 64],
+        1.0,
+    );
+    let edge4 = Hyperedge::new(
+        vec![
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+            "4".to_string(),
+            "5".to_string(),
+        ],
+        "Quinary".to_string(),
+        vec![0.5; 64],
+        1.0,
+    );
 
     index.add_hyperedge(edge1).unwrap();
     index.add_hyperedge(edge2).unwrap();
@@ -184,9 +235,24 @@ fn test_k_hop_neighbors_simple() {
         index.add_entity(i.to_string(), vec![i as f32]);
     }
 
-    let e1 = Hyperedge::new(vec!["1".to_string(), "2".to_string()], "e1".to_string(), vec![1.0], 1.0);
-    let e2 = Hyperedge::new(vec!["2".to_string(), "3".to_string()], "e2".to_string(), vec![1.0], 1.0);
-    let e3 = Hyperedge::new(vec!["3".to_string(), "4".to_string()], "e3".to_string(), vec![1.0], 1.0);
+    let e1 = Hyperedge::new(
+        vec!["1".to_string(), "2".to_string()],
+        "e1".to_string(),
+        vec![1.0],
+        1.0,
+    );
+    let e2 = Hyperedge::new(
+        vec!["2".to_string(), "3".to_string()],
+        "e2".to_string(),
+        vec![1.0],
+        1.0,
+    );
+    let e3 = Hyperedge::new(
+        vec!["3".to_string(), "4".to_string()],
+        "e3".to_string(),
+        vec![1.0],
+        1.0,
+    );
 
     index.add_hyperedge(e1).unwrap();
     index.add_hyperedge(e2).unwrap();
@@ -219,7 +285,12 @@ fn test_k_hop_neighbors_complex() {
 
     // Center (0) connected to all others via hyperedges
     for i in 1..=5 {
-        let edge = Hyperedge::new(vec!["0".to_string(), i.to_string()], format!("e{}", i), vec![1.0], 1.0);
+        let edge = Hyperedge::new(
+            vec!["0".to_string(), i.to_string()],
+            format!("e{}", i),
+            vec![1.0],
+            1.0,
+        );
         index.add_hyperedge(edge).unwrap();
     }
 
@@ -243,8 +314,18 @@ fn test_temporal_range_query() {
     }
 
     // Add temporal hyperedges (they'll all be in current time bucket)
-    let edge1 = Hyperedge::new(vec!["1".to_string(), "2".to_string()], "t1".to_string(), vec![1.0], 1.0);
-    let edge2 = Hyperedge::new(vec!["2".to_string(), "3".to_string()], "t2".to_string(), vec![1.0], 1.0);
+    let edge1 = Hyperedge::new(
+        vec!["1".to_string(), "2".to_string()],
+        "t1".to_string(),
+        vec![1.0],
+        1.0,
+    );
+    let edge2 = Hyperedge::new(
+        vec!["2".to_string(), "3".to_string()],
+        "t2".to_string(),
+        vec![1.0],
+        1.0,
+    );
 
     let temp1 = TemporalHyperedge::new(edge1, TemporalGranularity::Hourly);
     let temp2 = TemporalHyperedge::new(edge2, TemporalGranularity::Hourly);
@@ -263,7 +344,12 @@ fn test_temporal_range_query() {
 fn test_hyperedge_with_duplicate_nodes() {
     // Test that hyperedge handles duplicate nodes appropriately
     let edge = Hyperedge::new(
-        vec!["1".to_string(), "2".to_string(), "2".to_string(), "3".to_string()], // Duplicate node 2
+        vec![
+            "1".to_string(),
+            "2".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+        ], // Duplicate node 2
         "Duplicate test".to_string(),
         vec![0.5; 16],
         0.8,
@@ -281,7 +367,12 @@ fn test_hypergraph_error_on_missing_entity() {
     index.add_entity("1".to_string(), vec![1.0]);
 
     // Try to create hyperedge with missing entity
-    let edge = Hyperedge::new(vec!["1".to_string(), "2".to_string()], "Test".to_string(), vec![0.5], 1.0);
+    let edge = Hyperedge::new(
+        vec!["1".to_string(), "2".to_string()],
+        "Test".to_string(),
+        vec![0.5],
+        1.0,
+    );
 
     let result = index.add_hyperedge(edge);
     assert!(result.is_err());

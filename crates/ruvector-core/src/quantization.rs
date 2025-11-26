@@ -90,10 +90,8 @@ impl ProductQuantized {
             let end = start + subspace_dim;
 
             // Extract subspace vectors
-            let subspace_vectors: Vec<Vec<f32>> = vectors
-                .iter()
-                .map(|v| v[start..end].to_vec())
-                .collect();
+            let subspace_vectors: Vec<Vec<f32>> =
+                vectors.iter().map(|v| v[start..end].to_vec()).collect();
 
             // Run k-means
             let codebook = kmeans_clustering(&subspace_vectors, codebook_size, iterations);
@@ -207,10 +205,7 @@ fn kmeans_clustering(vectors: &[Vec<f32>], k: usize, iterations: usize) -> Vec<V
     let mut rng = thread_rng();
 
     // Initialize centroids randomly
-    let mut centroids: Vec<Vec<f32>> = vectors
-        .choose_multiple(&mut rng, k)
-        .cloned()
-        .collect();
+    let mut centroids: Vec<Vec<f32>> = vectors.choose_multiple(&mut rng, k).cloned().collect();
 
     for _ in 0..iterations {
         // Assign vectors to nearest centroid

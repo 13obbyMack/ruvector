@@ -260,7 +260,8 @@ impl Histogram {
 
             let count = values.iter().filter(|&&v| v >= lower && v < upper).count();
             // Estimate NDV by counting unique values (using BTreeSet to avoid Hash requirement)
-            let ndv = values.iter()
+            let ndv = values
+                .iter()
                 .filter(|&&v| v >= lower && v < upper)
                 .map(|&v| ordered_float::OrderedFloat(v))
                 .collect::<std::collections::BTreeSet<_>>()
@@ -325,12 +326,8 @@ impl HistogramBucket {
     /// Get bucket width (for numeric types)
     pub fn width(&self) -> Option<f64> {
         match (&self.lower_bound, &self.upper_bound) {
-            (ColumnValue::Float64(lower), ColumnValue::Float64(upper)) => {
-                Some(upper - lower)
-            }
-            (ColumnValue::Int64(lower), ColumnValue::Int64(upper)) => {
-                Some((upper - lower) as f64)
-            }
+            (ColumnValue::Float64(lower), ColumnValue::Float64(upper)) => Some(upper - lower),
+            (ColumnValue::Int64(lower), ColumnValue::Int64(upper)) => Some((upper - lower) as f64),
             _ => None,
         }
     }

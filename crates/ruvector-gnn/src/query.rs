@@ -3,7 +3,7 @@
 //! Provides high-level query interfaces for vector search, neural search,
 //! and subgraph extraction.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Query mode for different search strategies
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -588,8 +588,7 @@ mod tests {
         let scores = vec![0.9, 0.6, 0.8];
         let embeddings = vec![vec![0.1], vec![0.2], vec![0.3]];
 
-        let result = QueryResult::with_nodes(nodes, scores)
-            .with_embeddings(embeddings);
+        let result = QueryResult::with_nodes(nodes, scores).with_embeddings(embeddings);
 
         let filtered = result.filter_by_score(0.7);
         assert_eq!(filtered.len(), 2);
@@ -603,13 +602,15 @@ mod tests {
         let scores = vec![0.9, 0.5, 0.8];
         let attention = vec![vec![0.5, 0.5], vec![0.6, 0.4], vec![0.7, 0.3]];
 
-        let result = QueryResult::with_nodes(nodes, scores)
-            .with_attention(attention);
+        let result = QueryResult::with_nodes(nodes, scores).with_attention(attention);
 
         let filtered = result.filter_by_score(0.75);
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered.nodes, vec![1, 3]);
-        assert_eq!(filtered.attention_weights, Some(vec![vec![0.5, 0.5], vec![0.7, 0.3]]));
+        assert_eq!(
+            filtered.attention_weights,
+            Some(vec![vec![0.5, 0.5], vec![0.7, 0.3]])
+        );
     }
 
     #[test]
@@ -625,8 +626,7 @@ mod tests {
 
     #[test]
     fn test_result_serialization() {
-        let result = QueryResult::with_nodes(vec![1, 2], vec![0.9, 0.8])
-            .with_latency(50);
+        let result = QueryResult::with_nodes(vec![1, 2], vec![0.9, 0.8]).with_latency(50);
 
         let json = serde_json::to_string(&result).unwrap();
         let deserialized: QueryResult = serde_json::from_str(&json).unwrap();
@@ -638,10 +638,7 @@ mod tests {
 
     #[test]
     fn test_subgraph_serialization() {
-        let subgraph = SubGraph::with_edges(
-            vec![1, 2, 3],
-            vec![(1, 2, 0.8), (2, 3, 0.6)]
-        );
+        let subgraph = SubGraph::with_edges(vec![1, 2, 3], vec![(1, 2, 0.8), (2, 3, 0.6)]);
 
         let json = serde_json::to_string(&subgraph).unwrap();
         let deserialized: SubGraph = serde_json::from_str(&json).unwrap();
@@ -665,6 +662,9 @@ mod tests {
         assert_eq!(QueryMode::VectorSearch, QueryMode::VectorSearch);
         assert_ne!(QueryMode::VectorSearch, QueryMode::NeuralSearch);
         assert_ne!(QueryMode::NeuralSearch, QueryMode::SubgraphExtraction);
-        assert_ne!(QueryMode::SubgraphExtraction, QueryMode::DifferentiableSearch);
+        assert_ne!(
+            QueryMode::SubgraphExtraction,
+            QueryMode::DifferentiableSearch
+        );
     }
 }

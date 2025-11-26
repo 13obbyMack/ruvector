@@ -4,9 +4,9 @@
 //! Detects mode collapse, degeneracy, and topological structure.
 
 use crate::error::{Result, RuvectorError};
-use std::collections::{HashMap, HashSet};
-use serde::{Serialize, Deserialize};
 use ndarray::{Array1, Array2};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 /// Topological analyzer for embeddings
 pub struct TopologicalAnalyzer {
@@ -166,12 +166,13 @@ impl TopologicalAnalyzer {
     }
 
     fn compute_degree_statistics(&self, graph: &[Vec<usize>], n: usize) -> (f32, f32) {
-        let degrees: Vec<f32> = graph.iter().map(|neighbors| neighbors.len() as f32).collect();
+        let degrees: Vec<f32> = graph
+            .iter()
+            .map(|neighbors| neighbors.len() as f32)
+            .collect();
 
         let avg = degrees.iter().sum::<f32>() / n as f32;
-        let variance = degrees.iter()
-            .map(|&d| (d - avg).powi(2))
-            .sum::<f32>() / n as f32;
+        let variance = degrees.iter().map(|&d| (d - avg).powi(2)).sum::<f32>() / n as f32;
         let std = variance.sqrt();
 
         (avg, std)
@@ -195,9 +196,8 @@ impl TopologicalAnalyzer {
 
         // Compute coefficient of variation
         let mean = distances.iter().sum::<f32>() / distances.len() as f32;
-        let variance = distances.iter()
-            .map(|&d| (d - mean).powi(2))
-            .sum::<f32>() / distances.len() as f32;
+        let variance =
+            distances.iter().map(|&d| (d - mean).powi(2)).sum::<f32>() / distances.len() as f32;
         let std = variance.sqrt();
 
         // High CV indicates good separation, low CV indicates collapse
@@ -253,9 +253,7 @@ impl TopologicalAnalyzer {
         // Estimate rank by counting significant singular values
         let singular_values = self.approximate_singular_values(&cov);
 
-        let significant = singular_values.iter()
-            .filter(|&&sv| sv > 1e-6)
-            .count();
+        let significant = singular_values.iter().filter(|&&sv| sv > 1e-6).count();
 
         // Degeneracy score: 0 = full rank, 1 = rank-1 (collapsed)
         1.0 - (significant as f32 / dim as f32)
@@ -312,7 +310,8 @@ impl TopologicalAnalyzer {
         for &scale in &scales {
             let scaled_analyzer = TopologicalAnalyzer::new(self.k_neighbors, scale);
             let scaled_graph = scaled_analyzer.build_knn_graph(embeddings);
-            let components = scaled_analyzer.count_connected_components(&scaled_graph, embeddings.len());
+            let components =
+                scaled_analyzer.count_connected_components(&scaled_graph, embeddings.len());
             component_counts.push(components);
         }
 
@@ -441,21 +440,13 @@ mod tests {
         let analyzer = TopologicalAnalyzer::new(2, 10.0);
 
         // Collapsed embeddings (all very similar)
-        let collapsed = vec![
-            vec![1.0, 1.0],
-            vec![1.01, 1.01],
-            vec![1.02, 1.02],
-        ];
+        let collapsed = vec![vec![1.0, 1.0], vec![1.01, 1.01], vec![1.02, 1.02]];
 
         let score = analyzer.detect_mode_collapse(&collapsed);
         assert!(score < 0.5); // Should detect collapse
 
         // Well-separated embeddings
-        let good = vec![
-            vec![0.0, 0.0],
-            vec![5.0, 5.0],
-            vec![10.0, 10.0],
-        ];
+        let good = vec![vec![0.0, 0.0], vec![5.0, 5.0], vec![10.0, 10.0]];
 
         let score2 = analyzer.detect_mode_collapse(&good);
         assert!(score2 > score); // Should be better

@@ -2,18 +2,22 @@
 //!
 //! These tests verify thread-safety and correct behavior under concurrent access.
 
-use ruvector_core::{VectorDB, DbOptions, VectorEntry};
 use ruvector_core::types::*;
+use ruvector_core::{DbOptions, VectorDB, VectorEntry};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::collections::HashSet;
 use tempfile::tempdir;
 
 #[test]
 fn test_concurrent_reads() {
     let dir = tempdir().unwrap();
     let mut options = DbOptions::default();
-    options.storage_path = dir.path().join("concurrent_reads.db").to_string_lossy().to_string();
+    options.storage_path = dir
+        .path()
+        .join("concurrent_reads.db")
+        .to_string_lossy()
+        .to_string();
     options.dimensions = 32;
 
     let db = Arc::new(VectorDB::new(options).unwrap());
@@ -24,7 +28,8 @@ fn test_concurrent_reads() {
             id: Some(format!("vec_{}", i)),
             vector: (0..32).map(|j| ((i + j) as f32) * 0.1).collect(),
             metadata: None,
-        }).unwrap();
+        })
+        .unwrap();
     }
 
     // Spawn multiple reader threads
@@ -54,7 +59,11 @@ fn test_concurrent_reads() {
 fn test_concurrent_writes_no_collision() {
     let dir = tempdir().unwrap();
     let mut options = DbOptions::default();
-    options.storage_path = dir.path().join("concurrent_writes.db").to_string_lossy().to_string();
+    options.storage_path = dir
+        .path()
+        .join("concurrent_writes.db")
+        .to_string_lossy()
+        .to_string();
     options.dimensions = 32;
 
     let db = Arc::new(VectorDB::new(options).unwrap());
@@ -70,11 +79,13 @@ fn test_concurrent_writes_no_collision() {
         let handle = thread::spawn(move || {
             for i in 0..vectors_per_thread {
                 let id = format!("thread_{}_{}", thread_id, i);
-                db_clone.insert(VectorEntry {
-                    id: Some(id.clone()),
-                    vector: vec![thread_id as f32; 32],
-                    metadata: None,
-                }).unwrap();
+                db_clone
+                    .insert(VectorEntry {
+                        id: Some(id.clone()),
+                        vector: vec![thread_id as f32; 32],
+                        metadata: None,
+                    })
+                    .unwrap();
             }
         });
 
@@ -93,7 +104,11 @@ fn test_concurrent_writes_no_collision() {
 fn test_concurrent_delete_and_insert() {
     let dir = tempdir().unwrap();
     let mut options = DbOptions::default();
-    options.storage_path = dir.path().join("concurrent_delete_insert.db").to_string_lossy().to_string();
+    options.storage_path = dir
+        .path()
+        .join("concurrent_delete_insert.db")
+        .to_string_lossy()
+        .to_string();
     options.dimensions = 16;
 
     let db = Arc::new(VectorDB::new(options).unwrap());
@@ -104,7 +119,8 @@ fn test_concurrent_delete_and_insert() {
             id: Some(format!("vec_{}", i)),
             vector: vec![i as f32; 16],
             metadata: None,
-        }).unwrap();
+        })
+        .unwrap();
     }
 
     let num_threads = 5;
@@ -131,11 +147,13 @@ fn test_concurrent_delete_and_insert() {
         let handle = thread::spawn(move || {
             for i in 0..10 {
                 let id = format!("new_{}_{}", thread_id, i);
-                db_clone.insert(VectorEntry {
-                    id: Some(id),
-                    vector: vec![(thread_id * 100 + i) as f32; 16],
-                    metadata: None,
-                }).unwrap();
+                db_clone
+                    .insert(VectorEntry {
+                        id: Some(id),
+                        vector: vec![(thread_id * 100 + i) as f32; 16],
+                        metadata: None,
+                    })
+                    .unwrap();
             }
         });
 
@@ -155,7 +173,11 @@ fn test_concurrent_delete_and_insert() {
 fn test_concurrent_search_and_insert() {
     let dir = tempdir().unwrap();
     let mut options = DbOptions::default();
-    options.storage_path = dir.path().join("concurrent_search_insert.db").to_string_lossy().to_string();
+    options.storage_path = dir
+        .path()
+        .join("concurrent_search_insert.db")
+        .to_string_lossy()
+        .to_string();
     options.dimensions = 64;
     options.hnsw_config = Some(HnswConfig::default());
 
@@ -167,7 +189,8 @@ fn test_concurrent_search_and_insert() {
             id: Some(format!("vec_{}", i)),
             vector: (0..64).map(|j| ((i + j) as f32) * 0.01).collect(),
             metadata: None,
-        }).unwrap();
+        })
+        .unwrap();
     }
 
     let num_search_threads = 5;
@@ -180,13 +203,17 @@ fn test_concurrent_search_and_insert() {
 
         let handle = thread::spawn(move || {
             for i in 0..20 {
-                let query: Vec<f32> = (0..64).map(|j| ((search_id * 10 + i + j) as f32) * 0.01).collect();
-                let results = db_clone.search(SearchQuery {
-                    vector: query,
-                    k: 5,
-                    filter: None,
-                    ef_search: None,
-                }).unwrap();
+                let query: Vec<f32> = (0..64)
+                    .map(|j| ((search_id * 10 + i + j) as f32) * 0.01)
+                    .collect();
+                let results = db_clone
+                    .search(SearchQuery {
+                        vector: query,
+                        k: 5,
+                        filter: None,
+                        ef_search: None,
+                    })
+                    .unwrap();
 
                 // Should always return some results (at least from initial data)
                 assert!(results.len() > 0);
@@ -202,11 +229,15 @@ fn test_concurrent_search_and_insert() {
 
         let handle = thread::spawn(move || {
             for i in 0..50 {
-                db_clone.insert(VectorEntry {
-                    id: Some(format!("new_{}_{}", insert_id, i)),
-                    vector: (0..64).map(|j| ((insert_id * 1000 + i + j) as f32) * 0.01).collect(),
-                    metadata: None,
-                }).unwrap();
+                db_clone
+                    .insert(VectorEntry {
+                        id: Some(format!("new_{}_{}", insert_id, i)),
+                        vector: (0..64)
+                            .map(|j| ((insert_id * 1000 + i + j) as f32) * 0.01)
+                            .collect(),
+                        metadata: None,
+                    })
+                    .unwrap();
             }
         });
 
@@ -225,7 +256,11 @@ fn test_concurrent_search_and_insert() {
 fn test_atomicity_of_batch_insert() {
     let dir = tempdir().unwrap();
     let mut options = DbOptions::default();
-    options.storage_path = dir.path().join("atomic_batch.db").to_string_lossy().to_string();
+    options.storage_path = dir
+        .path()
+        .join("atomic_batch.db")
+        .to_string_lossy()
+        .to_string();
     options.dimensions = 16;
 
     let db = Arc::new(VectorDB::new(options).unwrap());
@@ -279,7 +314,11 @@ fn test_atomicity_of_batch_insert() {
 fn test_read_write_consistency() {
     let dir = tempdir().unwrap();
     let mut options = DbOptions::default();
-    options.storage_path = dir.path().join("consistency.db").to_string_lossy().to_string();
+    options.storage_path = dir
+        .path()
+        .join("consistency.db")
+        .to_string_lossy()
+        .to_string();
     options.dimensions = 32;
 
     let db = Arc::new(VectorDB::new(options).unwrap());
@@ -289,7 +328,8 @@ fn test_read_write_consistency() {
         id: Some("test".to_string()),
         vector: vec![1.0; 32],
         metadata: None,
-    }).unwrap();
+    })
+    .unwrap();
 
     let num_threads = 10;
     let mut handles = vec![];
@@ -309,7 +349,9 @@ fn test_read_write_consistency() {
 
                 // All values should be the same (not corrupted)
                 let first_val = vector[0];
-                assert!(vector.iter().all(|&v| v == first_val || (first_val == 1.0 || v == (thread_id as f32))));
+                assert!(vector
+                    .iter()
+                    .all(|&v| v == first_val || (first_val == 1.0 || v == (thread_id as f32))));
 
                 // Write (update) - this creates a race condition intentionally
                 if thread_id % 2 == 0 {
@@ -358,7 +400,8 @@ fn test_concurrent_metadata_updates() {
             id: Some(format!("vec_{}", i)),
             vector: vec![i as f32; 16],
             metadata: None,
-        }).unwrap();
+        })
+        .unwrap();
     }
 
     let num_threads = 5;
@@ -370,18 +413,17 @@ fn test_concurrent_metadata_updates() {
         let handle = thread::spawn(move || {
             for i in 0..10 {
                 let mut metadata = HashMap::new();
-                metadata.insert(
-                    format!("thread_{}", thread_id),
-                    serde_json::json!(i)
-                );
+                metadata.insert(format!("thread_{}", thread_id), serde_json::json!(i));
 
                 // Update vector with metadata
                 let id = format!("vec_{}", i * 5 + thread_id);
-                db_clone.insert(VectorEntry {
-                    id: Some(id.clone()),
-                    vector: vec![thread_id as f32; 16],
-                    metadata: Some(metadata),
-                }).unwrap();
+                db_clone
+                    .insert(VectorEntry {
+                        id: Some(id.clone()),
+                        vector: vec![thread_id as f32; 16],
+                        metadata: Some(metadata),
+                    })
+                    .unwrap();
             }
         });
 

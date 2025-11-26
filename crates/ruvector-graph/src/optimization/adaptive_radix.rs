@@ -36,9 +36,17 @@ impl<V: Clone> AdaptiveRadixTree<V> {
         self.size += 1;
     }
 
-    fn insert_recursive(mut node: Box<ArtNode<V>>, key: &[u8], depth: usize, value: V) -> Box<ArtNode<V>> {
+    fn insert_recursive(
+        mut node: Box<ArtNode<V>>,
+        key: &[u8],
+        depth: usize,
+        value: V,
+    ) -> Box<ArtNode<V>> {
         match node.as_mut() {
-            ArtNode::Leaf { key: leaf_key, value: leaf_value } => {
+            ArtNode::Leaf {
+                key: leaf_key,
+                value: leaf_value,
+            } => {
                 // Check if keys are identical
                 if *leaf_key == key {
                     // Replace value
@@ -48,7 +56,9 @@ impl<V: Clone> AdaptiveRadixTree<V> {
 
                 // Find common prefix length starting from depth
                 let common_prefix_len = Self::common_prefix_len(leaf_key, key, depth);
-                let prefix = if depth + common_prefix_len <= leaf_key.len() && depth + common_prefix_len <= key.len() {
+                let prefix = if depth + common_prefix_len <= leaf_key.len()
+                    && depth + common_prefix_len <= key.len()
+                {
                     key[depth..depth + common_prefix_len].to_vec()
                 } else {
                     vec![]
@@ -120,7 +130,12 @@ impl<V: Clone> AdaptiveRadixTree<V> {
                     num_children,
                 })
             }
-            ArtNode::Node4 { prefix, children, keys, num_children } => {
+            ArtNode::Node4 {
+                prefix,
+                children,
+                keys,
+                num_children,
+            } => {
                 // Check prefix match
                 let prefix_match = Self::check_prefix(prefix, key, depth);
 
@@ -144,7 +159,11 @@ impl<V: Clone> AdaptiveRadixTree<V> {
 
                     // Create new leaf for the inserted key
                     let next_depth = depth + prefix_match;
-                    let new_byte = if next_depth < key.len() { key[next_depth] } else { 0 };
+                    let new_byte = if next_depth < key.len() {
+                        key[next_depth]
+                    } else {
+                        0
+                    };
                     let new_leaf = Box::new(ArtNode::Leaf {
                         key: key.to_vec(),
                         value,
@@ -183,7 +202,8 @@ impl<V: Clone> AdaptiveRadixTree<V> {
                     for i in 0..(*num_children as usize) {
                         if keys[i] == key_byte {
                             let child = children[i].take().unwrap();
-                            children[i] = Some(Self::insert_recursive(child, key, next_depth + 1, value));
+                            children[i] =
+                                Some(Self::insert_recursive(child, key, next_depth + 1, value));
                             return node;
                         }
                     }
@@ -217,14 +237,22 @@ impl<V: Clone> AdaptiveRadixTree<V> {
 
         loop {
             match current.as_ref() {
-                ArtNode::Leaf { key: leaf_key, value } => {
+                ArtNode::Leaf {
+                    key: leaf_key,
+                    value,
+                } => {
                     if leaf_key == key {
                         return Some(value);
                     } else {
                         return None;
                     }
                 }
-                ArtNode::Node4 { prefix, children, keys, num_children } => {
+                ArtNode::Node4 {
+                    prefix,
+                    children,
+                    keys,
+                    num_children,
+                } => {
                     if !Self::match_prefix(prefix, key, depth) {
                         return None;
                     }
@@ -327,10 +355,7 @@ impl<V: Clone> Default for AdaptiveRadixTree<V> {
 /// ART node types with adaptive sizing
 pub enum ArtNode<V> {
     /// Leaf node containing value
-    Leaf {
-        key: Vec<u8>,
-        value: V,
-    },
+    Leaf { key: Vec<u8>, value: V },
 
     /// Node with 4 children (smallest)
     Node4 {
@@ -396,7 +421,11 @@ impl<'a, V> Iterator for ArtIter<'a, V> {
                 ArtNode::Leaf { key, value } => {
                     return Some((key.as_slice(), value));
                 }
-                ArtNode::Node4 { children, num_children, .. } => {
+                ArtNode::Node4 {
+                    children,
+                    num_children,
+                    ..
+                } => {
                     for i in (0..*num_children as usize).rev() {
                         if let Some(child) = &children[i] {
                             self.stack.push(child);

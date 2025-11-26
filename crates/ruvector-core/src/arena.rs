@@ -3,8 +3,8 @@
 //! This module provides arena-based memory allocation to reduce allocation
 //! overhead in hot paths and improve memory locality.
 
-use std::cell::RefCell;
 use std::alloc::{alloc, dealloc, Layout};
+use std::cell::RefCell;
 use std::ptr;
 
 /// Arena allocator for temporary allocations
@@ -154,16 +154,12 @@ impl<T> ArenaVec<T> {
 
     /// Get as slice
     pub fn as_slice(&self) -> &[T] {
-        unsafe {
-            std::slice::from_raw_parts(self.ptr, self.len)
-        }
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
     }
 
     /// Get as mutable slice
     pub fn as_mut_slice(&mut self) -> &mut [T] {
-        unsafe {
-            std::slice::from_raw_parts_mut(self.ptr, self.len)
-        }
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
     }
 }
 

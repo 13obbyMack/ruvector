@@ -11,7 +11,7 @@ pub mod learned_index;
 pub mod neural_hash;
 pub mod tda;
 
-pub use hypergraph::{Hyperedge, HypergraphIndex, TemporalHyperedge, CausalMemory};
-pub use learned_index::{LearnedIndex, RecursiveModelIndex, HybridIndex};
-pub use neural_hash::{NeuralHash, DeepHashEmbedding};
-pub use tda::{TopologicalAnalyzer, EmbeddingQuality};
+pub use hypergraph::{CausalMemory, Hyperedge, HypergraphIndex, TemporalHyperedge};
+pub use learned_index::{HybridIndex, LearnedIndex, RecursiveModelIndex};
+pub use neural_hash::{DeepHashEmbedding, NeuralHash};
+pub use tda::{EmbeddingQuality, TopologicalAnalyzer};

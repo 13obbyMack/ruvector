@@ -127,8 +127,12 @@ impl QueryOptimizer {
         match expr {
             Expression::BinaryOp { left, op, right } => {
                 // Fold operands first
-                let left = self.fold_expression(left).unwrap_or_else(|| (**left).clone());
-                let right = self.fold_expression(right).unwrap_or_else(|| (**right).clone());
+                let left = self
+                    .fold_expression(left)
+                    .unwrap_or_else(|| (**left).clone());
+                let right = self
+                    .fold_expression(right)
+                    .unwrap_or_else(|| (**right).clone());
 
                 // Try to evaluate constant expressions
                 if left.is_constant() && right.is_constant() {
@@ -143,7 +147,9 @@ impl QueryOptimizer {
                 })
             }
             Expression::UnaryOp { op, operand } => {
-                let operand = self.fold_expression(operand).unwrap_or_else(|| (**operand).clone());
+                let operand = self
+                    .fold_expression(operand)
+                    .unwrap_or_else(|| (**operand).clone());
 
                 if operand.is_constant() {
                     return self.evaluate_constant_unary_op(*op, &operand);
@@ -209,9 +215,11 @@ impl QueryOptimizer {
             (Expression::Integer(a), BinaryOperator::GreaterThan, Expression::Integer(b)) => {
                 Some(Expression::Boolean(a > b))
             }
-            (Expression::Integer(a), BinaryOperator::GreaterThanOrEqual, Expression::Integer(b)) => {
-                Some(Expression::Boolean(a >= b))
-            }
+            (
+                Expression::Integer(a),
+                BinaryOperator::GreaterThanOrEqual,
+                Expression::Integer(b),
+            ) => Some(Expression::Boolean(a >= b)),
             // Comparison operations for floats
             (Expression::Float(a), BinaryOperator::Equal, Expression::Float(b)) => {
                 Some(Expression::Boolean((a - b).abs() < f64::EPSILON))
@@ -255,7 +263,11 @@ impl QueryOptimizer {
         }
     }
 
-    fn evaluate_constant_unary_op(&self, op: UnaryOperator, operand: &Expression) -> Option<Expression> {
+    fn evaluate_constant_unary_op(
+        &self,
+        op: UnaryOperator,
+        operand: &Expression,
+    ) -> Option<Expression> {
         match (op, operand) {
             (UnaryOperator::Not, Expression::Boolean(b)) => Some(Expression::Boolean(!b)),
             (UnaryOperator::Minus, Expression::Integer(n)) => Some(Expression::Integer(-n)),
@@ -338,7 +350,8 @@ impl QueryOptimizer {
                 }
 
                 // Add selectivity from connected nodes
-                selectivity += self.estimate_pattern_selectivity(&Pattern::Node(*rel.from.clone())) * 0.3;
+                selectivity +=
+                    self.estimate_pattern_selectivity(&Pattern::Node(*rel.from.clone())) * 0.3;
                 // rel.to is now a Pattern (can be NodePattern or chained RelationshipPattern)
                 selectivity += self.estimate_pattern_selectivity(&*rel.to) * 0.3;
 
@@ -493,7 +506,11 @@ impl QueryOptimizer {
                     self.collect_variables(item, vars);
                 }
             }
-            Expression::Case { expression, alternatives, default } => {
+            Expression::Case {
+                expression,
+                alternatives,
+                default,
+            } => {
                 if let Some(expr) = expression {
                     self.collect_variables(expr, vars);
                 }
@@ -527,7 +544,9 @@ mod tests {
         let optimizer = QueryOptimizer::new();
         let plan = optimizer.optimize(query);
 
-        assert!(plan.optimizations_applied.contains(&OptimizationType::ConstantFolding));
+        assert!(plan
+            .optimizations_applied
+            .contains(&OptimizationType::ConstantFolding));
     }
 
     #[test]

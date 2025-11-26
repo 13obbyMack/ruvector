@@ -3,8 +3,8 @@
 //! Provides graph-based context retrieval and multi-hop reasoning for LLMs.
 
 use crate::error::{GraphError, Result};
-use crate::types::{NodeId, EdgeId, Properties};
-use crate::hybrid::semantic_search::{SemanticSearch, SemanticPath};
+use crate::hybrid::semantic_search::{SemanticPath, SemanticSearch};
+use crate::types::{EdgeId, NodeId, Properties};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -55,7 +55,9 @@ impl RagEngine {
     /// Retrieve relevant context for a query
     pub fn retrieve_context(&self, query: &[f32]) -> Result<Context> {
         // Find top-k most relevant documents
-        let matches = self.semantic_search.find_similar_nodes(query, self.config.top_k_docs)?;
+        let matches = self
+            .semantic_search
+            .find_similar_nodes(query, self.config.top_k_docs)?;
 
         let mut documents = Vec::new();
         for match_result in matches {
@@ -89,14 +91,13 @@ impl RagEngine {
         }
 
         // Find semantic paths through the graph
-        let semantic_paths = self.semantic_search.find_semantic_paths(
-            start_node,
-            query,
-            self.config.top_k_docs,
-        )?;
+        let semantic_paths =
+            self.semantic_search
+                .find_semantic_paths(start_node, query, self.config.top_k_docs)?;
 
         // Convert semantic paths to reasoning paths
-        let reasoning_paths = semantic_paths.into_iter()
+        let reasoning_paths = semantic_paths
+            .into_iter()
             .map(|path| self.convert_to_reasoning_path(path))
             .collect();
 
@@ -109,7 +110,8 @@ impl RagEngine {
 
         for path in paths {
             for step in &path.steps {
-                evidence_map.entry(step.node_id.clone())
+                evidence_map
+                    .entry(step.node_id.clone())
                     .and_modify(|e| {
                         e.support_count += 1;
                         e.confidence = e.confidence.max(step.confidence);
@@ -126,7 +128,8 @@ impl RagEngine {
 
         let mut evidence: Vec<_> = evidence_map.into_values().collect();
         evidence.sort_by(|a, b| {
-            b.confidence.partial_cmp(&a.confidence)
+            b.confidence
+                .partial_cmp(&a.confidence)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
@@ -141,8 +144,12 @@ impl RagEngine {
         prompt.push_str("Context:\n");
 
         for (i, doc) in context.documents.iter().enumerate() {
-            prompt.push_str(&format!("{}. {} (relevance: {:.2})\n",
-                i + 1, doc.content, doc.relevance_score));
+            prompt.push_str(&format!(
+                "{}. {} (relevance: {:.2})\n",
+                i + 1,
+                doc.content,
+                doc.relevance_score
+            ));
         }
 
         prompt.push_str("\nQuestion: ");
@@ -167,7 +174,8 @@ impl RagEngine {
 
         let mut results = initial_results;
         results.sort_by(|a, b| {
-            b.relevance_score.partial_cmp(&a.relevance_score)
+            b.relevance_score
+                .partial_cmp(&a.relevance_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
@@ -176,7 +184,9 @@ impl RagEngine {
 
     /// Convert semantic path to reasoning path
     fn convert_to_reasoning_path(&self, semantic_path: SemanticPath) -> ReasoningPath {
-        let steps = semantic_path.nodes.iter()
+        let steps = semantic_path
+            .nodes
+            .iter()
             .map(|node_id| ReasoningStep {
                 node_id: node_id.clone(),
                 content: format!("Step at node {}", node_id),
@@ -195,9 +205,7 @@ impl RagEngine {
     /// Estimate token count for documents
     fn estimate_tokens(&self, documents: &[Document]) -> usize {
         // Rough estimation: ~4 characters per token
-        documents.iter()
-            .map(|doc| doc.content.len() / 4)
-            .sum()
+        documents.iter().map(|doc| doc.content.len() / 4).sum()
     }
 }
 
@@ -254,8 +262,8 @@ pub struct Evidence {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hybrid::vector_index::{HybridIndex, EmbeddingConfig};
     use crate::hybrid::semantic_search::SemanticSearchConfig;
+    use crate::hybrid::vector_index::{EmbeddingConfig, HybridIndex};
 
     #[test]
     fn test_rag_engine_creation() {
@@ -299,14 +307,12 @@ mod tests {
         let rag = RagEngine::new(semantic_search, RagConfig::default());
 
         let context = Context {
-            documents: vec![
-                Document {
-                    node_id: "doc1".to_string(),
-                    content: "Test content".to_string(),
-                    metadata: HashMap::new(),
-                    relevance_score: 0.9,
-                }
-            ],
+            documents: vec![Document {
+                node_id: "doc1".to_string(),
+                content: "Test content".to_string(),
+                metadata: HashMap::new(),
+                relevance_score: 0.9,
+            }],
             total_tokens: 100,
             query_embedding: vec![1.0; 4],
         };

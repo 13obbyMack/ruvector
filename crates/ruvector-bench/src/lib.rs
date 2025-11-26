@@ -107,23 +107,17 @@ impl DatasetGenerator {
         match self.distribution {
             VectorDistribution::Uniform => {
                 let uniform = Uniform::new(-1.0, 1.0);
-                (0..self.dimensions)
-                    .map(|_| uniform.sample(rng))
-                    .collect()
+                (0..self.dimensions).map(|_| uniform.sample(rng)).collect()
             }
             VectorDistribution::Normal { mean, std_dev } => {
                 let normal = Normal::new(mean, std_dev).unwrap();
-                (0..self.dimensions)
-                    .map(|_| normal.sample(rng))
-                    .collect()
+                (0..self.dimensions).map(|_| normal.sample(rng)).collect()
             }
             VectorDistribution::Clustered { num_clusters } => {
                 let cluster_id = rng.gen_range(0..num_clusters);
                 let center_offset = cluster_id as f32 * 10.0;
                 let normal = Normal::new(center_offset, 1.0).unwrap();
-                (0..self.dimensions)
-                    .map(|_| normal.sample(rng))
-                    .collect()
+                (0..self.dimensions).map(|_| normal.sample(rng)).collect()
             }
         }
     }
@@ -202,11 +196,19 @@ impl ResultWriter {
         let mut file = File::create(&path)?;
 
         writeln!(file, "# Ruvector Benchmark Results\n")?;
-        writeln!(file, "Generated: {}\n", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"))?;
+        writeln!(
+            file,
+            "Generated: {}\n",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        )?;
 
         for result in results {
             writeln!(file, "## {}\n", result.name)?;
-            writeln!(file, "**Dataset:** {} ({}D, {} vectors)\n", result.dataset, result.dimensions, result.num_vectors)?;
+            writeln!(
+                file,
+                "**Dataset:** {} ({}D, {} vectors)\n",
+                result.dataset, result.dimensions, result.num_vectors
+            )?;
             writeln!(file, "### Performance")?;
             writeln!(file, "- **QPS:** {:.2}", result.qps)?;
             writeln!(file, "- **Latency (p50):** {:.2}ms", result.latency_p50)?;
@@ -217,7 +219,11 @@ impl ResultWriter {
             writeln!(file, "### Recall")?;
             writeln!(file, "- **Recall@1:** {:.2}%", result.recall_at_1 * 100.0)?;
             writeln!(file, "- **Recall@10:** {:.2}%", result.recall_at_10 * 100.0)?;
-            writeln!(file, "- **Recall@100:** {:.2}%", result.recall_at_100 * 100.0)?;
+            writeln!(
+                file,
+                "- **Recall@100:** {:.2}%",
+                result.recall_at_100 * 100.0
+            )?;
             writeln!(file, "")?;
             writeln!(file, "### Resources")?;
             writeln!(file, "- **Memory:** {:.2} MB", result.memory_mb)?;
@@ -286,11 +292,7 @@ impl Default for MemoryProfiler {
 }
 
 /// Calculate recall between search results and ground truth
-pub fn calculate_recall(
-    results: &[Vec<String>],
-    ground_truth: &[Vec<String>],
-    k: usize,
-) -> f64 {
+pub fn calculate_recall(results: &[Vec<String>], ground_truth: &[Vec<String>], k: usize) -> f64 {
     assert_eq!(results.len(), ground_truth.len());
 
     let mut total_recall = 0.0;

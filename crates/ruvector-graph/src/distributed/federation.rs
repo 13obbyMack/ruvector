@@ -98,7 +98,10 @@ impl ClusterRegistry {
 
     /// Register a remote cluster
     pub fn register_cluster(&self, cluster: RemoteCluster) -> Result<()> {
-        info!("Registering cluster: {} ({})", cluster.name, cluster.cluster_id);
+        info!(
+            "Registering cluster: {} ({})",
+            cluster.name, cluster.cluster_id
+        );
         self.clusters.insert(cluster.cluster_id.clone(), cluster);
         Ok(())
     }
@@ -106,9 +109,9 @@ impl ClusterRegistry {
     /// Unregister a cluster
     pub fn unregister_cluster(&self, cluster_id: &ClusterId) -> Result<()> {
         info!("Unregistering cluster: {}", cluster_id);
-        self.clusters
-            .remove(cluster_id)
-            .ok_or_else(|| GraphError::FederationError(format!("Cluster not found: {}", cluster_id)))?;
+        self.clusters.remove(cluster_id).ok_or_else(|| {
+            GraphError::FederationError(format!("Cluster not found: {}", cluster_id))
+        })?;
         Ok(())
     }
 
@@ -133,9 +136,9 @@ impl ClusterRegistry {
 
     /// Perform health check on a cluster
     pub async fn health_check(&self, cluster_id: &ClusterId) -> Result<ClusterStatus> {
-        let cluster = self
-            .get_cluster(cluster_id)
-            .ok_or_else(|| GraphError::FederationError(format!("Cluster not found: {}", cluster_id)))?;
+        let cluster = self.get_cluster(cluster_id).ok_or_else(|| {
+            GraphError::FederationError(format!("Cluster not found: {}", cluster_id))
+        })?;
 
         // In production, make actual HTTP/gRPC health check request
         // For now, simulate health check
@@ -468,12 +471,16 @@ impl Federation {
 
             // Merge aggregates
             for (key, value) in result.aggregates {
-                merged.aggregates.insert(format!("{}_{}", cluster_id, key), value);
+                merged
+                    .aggregates
+                    .insert(format!("{}_{}", cluster_id, key), value);
             }
 
             // Aggregate stats
-            merged.stats.execution_time_ms =
-                merged.stats.execution_time_ms.max(result.stats.execution_time_ms);
+            merged.stats.execution_time_ms = merged
+                .stats
+                .execution_time_ms
+                .max(result.stats.execution_time_ms);
             merged.stats.shards_queried += result.stats.shards_queried;
             merged.stats.nodes_scanned += result.stats.nodes_scanned;
             merged.stats.edges_scanned += result.stats.edges_scanned;

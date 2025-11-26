@@ -48,15 +48,16 @@ pub mod advanced;
 
 // Re-exports
 pub use advanced_features::{
-    BM25, ConformalConfig, ConformalPredictor, EnhancedPQ, FilterExpression, FilterStrategy,
+    ConformalConfig, ConformalPredictor, EnhancedPQ, FilterExpression, FilterStrategy,
     FilteredSearch, HybridConfig, HybridSearch, MMRConfig, MMRSearch, PQConfig, PredictionSet,
+    BM25,
 };
 
 #[cfg(feature = "storage")]
 pub use agenticdb::AgenticDB;
 
 pub use error::{Result, RuvectorError};
-pub use types::{DistanceMetric, VectorEntry, VectorId, SearchQuery, SearchResult};
+pub use types::{DistanceMetric, SearchQuery, SearchResult, VectorEntry, VectorId};
 pub use vector_db::VectorDB;
 
 #[cfg(test)]

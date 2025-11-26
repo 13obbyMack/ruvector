@@ -2,10 +2,10 @@
 //!
 //! Run with: cargo bench --package ruvector-graph --bench new_capabilities_bench
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use ruvector_graph::cypher::parser::parse_cypher;
-use ruvector_graph::hybrid::vector_index::{HybridIndex, EmbeddingConfig, VectorIndexType};
 use ruvector_graph::hybrid::semantic_search::{SemanticSearch, SemanticSearchConfig};
+use ruvector_graph::hybrid::vector_index::{EmbeddingConfig, HybridIndex, VectorIndexType};
 
 // ============================================================================
 // Parser Benchmarks
@@ -32,21 +32,15 @@ fn bench_chained_relationship(c: &mut Criterion) {
 
     // 2-hop chain
     let query_2hop = "MATCH (a)-[r]->(b)-[s]->(c) RETURN a, c";
-    group.bench_function("2_hop", |b| {
-        b.iter(|| parse_cypher(black_box(query_2hop)))
-    });
+    group.bench_function("2_hop", |b| b.iter(|| parse_cypher(black_box(query_2hop))));
 
     // 3-hop chain
     let query_3hop = "MATCH (a)-[r]->(b)-[s]->(c)-[t]->(d) RETURN a, d";
-    group.bench_function("3_hop", |b| {
-        b.iter(|| parse_cypher(black_box(query_3hop)))
-    });
+    group.bench_function("3_hop", |b| b.iter(|| parse_cypher(black_box(query_3hop))));
 
     // 4-hop chain
     let query_4hop = "MATCH (a)-[r]->(b)-[s]->(c)-[t]->(d)-[u]->(e) RETURN a, e";
-    group.bench_function("4_hop", |b| {
-        b.iter(|| parse_cypher(black_box(query_4hop)))
-    });
+    group.bench_function("4_hop", |b| b.iter(|| parse_cypher(black_box(query_4hop))));
 
     group.finish();
 }
@@ -64,9 +58,7 @@ fn bench_map_literal(c: &mut Criterion) {
 
     // Empty map
     let query_empty = "MATCH (n) RETURN {}";
-    group.bench_function("empty", |b| {
-        b.iter(|| parse_cypher(black_box(query_empty)))
-    });
+    group.bench_function("empty", |b| b.iter(|| parse_cypher(black_box(query_empty))));
 
     // Small map (2 keys)
     let query_small = "MATCH (n) RETURN {name: n.name, age: n.age}";
@@ -150,7 +142,9 @@ fn setup_semantic_search(num_vectors: usize, dimensions: usize) -> SemanticSearc
         embedding[i % dimensions] = 1.0;
         embedding[(i + 1) % dimensions] = 0.5;
 
-        index.add_node_embedding(format!("node_{}", i), embedding).unwrap();
+        index
+            .add_node_embedding(format!("node_{}", i), embedding)
+            .unwrap();
     }
 
     SemanticSearch::new(index, SemanticSearchConfig::default())
@@ -213,9 +207,7 @@ fn bench_distance_conversion(c: &mut Criterion) {
 
     c.bench_function("semantic_search/distance_conversion_10k", |b| {
         b.iter(|| {
-            let _: Vec<f32> = distances.iter()
-                .map(|d| 1.0 - d)
-                .collect();
+            let _: Vec<f32> = distances.iter().map(|d| 1.0 - d).collect();
         })
     });
 }
@@ -226,7 +218,8 @@ fn bench_similarity_filtering(c: &mut Criterion) {
 
     c.bench_function("semantic_search/similarity_filter_10k", |b| {
         b.iter(|| {
-            let _: Vec<f32> = distances.iter()
+            let _: Vec<f32> = distances
+                .iter()
                 .map(|d| 1.0 - d)
                 .filter(|s| *s >= min_similarity)
                 .collect();

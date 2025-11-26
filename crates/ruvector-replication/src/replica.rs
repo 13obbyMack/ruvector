@@ -79,10 +79,7 @@ impl Replica {
 
     /// Check if the replica is available for reads
     pub fn is_readable(&self) -> bool {
-        matches!(
-            self.status,
-            ReplicaStatus::Healthy | ReplicaStatus::Lagging
-        )
+        matches!(self.status, ReplicaStatus::Healthy | ReplicaStatus::Lagging)
     }
 
     /// Check if the replica is available for writes

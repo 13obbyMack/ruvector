@@ -99,9 +99,6 @@ mod tests {
             needed: 2,
             available: 1,
         };
-        assert_eq!(
-            err.to_string(),
-            "Quorum not met: needed 2, got 1"
-        );
+        assert_eq!(err.to_string(), "Quorum not met: needed 2, got 1");
     }
 }

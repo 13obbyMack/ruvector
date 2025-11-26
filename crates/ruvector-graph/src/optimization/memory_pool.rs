@@ -102,12 +102,15 @@ impl ArenaAllocator {
             let chunk_layout = Layout::new::<Chunk>();
             let chunk_ptr = alloc(chunk_layout) as *mut Chunk;
 
-            ptr::write(chunk_ptr, Chunk {
-                data,
-                offset: Cell::new(0),
-                capacity: self.chunk_size,
-                next: Cell::new(None),
-            });
+            ptr::write(
+                chunk_ptr,
+                Chunk {
+                    data,
+                    offset: Cell::new(0),
+                    capacity: self.chunk_size,
+                    next: Cell::new(None),
+                },
+            );
 
             let chunk = NonNull::new_unchecked(chunk_ptr);
             self.chunks.lock().push(chunk);

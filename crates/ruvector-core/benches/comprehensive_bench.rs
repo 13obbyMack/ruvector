@@ -1,10 +1,10 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use ruvector_core::distance::*;
-use ruvector_core::types::DistanceMetric;
-use ruvector_core::simd_intrinsics::*;
-use ruvector_core::cache_optimized::SoAVectorStorage;
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use ruvector_core::arena::Arena;
-use ruvector_core::lockfree::{LockFreeCounter, ObjectPool, LockFreeStats};
+use ruvector_core::cache_optimized::SoAVectorStorage;
+use ruvector_core::distance::*;
+use ruvector_core::lockfree::{LockFreeCounter, LockFreeStats, ObjectPool};
+use ruvector_core::simd_intrinsics::*;
+use ruvector_core::types::DistanceMetric;
 use std::sync::Arc;
 use std::thread;
 
@@ -61,13 +61,9 @@ fn bench_simd_comparison(c: &mut Criterion) {
             },
         );
 
-        group.bench_with_input(
-            BenchmarkId::new("cosine_avx2", size),
-            size,
-            |bench, _| {
-                bench.iter(|| cosine_similarity_avx2(black_box(&a), black_box(&b)));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("cosine_avx2", size), size, |bench, _| {
+            bench.iter(|| cosine_similarity_avx2(black_box(&a), black_box(&b)));
+        });
     }
 
     group.finish();
@@ -243,7 +239,8 @@ fn bench_thread_scaling(c: &mut Criterion) {
                                 black_box(&query),
                                 black_box(&vectors),
                                 DistanceMetric::Euclidean,
-                            ).unwrap();
+                            )
+                            .unwrap();
                             black_box(result)
                         })
                 });

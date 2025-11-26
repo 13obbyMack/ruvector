@@ -69,26 +69,21 @@ impl FastGRNN {
         let mut rng = rand::thread_rng();
 
         // Xavier initialization
-        let w_reset = Array2::from_shape_fn(
-            (config.hidden_dim, config.input_dim),
-            |_| rng.gen_range(-0.1..0.1),
-        );
-        let w_update = Array2::from_shape_fn(
-            (config.hidden_dim, config.input_dim),
-            |_| rng.gen_range(-0.1..0.1),
-        );
-        let w_candidate = Array2::from_shape_fn(
-            (config.hidden_dim, config.input_dim),
-            |_| rng.gen_range(-0.1..0.1),
-        );
-        let w_recurrent = Array2::from_shape_fn(
-            (config.hidden_dim, config.hidden_dim),
-            |_| rng.gen_range(-0.1..0.1),
-        );
-        let w_output = Array2::from_shape_fn(
-            (config.output_dim, config.hidden_dim),
-            |_| rng.gen_range(-0.1..0.1),
-        );
+        let w_reset = Array2::from_shape_fn((config.hidden_dim, config.input_dim), |_| {
+            rng.gen_range(-0.1..0.1)
+        });
+        let w_update = Array2::from_shape_fn((config.hidden_dim, config.input_dim), |_| {
+            rng.gen_range(-0.1..0.1)
+        });
+        let w_candidate = Array2::from_shape_fn((config.hidden_dim, config.input_dim), |_| {
+            rng.gen_range(-0.1..0.1)
+        });
+        let w_recurrent = Array2::from_shape_fn((config.hidden_dim, config.hidden_dim), |_| {
+            rng.gen_range(-0.1..0.1)
+        });
+        let w_output = Array2::from_shape_fn((config.output_dim, config.hidden_dim), |_| {
+            rng.gen_range(-0.1..0.1)
+        });
 
         let b_reset = Array1::zeros(config.hidden_dim);
         let b_update = Array1::zeros(config.hidden_dim);

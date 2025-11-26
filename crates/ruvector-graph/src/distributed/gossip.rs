@@ -235,10 +235,7 @@ impl GossipMembership {
 
     /// Start the gossip protocol
     pub async fn start(&self) -> Result<()> {
-        info!(
-            "Starting gossip protocol for node: {}",
-            self.local_node_id
-        );
+        info!("Starting gossip protocol for node: {}", self.local_node_id);
 
         // Start periodic gossip
         let gossip_self = self.clone();
@@ -318,12 +315,8 @@ impl GossipMembership {
     /// Handle incoming gossip message
     pub async fn handle_message(&self, message: GossipMessage) -> Result<()> {
         match message {
-            GossipMessage::Ping { from, sequence, .. } => {
-                self.handle_ping(from, sequence).await
-            }
-            GossipMessage::Ack { from, sequence, .. } => {
-                self.handle_ack(from, sequence).await
-            }
+            GossipMessage::Ping { from, sequence, .. } => self.handle_ping(from, sequence).await,
+            GossipMessage::Ack { from, sequence, .. } => self.handle_ack(from, sequence).await,
             GossipMessage::MembershipUpdate { updates, .. } => {
                 self.handle_membership_update(updates).await
             }

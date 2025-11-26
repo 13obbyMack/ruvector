@@ -1,10 +1,10 @@
 //! JavaScript-friendly type conversions for graph database
 
-use wasm_bindgen::prelude::*;
 use js_sys::{Array, Object, Reflect};
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::{from_value, to_value};
 use std::collections::HashMap;
+use wasm_bindgen::prelude::*;
 
 /// Node ID type (alias for clarity)
 pub type NodeId = String;
@@ -298,6 +298,8 @@ impl Hyperedge {
 }
 
 /// Convert JavaScript object to HashMap
-pub(crate) fn js_object_to_hashmap(obj: JsValue) -> Result<HashMap<String, serde_json::Value>, String> {
+pub(crate) fn js_object_to_hashmap(
+    obj: JsValue,
+) -> Result<HashMap<String, serde_json::Value>, String> {
     from_value(obj).map_err(|e| format!("Failed to convert JS object: {}", e))
 }

@@ -34,7 +34,7 @@ impl Default for CacheConfig {
         Self {
             max_entries: 1000,
             max_memory_bytes: 100 * 1024 * 1024, // 100MB
-            ttl_seconds: 300, // 5 minutes
+            ttl_seconds: 300,                    // 5 minutes
         }
     }
 }
@@ -71,10 +71,13 @@ impl CacheEntry {
 
     /// Estimate memory size of results
     fn estimate_size(results: &[RowBatch]) -> usize {
-        results.iter().map(|batch| {
-            // Rough estimate: 8 bytes per value + overhead
-            batch.len() * batch.schema.columns.len() * 8 + 1024
-        }).sum()
+        results
+            .iter()
+            .map(|batch| {
+                // Rough estimate: 8 bytes per value + overhead
+                batch.len() * batch.schema.columns.len() * 8 + 1024
+            })
+            .sum()
     }
 
     /// Check if entry is expired
@@ -286,16 +289,14 @@ impl CacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::executor::plan::{QuerySchema, ColumnDef, DataType};
+    use crate::executor::plan::{ColumnDef, DataType, QuerySchema};
 
     fn create_test_batch() -> RowBatch {
-        let schema = QuerySchema::new(vec![
-            ColumnDef {
-                name: "id".to_string(),
-                data_type: DataType::Int64,
-                nullable: false,
-            },
-        ]);
+        let schema = QuerySchema::new(vec![ColumnDef {
+            name: "id".to_string(),
+            data_type: DataType::Int64,
+            nullable: false,
+        }]);
         RowBatch::new(schema)
     }
 

@@ -1,6 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use ruvector_core::{VectorDB, VectorEntry};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use ruvector_core::types::{DbOptions, DistanceMetric, HnswConfig, SearchQuery};
+use ruvector_core::{VectorDB, VectorEntry};
 
 fn bench_hnsw_search(c: &mut Criterion) {
     let mut group = c.benchmark_group("hnsw_search");
@@ -10,7 +10,11 @@ fn bench_hnsw_search(c: &mut Criterion) {
     let options = DbOptions {
         dimensions: 128,
         distance_metric: DistanceMetric::Cosine,
-        storage_path: temp_dir.path().join("test.db").to_string_lossy().to_string(),
+        storage_path: temp_dir
+            .path()
+            .join("test.db")
+            .to_string_lossy()
+            .to_string(),
         hnsw_config: Some(HnswConfig::default()),
         quantization: None,
     };
@@ -39,7 +43,8 @@ fn bench_hnsw_search(c: &mut Criterion) {
                     k: black_box(k),
                     filter: None,
                     ef_search: None,
-                }).unwrap()
+                })
+                .unwrap()
             });
         });
     }

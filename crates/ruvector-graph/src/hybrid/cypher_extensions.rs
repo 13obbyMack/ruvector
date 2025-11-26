@@ -61,7 +61,9 @@ impl VectorCypherParser {
         // Example: MATCH (n:Document) WHERE n.embedding SIMILAR TO $query_vector LIMIT 10 RETURN n
 
         // Extract components (simplified parsing)
-        let match_clause = query.split("WHERE").next()
+        let match_clause = query
+            .split("WHERE")
+            .next()
             .ok_or_else(|| GraphError::QueryError("Invalid MATCH clause".to_string()))?
             .to_string();
 
@@ -208,7 +210,7 @@ pub mod functions {
 
         if a.len() != b.len() {
             return Err(GraphError::InvalidEmbedding(
-                "Embedding dimensions must match".to_string()
+                "Embedding dimensions must match".to_string(),
             ));
         }
 
@@ -252,7 +254,7 @@ pub mod functions {
         for emb in embeddings {
             if emb.len() != dim {
                 return Err(GraphError::InvalidEmbedding(
-                    "All embeddings must have same dimensions".to_string()
+                    "All embeddings must have same dimensions".to_string(),
                 ));
             }
             for (i, &val) in emb.iter().enumerate() {
@@ -282,7 +284,8 @@ mod tests {
     #[test]
     fn test_similarity_query_parsing() -> Result<()> {
         let parser = VectorCypherParser::new(ParserOptions::default());
-        let query = "MATCH (n:Document) WHERE n.embedding SIMILAR TO $query_vector LIMIT 10 RETURN n";
+        let query =
+            "MATCH (n:Document) WHERE n.embedding SIMILAR TO $query_vector LIMIT 10 RETURN n";
 
         let parsed = parser.parse(query)?;
         assert!(parsed.similarity_predicate.is_some());
@@ -304,10 +307,7 @@ mod tests {
 
     #[test]
     fn test_avg_embedding() -> Result<()> {
-        let embeddings = vec![
-            vec![1.0, 0.0],
-            vec![0.0, 1.0],
-        ];
+        let embeddings = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
 
         let avg = functions::avg_embedding(&embeddings)?;
         assert_eq!(avg, vec![0.5, 0.5]);

@@ -114,7 +114,11 @@ impl AppendEntriesResponse {
     }
 
     /// Create a failure response
-    pub fn failure(term: Term, conflict_index: Option<LogIndex>, conflict_term: Option<Term>) -> Self {
+    pub fn failure(
+        term: Term,
+        conflict_index: Option<LogIndex>,
+        conflict_term: Option<Term>,
+    ) -> Self {
         Self {
             term,
             success: false,
@@ -396,14 +400,7 @@ mod tests {
 
     #[test]
     fn test_append_entries_serialization() {
-        let req = AppendEntriesRequest::new(
-            1,
-            "leader".to_string(),
-            10,
-            1,
-            vec![],
-            10,
-        );
+        let req = AppendEntriesRequest::new(1, "leader".to_string(), 10, 1, vec![], 10);
 
         let bytes = req.to_bytes().unwrap();
         let decoded = AppendEntriesRequest::from_bytes(&bytes).unwrap();

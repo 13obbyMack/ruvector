@@ -3,9 +3,9 @@
 //! This module provides specialized query operators that are
 //! compiled/optimized for common query patterns.
 
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 
 /// JIT compiler for graph queries
 pub struct JitCompiler {
@@ -37,7 +37,9 @@ impl JitCompiler {
         let query = Arc::new(self.compile_pattern(pattern));
 
         // Cache it
-        self.compiled_cache.write().insert(pattern.to_string(), Arc::clone(&query));
+        self.compiled_cache
+            .write()
+            .insert(pattern.to_string(), Arc::clone(&query));
 
         query
     }
@@ -134,9 +136,7 @@ pub enum QueryOperator {
     FullScan,
 
     /// Label index scan
-    LabelScan {
-        label: String,
-    },
+    LabelScan { label: String },
 
     /// Property index scan
     PropertyScan {
@@ -151,30 +151,19 @@ pub enum QueryOperator {
     },
 
     /// Filter nodes/edges
-    Filter {
-        predicate: FilterPredicate,
-    },
+    Filter { predicate: FilterPredicate },
 
     /// Project properties
-    Project {
-        properties: Vec<String>,
-    },
+    Project { properties: Vec<String> },
 
     /// Aggregate results
-    Aggregate {
-        function: AggregateFunction,
-    },
+    Aggregate { function: AggregateFunction },
 
     /// Sort results
-    Sort {
-        property: String,
-        ascending: bool,
-    },
+    Sort { property: String, ascending: bool },
 
     /// Limit results
-    Limit {
-        count: usize,
-    },
+    Limit { count: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -248,7 +237,10 @@ impl QueryStats {
     }
 
     fn record(&mut self, pattern: &str, duration_ns: u64) {
-        *self.execution_counts.entry(pattern.to_string()).or_insert(0) += 1;
+        *self
+            .execution_counts
+            .entry(pattern.to_string())
+            .or_insert(0) += 1;
         *self.total_time_ns.entry(pattern.to_string()).or_insert(0) += duration_ns;
     }
 
@@ -293,10 +285,7 @@ pub mod specialized_ops {
     }
 
     /// Cache-friendly edge expansion
-    pub fn cache_friendly_expand(
-        nodes: &[u64],
-        direction: Direction,
-    ) -> Vec<(u64, u64)> {
+    pub fn cache_friendly_expand(nodes: &[u64], direction: Direction) -> Vec<(u64, u64)> {
         // In a real implementation, this would use prefetching and cache-optimized layout
         Vec::new()
     }

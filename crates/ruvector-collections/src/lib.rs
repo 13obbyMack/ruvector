@@ -45,9 +45,9 @@
 #![warn(clippy::all)]
 
 pub mod collection;
-pub mod manager;
 pub mod error;
+pub mod manager;
 
 pub use collection::{Collection, CollectionConfig, CollectionStats};
-pub use manager::CollectionManager;
 pub use error::{CollectionError, Result};
+pub use manager::CollectionManager;

@@ -1,11 +1,11 @@
 //! WASM bindings for browser and WASI environments
 
-use wasm_bindgen::prelude::*;
 use ruvector_router_core::{
-    DistanceMetric as CoreDistanceMetric, SearchQuery as CoreSearchQuery,
-    VectorDB as CoreVectorDB, VectorEntry as CoreVectorEntry,
+    DistanceMetric as CoreDistanceMetric, SearchQuery as CoreSearchQuery, VectorDB as CoreVectorDB,
+    VectorEntry as CoreVectorEntry,
 };
 use std::collections::HashMap;
+use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 extern "C" {

@@ -57,8 +57,7 @@ impl ElectionTimer {
 
     /// Get time remaining until timeout
     pub fn time_remaining(&self) -> Duration {
-        self.timeout
-            .saturating_sub(self.last_reset.elapsed())
+        self.timeout.saturating_sub(self.last_reset.elapsed())
     }
 
     /// Generate a random timeout duration

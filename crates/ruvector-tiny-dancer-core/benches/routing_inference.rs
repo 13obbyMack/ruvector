@@ -1,7 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use ruvector_tiny_dancer_core::{
-    Router, RouterConfig, RoutingRequest, Candidate,
-};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use ruvector_tiny_dancer_core::{Candidate, Router, RouterConfig, RoutingRequest};
 use std::collections::HashMap;
 
 fn create_candidate(id: &str, dimensions: usize) -> Candidate {
@@ -36,9 +34,7 @@ fn bench_routing_latency(c: &mut Criterion) {
                     metadata: None,
                 };
 
-                b.iter(|| {
-                    router.route(black_box(request.clone())).unwrap()
-                });
+                b.iter(|| router.route(black_box(request.clone())).unwrap());
             },
         );
     }
@@ -65,11 +61,9 @@ fn bench_feature_extraction(c: &mut Criterion) {
                     .collect();
 
                 b.iter(|| {
-                    engineer.extract_batch_features(
-                        black_box(&query),
-                        black_box(&candidates),
-                        None,
-                    ).unwrap()
+                    engineer
+                        .extract_batch_features(black_box(&query), black_box(&candidates), None)
+                        .unwrap()
                 });
             },
         );
@@ -92,9 +86,7 @@ fn bench_model_inference(c: &mut Criterion) {
     let input = vec![0.5; 128];
 
     c.bench_function("model_inference", |b| {
-        b.iter(|| {
-            model.forward(black_box(&input), None).unwrap()
-        });
+        b.iter(|| model.forward(black_box(&input), None).unwrap());
     });
 }
 
@@ -117,13 +109,9 @@ fn bench_batch_inference(c: &mut Criterion) {
             BenchmarkId::from_parameter(batch_size),
             batch_size,
             |b, &batch_size| {
-                let inputs: Vec<Vec<f32>> = (0..batch_size)
-                    .map(|_| vec![0.5; 128])
-                    .collect();
+                let inputs: Vec<Vec<f32>> = (0..batch_size).map(|_| vec![0.5; 128]).collect();
 
-                b.iter(|| {
-                    model.forward_batch(black_box(&inputs)).unwrap()
-                });
+                b.iter(|| model.forward_batch(black_box(&inputs)).unwrap());
             },
         );
     }

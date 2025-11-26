@@ -2,10 +2,10 @@
 
 use crate::error::{Result, TinyDancerError};
 use crate::types::Candidate;
-use rusqlite::{Connection, params};
+use parking_lot::Mutex;
+use rusqlite::{params, Connection};
 use std::path::Path;
 use std::sync::Arc;
-use parking_lot::Mutex;
 
 /// Storage backend for candidates and routing history
 pub struct Storage {
@@ -22,7 +22,7 @@ impl Storage {
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
              PRAGMA cache_size=1000000000;
-             PRAGMA temp_store=memory;"
+             PRAGMA temp_store=memory;",
         )?;
 
         let storage = Self {
@@ -120,7 +120,7 @@ impl Storage {
 
         let mut stmt = conn.prepare(
             "SELECT id, embedding, metadata, created_at, access_count, success_rate
-             FROM candidates WHERE id = ?1"
+             FROM candidates WHERE id = ?1",
         )?;
 
         let mut rows = stmt.query(params![id])?;
@@ -157,7 +157,7 @@ impl Storage {
             "SELECT id, embedding, metadata, created_at, access_count, success_rate
              FROM candidates
              ORDER BY created_at DESC
-             LIMIT ?1"
+             LIMIT ?1",
         )?;
 
         let rows = stmt.query_map(params![limit], |row| {
@@ -239,23 +239,22 @@ impl Storage {
     pub fn get_statistics(&self) -> Result<RoutingStatistics> {
         let conn = self.conn.lock();
 
-        let total_routes: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM routing_history",
-            [],
-            |row| row.get(0)
-        )?;
+        let total_routes: i64 =
+            conn.query_row("SELECT COUNT(*) FROM routing_history", [], |row| row.get(0))?;
 
         let lightweight_routes: i64 = conn.query_row(
             "SELECT COUNT(*) FROM routing_history WHERE use_lightweight = 1",
             [],
-            |row| row.get(0)
+            |row| row.get(0),
         )?;
 
-        let avg_inference_time: f64 = conn.query_row(
-            "SELECT AVG(inference_time_us) FROM routing_history",
-            [],
-            |row| row.get(0)
-        ).unwrap_or(0.0);
+        let avg_inference_time: f64 = conn
+            .query_row(
+                "SELECT AVG(inference_time_us) FROM routing_history",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0.0);
 
         Ok(RoutingStatistics {
             total_routes: total_routes as u64,

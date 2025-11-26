@@ -14,7 +14,8 @@ pub fn format_search_results(results: &[SearchResult], show_vectors: bool) -> St
 
         if let Some(metadata) = &result.metadata {
             if !metadata.is_empty() {
-                output.push_str(&format!("   Metadata: {}\n",
+                output.push_str(&format!(
+                    "   Metadata: {}\n",
                     serde_json::to_string_pretty(metadata).unwrap_or_else(|_| "{}".to_string())
                 ));
             }
@@ -92,7 +93,11 @@ pub fn export_csv(entries: &[VectorEntry]) -> anyhow::Result<String> {
 // Graph-specific formatting functions
 
 /// Format graph node for display
-pub fn format_graph_node(id: &str, labels: &[String], properties: &serde_json::Map<String, serde_json::Value>) -> String {
+pub fn format_graph_node(
+    id: &str,
+    labels: &[String],
+    properties: &serde_json::Map<String, serde_json::Value>,
+) -> String {
     let mut output = String::new();
 
     output.push_str(&format!("{} ({})\n", id.bold(), labels.join(":").cyan()));
@@ -136,21 +141,20 @@ pub fn format_graph_relationship(
 
 /// Format graph query results as table
 pub fn format_graph_table(headers: &[String], rows: &[Vec<String>]) -> String {
-    use prettytable::{Table, Row, Cell};
+    use prettytable::{Cell, Row, Table};
 
     let mut table = Table::new();
 
     // Add headers
-    let header_cells: Vec<Cell> = headers.iter()
+    let header_cells: Vec<Cell> = headers
+        .iter()
         .map(|h| Cell::new(h).style_spec("Fyb"))
         .collect();
     table.add_row(Row::new(header_cells));
 
     // Add rows
     for row in rows {
-        let cells: Vec<Cell> = row.iter()
-            .map(|v| Cell::new(v))
-            .collect();
+        let cells: Vec<Cell> = row.iter().map(|v| Cell::new(v)).collect();
         table.add_row(Row::new(cells));
     }
 

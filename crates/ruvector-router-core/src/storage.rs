@@ -84,8 +84,9 @@ impl Storage {
 
             for entry in entries {
                 // Serialize vector
-                let vector_bytes = bincode::encode_to_vec(&entry.vector, bincode::config::standard())
-                    .map_err(|e| VectorDbError::Serialization(e.to_string()))?;
+                let vector_bytes =
+                    bincode::encode_to_vec(&entry.vector, bincode::config::standard())
+                        .map_err(|e| VectorDbError::Serialization(e.to_string()))?;
 
                 vectors_table.insert(entry.id.as_str(), vector_bytes.as_slice())?;
 
@@ -120,11 +121,14 @@ impl Storage {
         let table = read_txn.open_table(VECTORS_TABLE)?;
 
         if let Some(bytes) = table.get(id)? {
-            let (vector, _): (Vec<f32>, usize) = bincode::decode_from_slice(bytes.value(), bincode::config::standard())
-                .map_err(|e| VectorDbError::Serialization(e.to_string()))?;
+            let (vector, _): (Vec<f32>, usize) =
+                bincode::decode_from_slice(bytes.value(), bincode::config::standard())
+                    .map_err(|e| VectorDbError::Serialization(e.to_string()))?;
 
             // Update cache
-            self.vector_cache.write().insert(id.to_string(), vector.clone());
+            self.vector_cache
+                .write()
+                .insert(id.to_string(), vector.clone());
 
             Ok(Some(vector))
         } else {

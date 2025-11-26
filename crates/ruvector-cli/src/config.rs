@@ -151,10 +151,9 @@ impl Default for McpConfig {
 impl Config {
     /// Load configuration from file
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = std::fs::read_to_string(path.as_ref())
-            .context("Failed to read config file")?;
-        let config: Config = toml::from_str(&content)
-            .context("Failed to parse config file")?;
+        let content =
+            std::fs::read_to_string(path.as_ref()).context("Failed to read config file")?;
+        let config: Config = toml::from_str(&content).context("Failed to parse config file")?;
         Ok(config)
     }
 
@@ -199,8 +198,7 @@ impl Config {
         }
 
         if let Ok(dims) = std::env::var("RUVECTOR_DIMENSIONS") {
-            self.database.dimensions = dims.parse()
-                .context("Invalid RUVECTOR_DIMENSIONS")?;
+            self.database.dimensions = dims.parse().context("Invalid RUVECTOR_DIMENSIONS")?;
         }
 
         if let Ok(metric) = std::env::var("RUVECTOR_DISTANCE_METRIC") {
@@ -218,8 +216,7 @@ impl Config {
         }
 
         if let Ok(port) = std::env::var("RUVECTOR_MCP_PORT") {
-            self.mcp.port = port.parse()
-                .context("Invalid RUVECTOR_MCP_PORT")?;
+            self.mcp.port = port.parse().context("Invalid RUVECTOR_MCP_PORT")?;
         }
 
         Ok(())
@@ -238,10 +235,8 @@ impl Config {
 
     /// Save configuration to file
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let content = toml::to_string_pretty(self)
-            .context("Failed to serialize config")?;
-        std::fs::write(path, content)
-            .context("Failed to write config file")?;
+        let content = toml::to_string_pretty(self).context("Failed to serialize config")?;
+        std::fs::write(path, content).context("Failed to write config file")?;
         Ok(())
     }
 }

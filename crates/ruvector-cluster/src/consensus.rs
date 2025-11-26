@@ -161,17 +161,15 @@ impl DagConsensus {
         let count = clock.entry(self.node_id.clone()).or_insert(0);
         *count += 1;
 
-        let vertex = DagVertex::new(
-            self.node_id.clone(),
-            transaction,
-            parents,
-            clock.clone(),
-        );
+        let vertex = DagVertex::new(self.node_id.clone(), transaction, parents, clock.clone());
 
         let vertex_id = vertex.id.clone();
         self.vertices.insert(vertex_id.clone(), vertex.clone());
 
-        debug!("Created vertex {} for transaction {}", vertex_id, vertex.transaction.id);
+        debug!(
+            "Created vertex {} for transaction {}",
+            vertex_id, vertex.transaction.id
+        );
         Ok(Some(vertex))
     }
 

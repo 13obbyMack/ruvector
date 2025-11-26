@@ -105,5 +105,10 @@ fn bench_distance_calculations(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_insert, bench_search, bench_distance_calculations);
+criterion_group!(
+    benches,
+    bench_insert,
+    bench_search,
+    bench_distance_calculations
+);
 criterion_main!(benches);

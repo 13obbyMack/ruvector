@@ -1,15 +1,16 @@
 use lazy_static::lazy_static;
 use prometheus::{
-    Counter, CounterVec, Gauge, GaugeVec, HistogramVec,
-    Opts, Registry, TextEncoder, Encoder,
-    register_counter_vec, register_gauge_vec, register_histogram_vec,
-    register_gauge, register_counter,
+    register_counter, register_counter_vec, register_gauge, register_gauge_vec,
+    register_histogram_vec, Counter, CounterVec, Encoder, Gauge, GaugeVec, HistogramVec, Opts,
+    Registry, TextEncoder,
 };
 
 pub mod health;
 pub mod recorder;
 
-pub use health::{HealthChecker, HealthResponse, HealthStatus, ReadinessResponse, CollectionHealth};
+pub use health::{
+    CollectionHealth, HealthChecker, HealthResponse, HealthStatus, ReadinessResponse,
+};
 pub use recorder::MetricsRecorder;
 
 lazy_static! {

@@ -130,9 +130,9 @@ impl VectorDB {
         // Apply metadata filters if specified
         if let Some(filters) = &query.filters {
             results.retain(|r| {
-                filters.iter().all(|(key, value)| {
-                    r.metadata.get(key).map(|v| v == value).unwrap_or(false)
-                })
+                filters
+                    .iter()
+                    .all(|(key, value)| r.metadata.get(key).map(|v| v == value).unwrap_or(false))
             });
         }
 
