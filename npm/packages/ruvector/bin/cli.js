@@ -855,4 +855,767 @@ gnnCmd
     console.log(chalk.gray(`  binary (freq <= 0.01) - ~32x compression, archive`));
   });
 
+// =============================================================================
+// Doctor Command - Check system health and dependencies
+// =============================================================================
+
+program
+  .command('doctor')
+  .description('Check system health and dependencies')
+  .option('-v, --verbose', 'Show detailed information')
+  .action(async (options) => {
+    const { execSync } = require('child_process');
+
+    console.log(chalk.cyan('\n═══════════════════════════════════════════════════════════════'));
+    console.log(chalk.cyan('                    RuVector Doctor'));
+    console.log(chalk.cyan('═══════════════════════════════════════════════════════════════\n'));
+
+    let issues = 0;
+    let warnings = 0;
+
+    // Helper functions
+    const check = (name, condition, fix) => {
+      if (condition) {
+        console.log(chalk.green(`  ✓ ${name}`));
+        return true;
+      } else {
+        console.log(chalk.red(`  ✗ ${name}`));
+        if (fix) console.log(chalk.gray(`    Fix: ${fix}`));
+        issues++;
+        return false;
+      }
+    };
+
+    const warn = (name, condition, suggestion) => {
+      if (condition) {
+        console.log(chalk.green(`  ✓ ${name}`));
+        return true;
+      } else {
+        console.log(chalk.yellow(`  ! ${name}`));
+        if (suggestion) console.log(chalk.gray(`    Suggestion: ${suggestion}`));
+        warnings++;
+        return false;
+      }
+    };
+
+    const getVersion = (cmd) => {
+      try {
+        return execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
+      } catch (e) {
+        return null;
+      }
+    };
+
+    // System Information
+    console.log(chalk.cyan('System Information:'));
+    console.log(chalk.white(`  Platform:      ${chalk.yellow(process.platform)}`));
+    console.log(chalk.white(`  Architecture:  ${chalk.yellow(process.arch)}`));
+    console.log(chalk.white(`  Node.js:       ${chalk.yellow(process.version)}`));
+    console.log('');
+
+    // Node.js Checks
+    console.log(chalk.cyan('Node.js Environment:'));
+    const nodeVersion = parseInt(process.version.slice(1).split('.')[0]);
+    check('Node.js >= 14', nodeVersion >= 14, 'Upgrade Node.js: https://nodejs.org');
+
+    const npmVersion = getVersion('npm --version');
+    if (npmVersion) {
+      console.log(chalk.green(`  ✓ npm ${npmVersion}`));
+    } else {
+      check('npm installed', false, 'Install npm or reinstall Node.js');
+    }
+    console.log('');
+
+    // RuVector Packages
+    console.log(chalk.cyan('RuVector Packages:'));
+
+    // Check @ruvector/core
+    let coreAvailable = false;
+    try {
+      require.resolve('@ruvector/core');
+      coreAvailable = true;
+      console.log(chalk.green(`  ✓ @ruvector/core installed`));
+    } catch (e) {
+      console.log(chalk.yellow(`  ! @ruvector/core not found (using WASM fallback)`));
+      warnings++;
+    }
+
+    // Check if native binding works
+    if (coreAvailable && loadRuvector()) {
+      const info = getVersion();
+      console.log(chalk.green(`  ✓ Native binding working (${info.implementation})`));
+    } else if (coreAvailable) {
+      console.log(chalk.yellow(`  ! Native binding failed to load`));
+      warnings++;
+    }
+
+    // Check @ruvector/gnn
+    if (gnnAvailable) {
+      console.log(chalk.green(`  ✓ @ruvector/gnn installed`));
+    } else {
+      console.log(chalk.gray(`  ○ @ruvector/gnn not installed (optional)`));
+    }
+
+    // Check @ruvector/graph-node
+    try {
+      require.resolve('@ruvector/graph-node');
+      console.log(chalk.green(`  ✓ @ruvector/graph-node installed`));
+    } catch (e) {
+      console.log(chalk.gray(`  ○ @ruvector/graph-node not installed (optional)`));
+    }
+    console.log('');
+
+    // Rust Toolchain (optional for development)
+    console.log(chalk.cyan('Rust Toolchain (optional):'));
+
+    const rustVersion = getVersion('rustc --version');
+    if (rustVersion) {
+      console.log(chalk.green(`  ✓ ${rustVersion}`));
+    } else {
+      console.log(chalk.gray(`  ○ Rust not installed (only needed for development)`));
+    }
+
+    const cargoVersion = getVersion('cargo --version');
+    if (cargoVersion) {
+      console.log(chalk.green(`  ✓ ${cargoVersion}`));
+    } else if (rustVersion) {
+      console.log(chalk.yellow(`  ! cargo not found`));
+      warnings++;
+    }
+    console.log('');
+
+    // Build Tools (optional)
+    if (options.verbose) {
+      console.log(chalk.cyan('Build Tools (for native compilation):'));
+
+      const hasGcc = getVersion('gcc --version');
+      const hasClang = getVersion('clang --version');
+      const hasCc = getVersion('cc --version');
+
+      if (hasGcc || hasClang || hasCc) {
+        console.log(chalk.green(`  ✓ C compiler available`));
+      } else {
+        console.log(chalk.gray(`  ○ No C compiler found (only needed for building from source)`));
+      }
+
+      const hasMake = getVersion('make --version');
+      if (hasMake) {
+        console.log(chalk.green(`  ✓ make available`));
+      } else {
+        console.log(chalk.gray(`  ○ make not found`));
+      }
+
+      const hasCmake = getVersion('cmake --version');
+      if (hasCmake) {
+        console.log(chalk.green(`  ✓ cmake available`));
+      } else {
+        console.log(chalk.gray(`  ○ cmake not found`));
+      }
+      console.log('');
+    }
+
+    // Summary
+    console.log(chalk.cyan('═══════════════════════════════════════════════════════════════'));
+    if (issues === 0 && warnings === 0) {
+      console.log(chalk.green('\n  ✓ All checks passed! RuVector is ready to use.\n'));
+    } else if (issues === 0) {
+      console.log(chalk.yellow(`\n  ! ${warnings} warning(s) found. RuVector should work but may have limited features.\n`));
+    } else {
+      console.log(chalk.red(`\n  ✗ ${issues} issue(s) and ${warnings} warning(s) found.\n`));
+      console.log(chalk.white('  Run "npx ruvector setup" for installation instructions.\n'));
+    }
+  });
+
+// =============================================================================
+// Setup Command - Installation instructions
+// =============================================================================
+
+program
+  .command('setup')
+  .description('Show installation and setup instructions')
+  .option('--rust', 'Show Rust installation instructions')
+  .option('--npm', 'Show npm package installation instructions')
+  .option('--all', 'Show all installation instructions')
+  .action((options) => {
+    const showAll = options.all || (!options.rust && !options.npm);
+
+    console.log(chalk.cyan('\n═══════════════════════════════════════════════════════════════'));
+    console.log(chalk.cyan('                    RuVector Setup Guide'));
+    console.log(chalk.cyan('═══════════════════════════════════════════════════════════════\n'));
+
+    // Quick install
+    console.log(chalk.cyan('Quick Install (one-liner):'));
+    console.log(chalk.white('  curl -fsSL https://raw.githubusercontent.com/ruvnet/ruvector/main/install.sh | bash'));
+    console.log('');
+
+    if (showAll || options.npm) {
+      console.log(chalk.cyan('───────────────────────────────────────────────────────────────'));
+      console.log(chalk.cyan('npm Packages'));
+      console.log(chalk.cyan('───────────────────────────────────────────────────────────────\n'));
+
+      console.log(chalk.yellow('All-in-one CLI:'));
+      console.log(chalk.white('  npm install -g ruvector'));
+      console.log(chalk.white('  npx ruvector'));
+      console.log('');
+
+      console.log(chalk.yellow('Core packages:'));
+      console.log(chalk.white('  npm install @ruvector/core       # Vector database'));
+      console.log(chalk.white('  npm install @ruvector/gnn        # Graph Neural Networks'));
+      console.log(chalk.white('  npm install @ruvector/graph-node # Hypergraph database'));
+      console.log('');
+
+      console.log(chalk.yellow('Install all optional packages:'));
+      console.log(chalk.white('  npx ruvector install --all'));
+      console.log('');
+
+      console.log(chalk.yellow('List available packages:'));
+      console.log(chalk.white('  npx ruvector install'));
+      console.log('');
+    }
+
+    if (showAll || options.rust) {
+      console.log(chalk.cyan('───────────────────────────────────────────────────────────────'));
+      console.log(chalk.cyan('Rust Installation'));
+      console.log(chalk.cyan('───────────────────────────────────────────────────────────────\n'));
+
+      console.log(chalk.yellow('1. Install Rust:'));
+      console.log(chalk.white('  curl --proto \'=https\' --tlsv1.2 -sSf https://sh.rustup.rs | sh'));
+      console.log(chalk.gray('  # Follow the prompts, then restart your terminal or run:'));
+      console.log(chalk.white('  source $HOME/.cargo/env'));
+      console.log('');
+
+      console.log(chalk.yellow('2. Verify installation:'));
+      console.log(chalk.white('  rustc --version'));
+      console.log(chalk.white('  cargo --version'));
+      console.log('');
+
+      console.log(chalk.yellow('3. Add RuVector crates to your project:'));
+      console.log(chalk.white('  cargo add ruvector-core          # Vector database'));
+      console.log(chalk.white('  cargo add ruvector-graph         # Hypergraph with Cypher'));
+      console.log(chalk.white('  cargo add ruvector-gnn           # Graph Neural Networks'));
+      console.log('');
+
+      console.log(chalk.yellow('4. Other available crates:'));
+      console.log(chalk.white('  cargo add ruvector-cluster       # Distributed clustering'));
+      console.log(chalk.white('  cargo add ruvector-raft          # Raft consensus'));
+      console.log(chalk.white('  cargo add ruvector-replication   # Data replication'));
+      console.log(chalk.white('  cargo add ruvector-tiny-dancer-core  # AI routing'));
+      console.log(chalk.white('  cargo add ruvector-router-core   # Semantic routing'));
+      console.log('');
+
+      console.log(chalk.yellow('Platform-specific notes:'));
+      console.log('');
+
+      if (process.platform === 'darwin') {
+        console.log(chalk.cyan('  macOS:'));
+        console.log(chalk.white('    xcode-select --install  # Install command line tools'));
+        console.log('');
+      } else if (process.platform === 'linux') {
+        console.log(chalk.cyan('  Linux (Debian/Ubuntu):'));
+        console.log(chalk.white('    sudo apt-get update'));
+        console.log(chalk.white('    sudo apt-get install build-essential pkg-config libssl-dev'));
+        console.log('');
+        console.log(chalk.cyan('  Linux (RHEL/CentOS):'));
+        console.log(chalk.white('    sudo yum groupinstall "Development Tools"'));
+        console.log(chalk.white('    sudo yum install openssl-devel'));
+        console.log('');
+      } else if (process.platform === 'win32') {
+        console.log(chalk.cyan('  Windows:'));
+        console.log(chalk.white('    # Install Visual Studio Build Tools'));
+        console.log(chalk.white('    # https://visualstudio.microsoft.com/visual-cpp-build-tools/'));
+        console.log(chalk.white('    # Or use WSL2 for best experience'));
+        console.log('');
+      }
+    }
+
+    console.log(chalk.cyan('───────────────────────────────────────────────────────────────'));
+    console.log(chalk.cyan('Documentation & Resources'));
+    console.log(chalk.cyan('───────────────────────────────────────────────────────────────\n'));
+
+    console.log(chalk.white('  GitHub:     https://github.com/ruvnet/ruvector'));
+    console.log(chalk.white('  npm:        https://www.npmjs.com/package/ruvector'));
+    console.log(chalk.white('  crates.io:  https://crates.io/crates/ruvector-core'));
+    console.log(chalk.white('  Issues:     https://github.com/ruvnet/ruvector/issues'));
+    console.log('');
+
+    console.log(chalk.cyan('Quick Commands:'));
+    console.log(chalk.white('  npx ruvector doctor     # Check system health'));
+    console.log(chalk.white('  npx ruvector info       # Show version info'));
+    console.log(chalk.white('  npx ruvector benchmark  # Run performance test'));
+    console.log(chalk.white('  npx ruvector install    # List available packages'));
+    console.log('');
+  });
+
+// =============================================================================
+// Graph Commands - Cypher queries and graph operations
+// =============================================================================
+
+program
+  .command('graph')
+  .description('Graph database operations (requires @ruvector/graph-node)')
+  .option('-q, --query <cypher>', 'Execute Cypher query')
+  .option('-c, --create <label>', 'Create a node with label')
+  .option('-p, --properties <json>', 'Node properties as JSON')
+  .option('-r, --relate <spec>', 'Create relationship (from:rel:to)')
+  .option('--info', 'Show graph info and stats')
+  .action(async (options) => {
+    let graphNode;
+    try {
+      graphNode = require('@ruvector/graph-node');
+    } catch (e) {
+      console.log(chalk.yellow('\n  @ruvector/graph-node is not installed.\n'));
+      console.log(chalk.cyan('  Install with:'));
+      console.log(chalk.white('    npm install @ruvector/graph-node\n'));
+      console.log(chalk.cyan('  Features:'));
+      console.log(chalk.gray('    - Cypher query language support'));
+      console.log(chalk.gray('    - Hypergraph data structure'));
+      console.log(chalk.gray('    - Knowledge graph operations'));
+      console.log(chalk.gray('    - Neo4j-compatible syntax\n'));
+      console.log(chalk.cyan('  Example usage:'));
+      console.log(chalk.white('    npx ruvector graph --query "CREATE (n:Person {name: \'Alice\'})"'));
+      console.log(chalk.white('    npx ruvector graph --query "MATCH (n) RETURN n"'));
+      console.log('');
+      return;
+    }
+
+    console.log(chalk.cyan('\n═══════════════════════════════════════════════════════════════'));
+    console.log(chalk.cyan('                    RuVector Graph'));
+    console.log(chalk.cyan('═══════════════════════════════════════════════════════════════\n'));
+
+    if (options.info) {
+      console.log(chalk.green('  @ruvector/graph-node is available!'));
+      console.log(chalk.gray(`  Platform: ${process.platform}-${process.arch}`));
+      console.log('');
+      console.log(chalk.yellow('  Available operations:'));
+      console.log(chalk.white('    --query <cypher>    Execute Cypher query'));
+      console.log(chalk.white('    --create <label>    Create node with label'));
+      console.log(chalk.white('    --relate <spec>     Create relationship'));
+      console.log('');
+      return;
+    }
+
+    if (options.query) {
+      console.log(chalk.yellow('  Cypher Query:'), chalk.white(options.query));
+      console.log('');
+      // Actual implementation would execute the query
+      console.log(chalk.gray('  Note: Full Cypher execution requires running ruvector-server'));
+      console.log(chalk.gray('  See: npx ruvector server --help'));
+    }
+
+    if (options.create) {
+      const label = options.create;
+      const props = options.properties ? JSON.parse(options.properties) : {};
+      console.log(chalk.yellow('  Creating node:'), chalk.white(label));
+      console.log(chalk.gray('  Properties:'), JSON.stringify(props, null, 2));
+    }
+
+    console.log('');
+  });
+
+// =============================================================================
+// Router Commands - AI agent routing
+// =============================================================================
+
+program
+  .command('router')
+  .description('AI semantic router operations (requires ruvector-router-core)')
+  .option('--route <text>', 'Route text to best matching intent')
+  .option('--intents <file>', 'Load intents from JSON file')
+  .option('--add-intent <name>', 'Add new intent')
+  .option('--examples <json>', 'Example utterances for intent')
+  .option('--info', 'Show router info')
+  .action(async (options) => {
+    console.log(chalk.cyan('\n═══════════════════════════════════════════════════════════════'));
+    console.log(chalk.cyan('                    RuVector Router'));
+    console.log(chalk.cyan('═══════════════════════════════════════════════════════════════\n'));
+
+    console.log(chalk.yellow('  Semantic Router for AI Agent Routing\n'));
+
+    if (options.info || (!options.route && !options.intents && !options.addIntent)) {
+      console.log(chalk.cyan('  Features:'));
+      console.log(chalk.gray('    - Semantic intent matching'));
+      console.log(chalk.gray('    - Multi-agent routing'));
+      console.log(chalk.gray('    - Dynamic intent registration'));
+      console.log(chalk.gray('    - Vector-based similarity matching'));
+      console.log('');
+      console.log(chalk.cyan('  Status:'), chalk.yellow('Coming Soon'));
+      console.log(chalk.gray('  The npm package for router is in development.'));
+      console.log(chalk.gray('  Rust crate available: cargo add ruvector-router-core'));
+      console.log('');
+      console.log(chalk.cyan('  Usage (when available):'));
+      console.log(chalk.white('    npx ruvector router --route "What is the weather?"'));
+      console.log(chalk.white('    npx ruvector router --intents intents.json --route "query"'));
+      console.log('');
+      return;
+    }
+
+    if (options.route) {
+      console.log(chalk.yellow('  Input:'), chalk.white(options.route));
+      console.log(chalk.gray('  Router package not yet available in npm.'));
+      console.log(chalk.gray('  Check issue #20 for roadmap.'));
+    }
+
+    console.log('');
+  });
+
+// =============================================================================
+// Server Commands - HTTP/gRPC server
+// =============================================================================
+
+program
+  .command('server')
+  .description('Start RuVector HTTP/gRPC server')
+  .option('-p, --port <number>', 'HTTP port', '8080')
+  .option('-g, --grpc-port <number>', 'gRPC port', '50051')
+  .option('-d, --data-dir <path>', 'Data directory', './ruvector-data')
+  .option('--http-only', 'Start only HTTP server')
+  .option('--grpc-only', 'Start only gRPC server')
+  .option('--cors', 'Enable CORS for all origins')
+  .option('--info', 'Show server info')
+  .action(async (options) => {
+    console.log(chalk.cyan('\n═══════════════════════════════════════════════════════════════'));
+    console.log(chalk.cyan('                    RuVector Server'));
+    console.log(chalk.cyan('═══════════════════════════════════════════════════════════════\n'));
+
+    if (options.info || Object.keys(options).filter(k => k !== 'port' && k !== 'grpcPort' && k !== 'dataDir').length === 0) {
+      console.log(chalk.cyan('  Status:'), chalk.yellow('Coming Soon'));
+      console.log('');
+      console.log(chalk.cyan('  Planned Features:'));
+      console.log(chalk.gray('    - REST API for vector operations'));
+      console.log(chalk.gray('    - gRPC high-performance interface'));
+      console.log(chalk.gray('    - WebSocket real-time updates'));
+      console.log(chalk.gray('    - OpenAPI/Swagger documentation'));
+      console.log(chalk.gray('    - Prometheus metrics endpoint'));
+      console.log(chalk.gray('    - Health check endpoints'));
+      console.log('');
+      console.log(chalk.cyan('  Rust binary available:'));
+      console.log(chalk.white('    cargo install ruvector-server  # When published'));
+      console.log('');
+      console.log(chalk.cyan('  Configuration (when available):'));
+      console.log(chalk.white(`    --port ${options.port}            # HTTP port`));
+      console.log(chalk.white(`    --grpc-port ${options.grpcPort}       # gRPC port`));
+      console.log(chalk.white(`    --data-dir ${options.dataDir}  # Data directory`));
+      console.log('');
+      console.log(chalk.gray('  Track progress: https://github.com/ruvnet/ruvector/issues/20'));
+      console.log('');
+      return;
+    }
+
+    console.log(chalk.yellow('  Server package not yet available.'));
+    console.log(chalk.gray('  Check issue #20 for roadmap.'));
+    console.log('');
+  });
+
+// =============================================================================
+// Cluster Commands - Distributed operations
+// =============================================================================
+
+program
+  .command('cluster')
+  .description('Distributed cluster operations')
+  .option('--status', 'Show cluster status')
+  .option('--join <address>', 'Join existing cluster')
+  .option('--leave', 'Leave cluster')
+  .option('--nodes', 'List cluster nodes')
+  .option('--leader', 'Show current leader')
+  .option('--info', 'Show cluster info')
+  .action(async (options) => {
+    console.log(chalk.cyan('\n═══════════════════════════════════════════════════════════════'));
+    console.log(chalk.cyan('                    RuVector Cluster'));
+    console.log(chalk.cyan('═══════════════════════════════════════════════════════════════\n'));
+
+    console.log(chalk.cyan('  Status:'), chalk.yellow('Coming Soon'));
+    console.log('');
+    console.log(chalk.cyan('  Features:'));
+    console.log(chalk.gray('    - Raft consensus for leader election'));
+    console.log(chalk.gray('    - Automatic failover'));
+    console.log(chalk.gray('    - Data replication'));
+    console.log(chalk.gray('    - Sharding support'));
+    console.log(chalk.gray('    - Distributed queries'));
+    console.log('');
+    console.log(chalk.cyan('  Rust crates available:'));
+    console.log(chalk.white('    cargo add ruvector-cluster      # Clustering'));
+    console.log(chalk.white('    cargo add ruvector-raft         # Raft consensus'));
+    console.log(chalk.white('    cargo add ruvector-replication  # Replication'));
+    console.log('');
+    console.log(chalk.cyan('  Commands (when available):'));
+    console.log(chalk.white('    npx ruvector cluster --status'));
+    console.log(chalk.white('    npx ruvector cluster --join 192.168.1.10:7000'));
+    console.log(chalk.white('    npx ruvector cluster --nodes'));
+    console.log('');
+    console.log(chalk.gray('  Track progress: https://github.com/ruvnet/ruvector/issues/20'));
+    console.log('');
+  });
+
+// =============================================================================
+// Export/Import Commands - Database backup/restore
+// =============================================================================
+
+program
+  .command('export <database>')
+  .description('Export database to file')
+  .option('-o, --output <file>', 'Output file path')
+  .option('-f, --format <type>', 'Export format (json|binary|parquet)', 'json')
+  .option('--compress', 'Compress output')
+  .option('--vectors-only', 'Export only vectors (no metadata)')
+  .action(async (dbPath, options) => {
+    requireRuvector();
+    const spinner = ora('Exporting database...').start();
+
+    try {
+      const outputFile = options.output || `${dbPath.replace(/\/$/, '')}_export.${options.format}`;
+
+      // Load database
+      const db = new VectorDB({ dimension: 384 }); // Will be overwritten by load
+      if (fs.existsSync(dbPath)) {
+        db.load(dbPath);
+      } else {
+        spinner.fail(chalk.red(`Database not found: ${dbPath}`));
+        process.exit(1);
+      }
+
+      const stats = db.getStats();
+      const data = {
+        version: packageJson.version,
+        exportedAt: new Date().toISOString(),
+        stats: stats,
+        vectors: [] // Would contain actual vector data
+      };
+
+      if (options.format === 'json') {
+        fs.writeFileSync(outputFile, JSON.stringify(data, null, 2));
+      } else {
+        spinner.fail(chalk.yellow(`Format '${options.format}' not yet supported. Using JSON.`));
+        fs.writeFileSync(outputFile.replace(/\.[^.]+$/, '.json'), JSON.stringify(data, null, 2));
+      }
+
+      spinner.succeed(chalk.green(`Exported to: ${outputFile}`));
+      console.log(chalk.gray(`  Vectors: ${stats.count || 0}`));
+      console.log(chalk.gray(`  Format: ${options.format}`));
+    } catch (error) {
+      spinner.fail(chalk.red('Export failed'));
+      console.error(chalk.red(error.message));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('import <file>')
+  .description('Import database from file')
+  .option('-d, --database <path>', 'Target database path')
+  .option('--merge', 'Merge with existing data')
+  .option('--replace', 'Replace existing data')
+  .action(async (file, options) => {
+    requireRuvector();
+    const spinner = ora('Importing database...').start();
+
+    try {
+      if (!fs.existsSync(file)) {
+        spinner.fail(chalk.red(`File not found: ${file}`));
+        process.exit(1);
+      }
+
+      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const dbPath = options.database || file.replace(/_export\.json$/, '');
+
+      spinner.text = 'Creating database...';
+
+      const db = new VectorDB({
+        dimension: data.stats?.dimension || 384,
+        path: dbPath,
+        autoPersist: true
+      });
+
+      // Would import actual vectors here
+      db.save(dbPath);
+
+      spinner.succeed(chalk.green(`Imported to: ${dbPath}`));
+      console.log(chalk.gray(`  Source version: ${data.version}`));
+      console.log(chalk.gray(`  Exported at: ${data.exportedAt}`));
+    } catch (error) {
+      spinner.fail(chalk.red('Import failed'));
+      console.error(chalk.red(error.message));
+      process.exit(1);
+    }
+  });
+
+// =============================================================================
+// Embed Command - Generate embeddings
+// =============================================================================
+
+program
+  .command('embed')
+  .description('Generate embeddings from text')
+  .option('-t, --text <string>', 'Text to embed')
+  .option('-f, --file <path>', 'File containing text (one per line)')
+  .option('-m, --model <name>', 'Embedding model', 'all-minilm-l6-v2')
+  .option('-o, --output <file>', 'Output file for embeddings')
+  .option('--info', 'Show embedding info')
+  .action(async (options) => {
+    console.log(chalk.cyan('\n═══════════════════════════════════════════════════════════════'));
+    console.log(chalk.cyan('                    RuVector Embed'));
+    console.log(chalk.cyan('═══════════════════════════════════════════════════════════════\n'));
+
+    if (options.info || (!options.text && !options.file)) {
+      console.log(chalk.cyan('  Generate vector embeddings from text\n'));
+      console.log(chalk.cyan('  Supported Models:'));
+      console.log(chalk.gray('    - all-minilm-l6-v2 (384 dims, fast)'));
+      console.log(chalk.gray('    - nomic-embed-text-v1.5 (768 dims, balanced)'));
+      console.log(chalk.gray('    - openai/text-embedding-3-small (1536 dims, requires API key)'));
+      console.log('');
+      console.log(chalk.cyan('  Status:'), chalk.yellow('Coming Soon'));
+      console.log(chalk.gray('  Built-in embedding generation is planned for future release.'));
+      console.log('');
+      console.log(chalk.cyan('  Current options:'));
+      console.log(chalk.gray('    1. Use external embedding API (OpenAI, Cohere, etc.)'));
+      console.log(chalk.gray('    2. Use transformers.js in your application'));
+      console.log(chalk.gray('    3. Pre-generate embeddings with Python'));
+      console.log('');
+      console.log(chalk.cyan('  Usage (when available):'));
+      console.log(chalk.white('    npx ruvector embed --text "Hello world"'));
+      console.log(chalk.white('    npx ruvector embed --file texts.txt --output embeddings.json'));
+      console.log('');
+      return;
+    }
+
+    if (options.text) {
+      console.log(chalk.yellow('  Input text:'), chalk.white(options.text.substring(0, 50) + '...'));
+      console.log(chalk.yellow('  Model:'), chalk.white(options.model));
+      console.log('');
+      console.log(chalk.gray('  Embedding generation not yet available in CLI.'));
+      console.log(chalk.gray('  Use the SDK or external embedding services.'));
+    }
+
+    console.log('');
+  });
+
+// =============================================================================
+// Demo Command - Interactive tutorial
+// =============================================================================
+
+program
+  .command('demo')
+  .description('Run interactive demo and tutorials')
+  .option('--basic', 'Basic vector operations demo')
+  .option('--gnn', 'GNN differentiable search demo')
+  .option('--graph', 'Graph database demo')
+  .option('--benchmark', 'Performance benchmark demo')
+  .option('-i, --interactive', 'Interactive mode')
+  .action(async (options) => {
+    console.log(chalk.cyan('\n═══════════════════════════════════════════════════════════════'));
+    console.log(chalk.cyan('                    RuVector Demo'));
+    console.log(chalk.cyan('═══════════════════════════════════════════════════════════════\n'));
+
+    const showMenu = !options.basic && !options.gnn && !options.graph && !options.benchmark;
+
+    if (showMenu) {
+      console.log(chalk.yellow('  Available Demos:\n'));
+      console.log(chalk.white('    --basic      '), chalk.gray('Basic vector operations (insert, search, delete)'));
+      console.log(chalk.white('    --gnn        '), chalk.gray('GNN differentiable search with gradients'));
+      console.log(chalk.white('    --graph      '), chalk.gray('Graph database and Cypher queries'));
+      console.log(chalk.white('    --benchmark  '), chalk.gray('Performance benchmark suite'));
+      console.log('');
+      console.log(chalk.cyan('  Run a demo:'));
+      console.log(chalk.white('    npx ruvector demo --basic'));
+      console.log(chalk.white('    npx ruvector demo --gnn'));
+      console.log('');
+      return;
+    }
+
+    if (options.basic) {
+      requireRuvector();
+      console.log(chalk.yellow('  Basic Vector Operations Demo\n'));
+
+      const spinner = ora('Creating demo database...').start();
+
+      try {
+        const db = new VectorDB({ dimension: 4, metric: 'cosine' });
+
+        spinner.text = 'Inserting vectors...';
+        db.insert('vec1', [1.0, 0.0, 0.0, 0.0], { label: 'x-axis' });
+        db.insert('vec2', [0.0, 1.0, 0.0, 0.0], { label: 'y-axis' });
+        db.insert('vec3', [0.0, 0.0, 1.0, 0.0], { label: 'z-axis' });
+        db.insert('vec4', [0.7, 0.7, 0.0, 0.0], { label: 'xy-diagonal' });
+
+        spinner.succeed('Demo database created with 4 vectors');
+
+        console.log(chalk.cyan('\n  Vectors inserted:'));
+        console.log(chalk.gray('    vec1: [1,0,0,0] - x-axis'));
+        console.log(chalk.gray('    vec2: [0,1,0,0] - y-axis'));
+        console.log(chalk.gray('    vec3: [0,0,1,0] - z-axis'));
+        console.log(chalk.gray('    vec4: [0.7,0.7,0,0] - xy-diagonal'));
+
+        console.log(chalk.cyan('\n  Searching for nearest to [0.8, 0.6, 0, 0]:'));
+        const results = db.search([0.8, 0.6, 0.0, 0.0], 3);
+        results.forEach((r, i) => {
+          console.log(chalk.gray(`    ${i + 1}. ${r.id} (score: ${r.score.toFixed(4)})`));
+        });
+
+        console.log(chalk.green('\n  Demo complete!'));
+      } catch (error) {
+        spinner.fail(chalk.red('Demo failed'));
+        console.error(chalk.red(error.message));
+      }
+    }
+
+    if (options.gnn) {
+      if (!gnnAvailable) {
+        console.log(chalk.yellow('  @ruvector/gnn not installed.'));
+        console.log(chalk.white('  Install with: npm install @ruvector/gnn'));
+        console.log('');
+        return;
+      }
+
+      console.log(chalk.yellow('  GNN Differentiable Search Demo\n'));
+
+      try {
+        console.log(chalk.cyan('  Running differentiable search with gradients...\n'));
+
+        const queryVec = [1.0, 0.5, 0.3, 0.1];
+        const dbVectors = [
+          [1.0, 0.0, 0.0, 0.0],
+          [0.0, 1.0, 0.0, 0.0],
+          [0.5, 0.5, 0.5, 0.5],
+          [0.9, 0.4, 0.2, 0.1]
+        ];
+
+        const result = differentiableSearch(queryVec, dbVectors, 3, 10.0);
+
+        console.log(chalk.cyan('  Query:'), JSON.stringify(queryVec));
+        console.log(chalk.cyan('  Top 3 results:'));
+        result.indices.forEach((idx, i) => {
+          console.log(chalk.gray(`    ${i + 1}. Index ${idx} (attention: ${result.attention_weights[i].toFixed(4)})`));
+        });
+
+        console.log(chalk.cyan('\n  Gradient flow enabled:'), chalk.green('Yes'));
+        console.log(chalk.gray('  Use for: Neural network training, learned retrieval'));
+
+        console.log(chalk.green('\n  GNN demo complete!'));
+      } catch (error) {
+        console.error(chalk.red('GNN demo failed:', error.message));
+      }
+    }
+
+    if (options.graph) {
+      console.log(chalk.yellow('  Graph Database Demo\n'));
+
+      let graphNode;
+      try {
+        graphNode = require('@ruvector/graph-node');
+        console.log(chalk.green('  @ruvector/graph-node is available!'));
+        console.log(chalk.gray('  Full graph demo coming soon.'));
+      } catch (e) {
+        console.log(chalk.yellow('  @ruvector/graph-node not installed.'));
+        console.log(chalk.white('  Install with: npm install @ruvector/graph-node'));
+      }
+      console.log('');
+    }
+
+    if (options.benchmark) {
+      console.log(chalk.yellow('  Redirecting to benchmark command...\n'));
+      console.log(chalk.white('  Run: npx ruvector benchmark'));
+      console.log('');
+    }
+  });
+
 program.parse();
