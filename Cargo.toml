@@ -26,6 +26,7 @@ members = [
     "crates/ruvector-gnn",
     "crates/ruvector-gnn-node",
     "crates/ruvector-gnn-wasm",
+    "examples/refrag-pipeline",
 ]
 resolver = "2"
 
