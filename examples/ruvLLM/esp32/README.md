@@ -5,7 +5,7 @@
   <a href="#"><img src="https://img.shields.io/badge/no__std-compatible-brightgreen.svg?style=flat-square" alt="no_std"></a>
   <a href="#"><img src="https://img.shields.io/badge/ESP32-S2%20|%20S3%20|%20C3%20|%20C6-blue.svg?style=flat-square&logo=espressif" alt="ESP32"></a>
   <a href="#"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="MIT License"></a>
-  <a href="#"><img src="https://img.shields.io/badge/version-0.1.0-purple.svg?style=flat-square" alt="Version"></a>
+  <a href="https://crates.io/crates/ruvllm-esp32"><img src="https://img.shields.io/crates/v/ruvllm-esp32.svg?style=flat-square" alt="crates.io"></a>
   <a href="#"><img src="https://img.shields.io/badge/RuVector-integrated-ff69b4.svg?style=flat-square" alt="RuVector"></a>
 </p>
 
