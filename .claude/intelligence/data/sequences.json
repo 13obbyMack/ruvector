@@ -11,6 +11,21 @@
       "source": "crates/micro-hnsw-wasm/src/lib.rs",
       "test": "crates/micro-hnsw-wasm/tests/lib.test.rs",
       "editCount": 1
+    },
+    "crates/ruvector-nervous-system/src/plasticity/btsp.rs|crates/ruvector-nervous-system/tests/plasticity/btsp.test.rs": {
+      "source": "crates/ruvector-nervous-system/src/plasticity/btsp.rs",
+      "test": "crates/ruvector-nervous-system/tests/plasticity/btsp.test.rs",
+      "editCount": 1
+    },
+    "crates/ruvector-nervous-system/src/hopfield/mod.rs|crates/ruvector-nervous-system/tests/hopfield/mod.test.rs": {
+      "source": "crates/ruvector-nervous-system/src/hopfield/mod.rs",
+      "test": "crates/ruvector-nervous-system/tests/hopfield/mod.test.rs",
+      "editCount": 1
+    },
+    "crates/ruvector-nervous-system/src/plasticity/consolidate.rs|crates/ruvector-nervous-system/tests/plasticity/consolidate.test.rs": {
+      "source": "crates/ruvector-nervous-system/src/plasticity/consolidate.rs",
+      "test": "crates/ruvector-nervous-system/tests/plasticity/consolidate.test.rs",
+      "editCount": 1
     }
   }
 }
