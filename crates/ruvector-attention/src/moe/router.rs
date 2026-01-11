@@ -88,8 +88,8 @@ impl LearnedRouter {
         }
 
         // Compute auxiliary loss: encourage uniform distribution
-        let avg_count = expert_counts.iter().sum::<f32>() / self.num_experts as f32;
-        let avg_weight = total_weight.iter().sum::<f32>() / self.num_experts as f32;
+        let _avg_count = expert_counts.iter().sum::<f32>() / self.num_experts as f32;
+        let _avg_weight = total_weight.iter().sum::<f32>() / self.num_experts as f32;
 
         // CV-squared loss from Switch Transformer paper
         let count_var: f32 = expert_counts

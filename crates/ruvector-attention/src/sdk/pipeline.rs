@@ -43,8 +43,8 @@ impl AttentionPipeline {
     pub fn run(
         &self,
         query: &[f32],
-        keys: &[&[f32]],
-        values: &[&[f32]],
+        _keys: &[&[f32]],
+        _values: &[&[f32]],
     ) -> AttentionResult<Vec<f32>> {
         Ok(query.to_vec())
     }

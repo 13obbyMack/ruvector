@@ -1,7 +1,7 @@
 //! Mixed-Curvature Attention combining Euclidean and Hyperbolic spaces
 
 use super::poincare::{frechet_mean, poincare_distance, project_to_ball};
-use crate::error::{AttentionError, AttentionResult};
+use crate::error::AttentionResult;
 use crate::traits::Attention;
 
 #[derive(Debug, Clone)]

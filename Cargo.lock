@@ -5948,6 +5948,7 @@ checksum = "368f01d005bf8fd9b1206fb6fa653e6c4a81ceb1466406b81792d87c5677a58f"
 dependencies = [
  "either",
  "rayon-core",
+ "wasm_sync",
 ]
 
 [[package]]
@@ -5980,6 +5981,7 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+ "wasm_sync",
 ]
 
 [[package]]
@@ -6442,7 +6444,7 @@ dependencies = [
 
 [[package]]
 name = "ruvector-attention"
-version = "0.1.0"
+version = "0.1.31"
 dependencies = [
  "approx",
  "criterion",
@@ -6450,6 +6452,7 @@ dependencies = [
  "napi-derive",
  "rand 0.8.5",
  "rayon",
+ "ruvector-math",
  "serde",
  "thiserror 1.0.69",
 ]
@@ -6957,6 +6960,39 @@ dependencies = [
  "serde-wasm-bindgen",
  "wasm-bindgen",
  "wasm-bindgen-test",
+]
+
+[[package]]
+name = "ruvector-math"
+version = "0.1.31"
+dependencies = [
+ "approx",
+ "criterion",
+ "nalgebra 0.33.2",
+ "proptest",
+ "rand 0.8.5",
+ "rand_distr 0.4.3",
+ "rayon",
+ "serde",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "ruvector-math-wasm"
+version = "0.1.31"
+dependencies = [
+ "console_error_panic_hook",
+ "getrandom 0.2.16",
+ "js-sys",
+ "rayon",
+ "ruvector-math",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-rayon",
+ "wasm-bindgen-test",
+ "web-sys",
 ]
 
 [[package]]
@@ -9402,6 +9438,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-bindgen-rayon"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a16c60a56c81e4dc3b9c43d76ba5633e1c0278211d59a9cb07d61b6cd1c6583"
+dependencies = [
+ "crossbeam-channel",
+ "js-sys",
+ "rayon",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "wasm-bindgen-shared"
 version = "0.2.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9452,6 +9500,17 @@ dependencies = [
  "js-sys",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "wasm_sync"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cff360cade7fec41ff0e9d2cda57fe58258c5f16def0e21302394659e6bbb0ea"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
  "web-sys",
 ]
 
