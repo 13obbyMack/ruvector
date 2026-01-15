@@ -58,6 +58,7 @@ members = [
     "crates/ruvector-sparse-inference-wasm",
     "crates/ruvector-math",
     "crates/ruvector-math-wasm",
+    "examples/benchmarks",
 ]
 resolver = "2"
 
