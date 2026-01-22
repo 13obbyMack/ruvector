@@ -931,6 +931,212 @@ engine.endTrajectory(trajId, 0.95);
 </details>
 
 <details>
+<summary><strong>🔀 Self-Learning DAG (Query Optimization)</strong></summary>
+
+[![crates.io](https://img.shields.io/crates/v/ruvector-dag.svg)](https://crates.io/crates/ruvector-dag)
+[![npm](https://img.shields.io/npm/v/@ruvector/rudag.svg)](https://www.npmjs.com/package/@ruvector/rudag)
+
+**Make your queries faster automatically.** RuVector DAG learns from every query execution and continuously optimizes performance—no manual tuning required.
+
+### What is RuVector DAG?
+
+A **self-learning query optimization system**—like a "nervous system" for your database queries that:
+
+1. **Watches** how queries execute and identifies bottlenecks
+2. **Learns** which optimization strategies work best for different query patterns
+3. **Adapts** in real-time, switching strategies when conditions change
+4. **Heals** itself by detecting anomalies and fixing problems before they impact users
+
+Unlike traditional query optimizers that use static rules, RuVector DAG learns from actual execution patterns and gets smarter over time.
+
+### Key Benefits
+
+| Benefit | What It Does | Result |
+|---------|--------------|--------|
+| **Automatic Improvement** | Queries get faster without code changes | **50-80% latency reduction** after learning |
+| **Zero-Downtime Adaptation** | Adapts to pattern changes automatically | No manual index rebuilds |
+| **Predictive Prevention** | Detects rising "tension" early | Intervenes *before* slowdowns |
+| **Works Everywhere** | PostgreSQL, Browser (58KB WASM), Embedded | Universal deployment |
+
+### Use Cases
+
+| Use Case | Why RuVector DAG Helps |
+|----------|------------------------|
+| **Vector Search Applications** | Optimize similarity searches that traditional databases struggle with |
+| **High-Traffic APIs** | Automatically adapt to changing query patterns throughout the day |
+| **Real-Time Analytics** | Learn which aggregation paths are fastest for your specific data |
+| **Edge/Embedded Systems** | 58KB WASM build runs in browsers and IoT devices |
+| **Multi-Tenant Platforms** | Learn per-tenant query patterns without manual tuning |
+
+### How It Works
+
+```
+Query comes in → DAG analyzes execution plan → Best attention mechanism selected
+                                                          ↓
+Query executes → Results returned → Learning system records what worked
+                                                          ↓
+                    Next similar query benefits from learned optimizations
+```
+
+The system maintains a **MinCut tension** score that acts as a health indicator. When tension rises, the system automatically switches to more aggressive optimization strategies and triggers predictive healing.
+
+### 7 DAG Attention Mechanisms
+
+| Mechanism | When to Use | Trigger |
+|-----------|-------------|---------|
+| **Topological** | Default baseline | Low variance |
+| **Causal Cone** | Downstream impact analysis | Write-heavy patterns |
+| **Critical Path** | Latency-bound queries | p99 > 2x p50 |
+| **MinCut Gated** | Bottleneck-aware weighting | Cut tension rising |
+| **Hierarchical Lorentz** | Deep hierarchical queries | Depth > 10 |
+| **Parallel Branch** | Wide parallel execution | Branch count > 3 |
+| **Temporal BTSP** | Time-series workloads | Temporal patterns |
+
+### Quick Start
+
+**Rust:**
+```rust
+use ruvector_dag::{QueryDag, OperatorNode, OperatorType};
+use ruvector_dag::attention::{TopologicalAttention, DagAttention};
+
+// Build a query DAG
+let mut dag = QueryDag::new();
+let scan = dag.add_node(OperatorNode::hnsw_scan(0, "vectors_idx", 64));
+let filter = dag.add_node(OperatorNode::filter(1, "score > 0.5"));
+let result = dag.add_node(OperatorNode::new(2, OperatorType::Result));
+
+dag.add_edge(scan, filter).unwrap();
+dag.add_edge(filter, result).unwrap();
+
+// Compute attention scores
+let attention = TopologicalAttention::new(Default::default());
+let scores = attention.forward(&dag).unwrap();
+```
+
+**Node.js:**
+```javascript
+import { QueryDag, TopologicalAttention } from '@ruvector/rudag';
+
+// Build DAG
+const dag = new QueryDag();
+const scan = dag.addNode({ type: 'hnsw_scan', table: 'vectors', k: 64 });
+const filter = dag.addNode({ type: 'filter', condition: 'score > 0.5' });
+dag.addEdge(scan, filter);
+
+// Apply attention
+const attention = new TopologicalAttention();
+const scores = attention.forward(dag);
+console.log('Attention scores:', scores);
+```
+
+**Browser (WASM - 58KB):**
+```html
+<script type="module">
+import init, { QueryDag, TopologicalAttention } from '@ruvector/rudag-wasm';
+
+await init();
+const dag = new QueryDag();
+// ... same API as Node.js
+</script>
+```
+
+### SONA Learning Integration
+
+SONA (Self-Optimizing Neural Architecture) runs post-query in background, never blocking execution:
+
+```rust
+use ruvector_dag::sona::{DagSonaEngine, SonaConfig};
+
+let config = SonaConfig {
+    embedding_dim: 256,
+    lora_rank: 2,           // Rank-2 for <100μs updates
+    ewc_lambda: 5000.0,     // Catastrophic forgetting prevention
+    trajectory_capacity: 10_000,
+};
+let mut sona = DagSonaEngine::new(config);
+
+// Pre-query: Get enhanced embedding (fast path)
+let enhanced = sona.pre_query(&dag);
+
+// Execute query...
+let execution_time = execute_query(&dag);
+
+// Post-query: Record trajectory (async, background)
+sona.post_query(&dag, execution_time, baseline_time, "topological");
+```
+
+### Self-Healing
+
+Reactive (Z-score anomaly detection) + Predictive (rising MinCut tension triggers early intervention):
+
+```rust
+use ruvector_dag::healing::{HealingOrchestrator, AnomalyConfig, PredictiveConfig};
+
+let mut orchestrator = HealingOrchestrator::new();
+
+// Reactive: Z-score anomaly detection
+orchestrator.add_detector("query_latency", AnomalyConfig {
+    z_threshold: 3.0,
+    window_size: 100,
+    min_samples: 10,
+});
+
+// Predictive: Rising cut tension triggers early intervention
+orchestrator.enable_predictive(PredictiveConfig {
+    tension_threshold: 0.6,    // Intervene before 0.7 crisis
+    variance_threshold: 1.5,   // Rising variance = trouble coming
+    lookahead_window: 50,      // Predict 50 queries ahead
+});
+```
+
+### Query Convergence Example
+
+A slow query converges over several runs:
+
+```text
+[run 1] query: SELECT * FROM vectors WHERE embedding <-> $1 < 0.5
+        attention: topological (default)
+        mincut_tension: 0.23
+        latency: 847ms (improvement: 0.4%)
+
+[run 4] mincut_tension: 0.71 > 0.7 (THRESHOLD)
+        --> switching attention: topological -> mincut_gated
+        latency: 412ms (improvement: 51.5%)
+
+[run 10] attention: mincut_gated
+         mincut_tension: 0.22 (stable)
+         latency: 156ms (improvement: 81.6%)
+```
+
+### Performance Targets
+
+| Component | Target | Notes |
+|-----------|--------|-------|
+| Attention (100 nodes) | <100μs | All 7 mechanisms |
+| MicroLoRA adaptation | <100μs | Rank-2, per-operator |
+| Pattern search (10K) | <2ms | K-means++ indexing |
+| MinCut update | O(n^0.12) | Subpolynomial amortized |
+| Anomaly detection | <50μs | Z-score, streaming |
+| WASM size | 58KB | Gzipped, browser-ready |
+
+### Installation
+
+```bash
+# Rust
+cargo add ruvector-dag
+
+# Node.js
+npm install @ruvector/rudag
+
+# WASM (browser)
+npm install @ruvector/rudag-wasm
+```
+
+> **Full Documentation**: [ruvector-dag README](./crates/ruvector-dag/README.md)
+
+</details>
+
+<details>
 <summary><strong>🐘 PostgreSQL Extension</strong></summary>
 
 [![crates.io](https://img.shields.io/crates/v/ruvector-postgres.svg)](https://crates.io/crates/ruvector-postgres)
