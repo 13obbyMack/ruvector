@@ -853,6 +853,8 @@ engine.addTrajectoryStep(trajId, activations, attention, 0.9);
 engine.endTrajectory(trajId, 0.95);
 ```
 
+</details>
+
 <details>
 <summary><strong>🐘 PostgreSQL Extension</strong></summary>
 
@@ -1113,8 +1115,6 @@ let db = RvLite::new(128);  // 128-dim vectors
 db.insert(0, &embedding);
 let results = db.search(&query, 5);
 ```
-
-</details>
 
 <details>
 <summary>🌐 WASM Packages (Browser & Edge)</summary>
