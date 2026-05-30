@@ -44,8 +44,11 @@ exact brute-force L2:
 
 - **Recall rises monotonically with bit-width** — exactly the 2–4-bit regime the
   1-bit RaBitQ path cannot reach without re-inflating memory via f32 rerank.
-- **Mean cosine bias ≈ 0 at every width** — empirical confirmation that the
-  per-vector `c_x` length-renormalization (§T4) yields an *unbiased* estimator.
+- **Mean cosine bias ≈ 0 at every width** — the per-vector `c_x`
+  length-renormalization (§T4) is *empirically* near-unbiased on this data. Note
+  this is a cheaper heuristic than the paper's *provably* unbiased two-stage
+  estimator (MSE quantizer + 1-bit QJL on the residual); see
+  "Divergences from the TurboQuant paper" below.
 - On real clustered embeddings (OpenAI/Cohere) recall at a given width is
   materially higher than on this uniform stress test.
 - Determinism (same seed → bit-identical results) and `IdMapIndex` delete +
@@ -143,11 +146,15 @@ corrects the residual non-Gaussianity of finite-d Hadamard rotation and is the
 "+" that buys turbovec its recall edge over plain SQ. **No counterpart exists in
 the repo today.**
 
-### T4 — Length-renormalized unbiased inner-product scoring
-Store a per-vector correction scalar so the dot-product estimator is **unbiased**
-(removes the systematic downward bias of scalar quantization) at **zero
-search-time cost** — the scalar folds into the final score multiply. This lets
-us skip the mandatory f32 rerank that 1-bit RaBitQ needs, keeping the memory win.
+### T4 — Length-renormalized inner-product scoring
+Store a per-vector correction scalar `c_x = ⟨r,r̂⟩/⟨r̂,r̂⟩` (the least-squares
+magnitude match) so the dot-product estimator removes the systematic downward
+bias of scalar quantization at **zero search-time cost** — the scalar folds into
+the final score multiply. This lets us skip the mandatory f32 rerank that 1-bit
+RaBitQ needs, keeping the memory win. **This is a heuristic, empirically
+near-unbiased correction — not the paper's provably-unbiased two-stage QJL
+residual estimator** (see "Divergences from the TurboQuant paper"). Adopting the
+QJL residual stage is a tracked follow-up if measured bias/recall demands it.
 
 ### T5 — FastScan nibble-LUT SIMD kernel (the core perf win)
 Lay out codes in **32-vector SoA blocks**. For a query, precompute a small
@@ -212,8 +219,8 @@ let hits = m.search_filtered(&query, 10, &allowlist /* &[u64] */)?;
 - **Closes the 2–4-bit FastScan gap** — the one mainstream production ANN regime
   ruvector lacks; makes us comparable to FAISS `IndexPQFastScan`/Milvus IVF-SQ.
 - **16× compression** with **online ingest, no training** (d=1536: 6 KB → 384 B).
-- **Recall without mandatory f32 rerank** (via T4 unbiased scoring), so the
-  memory win is real, unlike 1-bit-with-rerank.
+- **Recall without mandatory f32 rerank** (via T4 length-renormalized scoring),
+  so the memory win is real, unlike 1-bit-with-rerank.
 - **Zero new plumbing** — implements existing `AnnIndex` + `VectorKernel`, so it
   registers with the `ruvector-rulake` dispatcher and inherits its
   determinism/witness contract.
@@ -240,6 +247,29 @@ let hits = m.search_filtered(&query, 10, &allowlist /* &[u64] */)?;
 - Adds one workspace crate; no changes to existing crates beyond making
   `RandomRotation`/trait exports `pub` if any aren't already.
 
+## Divergences from the TurboQuant paper (arXiv:2504.19874)
+
+This crate adapts the *techniques* of TurboQuant via the
+[RyanCodrai/turbovec](https://github.com/RyanCodrai/turbovec) reference
+implementation, which itself simplifies the paper. M1 therefore deliberately
+diverges from the paper in several places. We log them here so the gaps are
+explicit and reviewable, and so the follow-up milestones are paper-grounded
+rather than ad hoc. None of these are bugs in M1 — they are scope boundaries.
+
+| # | Paper covers | M1 does instead | Plan |
+|---|--------------|-----------------|------|
+| D1 | **Provably-unbiased** inner product via a **two-stage** estimator: MSE quantizer + **1-bit QJL on the residual** `r = x − x̂_mse`, score `⟨y, x̂_mse + x̂_qjl⟩`, unbiased by construction with a variance bound. | A single per-vector scalar `c_x = ⟨r,r̂⟩/⟨r̂,r̂⟩` (least-squares magnitude match). *Empirically* near-unbiased (mean cos-bias ≈ 0 on uniform data); **no theoretical guarantee**. Cheaper (no extra residual bits). | **M5 (new):** add the optional QJL-residual stage as a recall/accuracy upgrade path when `c_x` proves insufficient on clustered data. |
+| D2 | Per-coordinate quantizer is **Max-Lloyd-optimal for the exact Beta marginal** `f(x) ∝ (1−x²)^((d−3)/2)`, with tables precomputed **per (bit-width, dimension)**. | Hardcoded Lloyd–Max tables for the **N(0,1) limit** of that Beta + an empirical per-coordinate `shift/scale` (TQ+) patch. Exact only as `d → ∞`; approximate at low/medium `d`. (TQ+ itself is *not* in the paper.) | **M6 (new):** generate d-aware Beta-optimal codebooks offline; keep the N(0,1)+calibration path as the default fast option. |
+| D3 | Highlights **~2.5 and ~3.5 bits/channel** as the quality-neutral operating points. | Ships **1 / 2 / 4-bit** only; a visible recall cliff sits between 2-bit (0.56) and 4-bit (0.88). | **M2 stretch:** add a **3-bit** width (one centroid table) to fill the cliff. |
+| D4 | Closed-form distortion bounds: `D_mse ≤ (√3·π/2)·4^(−b)` (≈2.7× the info-theoretic floor) and `D_prod ≤ (√3·π²·‖y‖²/d)·4^(−b)`. | Tests assert only `recall > 0.5`. | **Test upgrade:** assert measured MSE/IP distortion stays **under the paper's bound** — a theory-grounded oracle stronger than a recall threshold. |
+| D5 | Bounds estimator **variance** (useful for ranking confidence / early termination). | Not surfaced. | Defer; revisit if IVF/rerank composition (ADR-193) needs confidence intervals. |
+
+**Not divergences (M1 already matches the paper):** L2-norm stored in f32 and
+used to recover Euclidean distance; data-oblivious / zero-training online ingest;
+full-precision (rotated, un-quantized) query against quantized database vectors,
+consistent with the paper's `‖y‖²`-in-the-bound MIPS analysis. The FastScan SIMD
+kernel (M2–M4) is a FAISS-lineage engineering layer, *not* part of the paper.
+
 ## Alternatives considered
 
 1. **Extend `ruvector-rabitq` from 1-bit to multi-bit in place.** Rejected:
@@ -261,14 +291,20 @@ Implement on branch `claude/ruvector-turbovec-optimization-FhaDh` (this ADR),
 crate work in a follow-up PR. Milestones:
 
 1. **M1 — Scalar reference (no SIMD).** Rotation reuse + Lloyd–Max 2/4-bit +
-   TQ+ + unbiased scoring + `AnnIndex`. Recall + memory parity test vs a brute
-   f32 baseline on SIFT1M / a synthetic OpenAI-d1536 set.
+   TQ+ + length-renormalized scoring + `AnnIndex`. Recall + memory parity test
+   vs a brute f32 baseline on SIFT1M / a synthetic OpenAI-d1536 set. ✅ *done.*
 2. **M2 — FastScan SIMD kernel.** AVX2 + NEON nibble-LUT, fuzzed bit-identical
    to M1's scalar scorer; `VectorKernel` impl; criterion bench in
-   `benches/turbovec_bench.rs`.
+   `benches/turbovec_bench.rs`. *Stretch:* add a **3-bit** width (D3).
 3. **M3 — IdMap + filtered search + persistence.** O(1) delete, block-level
    allowlist, `.tv` save/load round-trip test.
 4. **M4 — AVX-512BW kernel + rulake dispatcher registration.**
+5. **M5 — Paper-grade unbiased estimator (D1).** Optional two-stage MSE +
+   1-bit-QJL-residual scoring as an accuracy upgrade over the `c_x` heuristic,
+   gated behind a flag; validate the bias/recall delta on clustered data.
+6. **M6 — d-aware Beta-optimal codebooks (D2).** Offline-generated Max-Lloyd
+   tables for the exact Beta marginal per (bit-width, dimension); N(0,1)+TQ+
+   stays the default fast path.
 
 **Acceptance (targets, to validate — not yet measured):**
 - ≥ **15× compression** at d=1536, 4-bit, incl. norm + calibration overhead.
@@ -279,6 +315,9 @@ crate work in a follow-up PR. Milestones:
   oracle), enforced in CI.
 - `cargo build --release -p ruvector-turbovec` green; all unit + property tests
   pass; no `clippy` regressions.
+- **Measured MSE / inner-product distortion within the paper's bounds (D4):**
+  `D_mse ≤ (√3·π/2)·4^(−b)` and `D_prod ≤ (√3·π²·‖y‖²/d)·4^(−b)` — a
+  theory-grounded test oracle stronger than the current `recall > 0.5` threshold.
 
 ## References
 
