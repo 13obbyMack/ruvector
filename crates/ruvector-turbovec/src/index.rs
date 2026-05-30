@@ -416,7 +416,10 @@ mod tests {
             }
         }
         let mean_err = (sum_err / n as f64).abs();
-        assert!(mean_err < 0.02, "estimator biased: mean |err| = {mean_err:.4}");
+        assert!(
+            mean_err < 0.02,
+            "estimator biased: mean |err| = {mean_err:.4}"
+        );
     }
 
     #[test]
@@ -450,7 +453,10 @@ mod tests {
         // Querying a stored real vector must return that same vector as nearest
         // (distance to self ≈ quantization error ≪ distance to any other point).
         let hits = ix.search(&real[7], 1).unwrap();
-        assert_eq!(hits[0].id, 8, "self-retrieval failed → calibration corrupted");
+        assert_eq!(
+            hits[0].id, 8,
+            "self-retrieval failed → calibration corrupted"
+        );
     }
 
     #[test]

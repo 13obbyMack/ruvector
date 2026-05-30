@@ -248,7 +248,10 @@ mod tests {
         let mut ix = IdMapIndex::new(8, BitWidth::Two).unwrap();
         assert!(matches!(
             ix.add_with_id(1, vec![0.0; 4]),
-            Err(TurboVecError::DimMismatch { expected: 8, got: 4 })
+            Err(TurboVecError::DimMismatch {
+                expected: 8,
+                got: 4
+            })
         ));
     }
 

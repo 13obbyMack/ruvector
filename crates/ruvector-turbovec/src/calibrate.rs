@@ -61,7 +61,10 @@ impl Calibration {
             }
         }
         let inv_nm1 = 1.0 / (n - 1) as f32;
-        let scale: Vec<f32> = var.iter().map(|&v| (v * inv_nm1).sqrt().max(1e-6)).collect();
+        let scale: Vec<f32> = var
+            .iter()
+            .map(|&v| (v * inv_nm1).sqrt().max(1e-6))
+            .collect();
         Self { shift, scale }
     }
 

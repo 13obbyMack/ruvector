@@ -99,8 +99,14 @@ fn main() {
     };
     let a = build(7);
     let b = build(7);
-    let same = a.iter().zip(&b).all(|(x, y)| x.id == y.id && x.score == y.score);
-    println!("  seed 7 == seed 7 : {}", if same { "PASS" } else { "FAIL" });
+    let same = a
+        .iter()
+        .zip(&b)
+        .all(|(x, y)| x.id == y.id && x.score == y.score);
+    println!(
+        "  seed 7 == seed 7 : {}",
+        if same { "PASS" } else { "FAIL" }
+    );
 
     // [3] IdMap: O(1) delete hidden from search + filtered search correctness.
     println!("\n[3] IdMapIndex: delete + allowlist-filtered search");
