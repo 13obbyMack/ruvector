@@ -28,7 +28,7 @@ tags: [quantization, ann, vector-search, turboquant, fastscan, simd, lloyd-max, 
 implemented as `crates/ruvector-turbovec`: rotation reuse + Lloyd–Max 2/3/4-bit SQ
 + TQ+ calibration + length-renormalized unbiased scoring + `IdMapIndex`
 (O(1) delete, filtered search). Build is green
-(`cargo build --release -p ruvector-turbovec`); 16 unit tests + 1 doc-test pass;
+(`cargo build --release -p ruvector-turbovec`); 17 unit tests + 1 doc-test pass;
 clippy clean. M2–M4 (FastScan SIMD kernel, AVX-512, dispatcher registration)
 remain future work. Measured proof below.
 
@@ -264,7 +264,7 @@ rather than ad hoc. None of these are bugs in M1 — they are scope boundaries.
 | D1 | **Provably-unbiased** inner product via a **two-stage** estimator: MSE quantizer + **1-bit QJL on the residual** `r = x − x̂_mse`, score `⟨y, x̂_mse + x̂_qjl⟩`, unbiased by construction with a variance bound. | A single per-vector scalar `c_x = ⟨r,r̂⟩/⟨r̂,r̂⟩` (least-squares magnitude match). *Empirically* near-unbiased (mean cos-bias ≈ 0 on uniform data); **no theoretical guarantee**. Cheaper (no extra residual bits). | **M5 (new):** add the optional QJL-residual stage as a recall/accuracy upgrade path when `c_x` proves insufficient on clustered data. |
 | D2 | Per-coordinate quantizer is **Max-Lloyd-optimal for the exact Beta marginal** `f(x) ∝ (1−x²)^((d−3)/2)`, with tables precomputed **per (bit-width, dimension)**. | Hardcoded Lloyd–Max tables for the **N(0,1) limit** of that Beta + an empirical per-coordinate `shift/scale` (TQ+) patch. Exact only as `d → ∞`; approximate at low/medium `d`. (TQ+ itself is *not* in the paper.) | **M6 (new):** generate d-aware Beta-optimal codebooks offline; keep the N(0,1)+calibration path as the default fast option. |
 | D3 | Highlights **~2.5 and ~3.5 bits/channel** as the quality-neutral operating points. | ✅ **Now ships 1 / 2 / 3 / 4-bit.** The added 3-bit width fills the old 2↔4-bit cliff: recall@10 **0.767** at **9.8×** compression (112 B/vec), measured. | Done in M1. Non-integer effective bit-widths (2.5/3.5 bpc) remain future work, achievable via D1's QJL residual or mixed-width coding. |
-| D4 | Closed-form distortion bounds: `D_mse ≤ (√3·π/2)·4^(−b)` (≈2.7× the info-theoretic floor) and `D_prod ≤ (√3·π²·‖y‖²/d)·4^(−b)`. | Tests assert only `recall > 0.5`. | **Test upgrade:** assert measured MSE/IP distortion stays **under the paper's bound** — a theory-grounded oracle stronger than a recall threshold. |
+| D4 | Closed-form distortion bounds: `D_mse ≤ (√3·π/2)·4^(−b)` (≈2.7× the info-theoretic floor) and `D_prod ≤ (√3·π²·‖y‖²/d)·4^(−b)`. | ✅ **Done.** `quantizer_mse_within_paper_bound` measures per-coordinate MSE on the `N(0,1)` marginal for every width and asserts it stays under the `D_mse` bound *and* within 5% of the Max-1960 optimum — a theory-grounded oracle that pins the centroid tables. | `D_prod` (full-pipeline IP) follow-up; deferred with D5. |
 | D5 | Bounds estimator **variance** (useful for ranking confidence / early termination). | Not surfaced. | Defer; revisit if IVF/rerank composition (ADR-193) needs confidence intervals. |
 
 **Not divergences (M1 already matches the paper):** L2-norm stored in f32 and
@@ -318,9 +318,10 @@ crate work in a follow-up PR. Milestones:
   oracle), enforced in CI.
 - `cargo build --release -p ruvector-turbovec` green; all unit + property tests
   pass; no `clippy` regressions.
-- **Measured MSE / inner-product distortion within the paper's bounds (D4):**
-  `D_mse ≤ (√3·π/2)·4^(−b)` and `D_prod ≤ (√3·π²·‖y‖²/d)·4^(−b)` — a
-  theory-grounded test oracle stronger than the current `recall > 0.5` threshold.
+- **Measured MSE distortion within the paper's bound (D4):** ✅ enforced by
+  `quantizer_mse_within_paper_bound` — per-coordinate MSE on `N(0,1)` under
+  `D_mse ≤ (√3·π/2)·4^(−b)` and within 5% of the Max-1960 optimum, for every
+  width. (`D_prod ≤ (√3·π²·‖y‖²/d)·4^(−b)` full-pipeline check still to come.)
 
 ## References
 

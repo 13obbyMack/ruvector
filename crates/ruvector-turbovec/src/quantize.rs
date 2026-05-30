@@ -195,4 +195,66 @@ mod tests {
         assert_eq!(quantize_coord(c, 99.0) as usize, c.len() - 1);
         assert_eq!(quantize_coord(c, -99.0) as usize, 0);
     }
+
+    /// Standard normal via Box–Muller — keeps the test dependency-free
+    /// (no `rand_distr`) while exercising the real `quantize_coord` path.
+    fn std_normal(rng: &mut impl rand::Rng) -> f32 {
+        let u1: f32 = rng.gen::<f32>().max(1e-9);
+        let u2: f32 = rng.gen::<f32>();
+        (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos()
+    }
+
+    /// D4 (ADR-194): the per-coordinate quantization MSE on the canonical
+    /// `N(0,1)` marginal must stay under TurboQuant's distortion bound
+    /// `D_mse ≤ (√3·π/2)·4^(−b)` (arXiv:2504.19874), and within a small
+    /// margin of the *known* Max-1960 Lloyd–Max optimum. This is a
+    /// theory-grounded oracle: it pins the centroid tables far more tightly
+    /// than a recall threshold — corrupt a single level and it trips.
+    #[test]
+    fn quantizer_mse_within_paper_bound() {
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(20_260_530);
+        let n = 400_000usize;
+
+        // Max (1960) optimal MSE for the unit-variance Gaussian, per bit-width.
+        let optimal = |bw: BitWidth| -> f64 {
+            match bw {
+                BitWidth::One => 0.363_4,
+                BitWidth::Two => 0.117_5,
+                BitWidth::Three => 0.034_5,
+                BitWidth::Four => 0.009_5,
+            }
+        };
+
+        for bw in [
+            BitWidth::One,
+            BitWidth::Two,
+            BitWidth::Three,
+            BitWidth::Four,
+        ] {
+            let c = bw.centroids();
+            let mut sse = 0.0f64;
+            for _ in 0..n {
+                let z = std_normal(&mut rng);
+                let code = quantize_coord(c, z) as usize;
+                let d = (z - c[code]) as f64;
+                sse += d * d;
+            }
+            let mse = sse / n as f64;
+
+            let bound = (3f64.sqrt() * std::f64::consts::PI / 2.0) * 4f64.powi(-(bw.bits() as i32));
+            assert!(
+                mse <= bound,
+                "{bw:?}: MSE {mse:.4} exceeds paper bound {bound:.4}"
+            );
+            // Tightness: must be within 5% of the Lloyd–Max optimum (sampling
+            // noise at n=400k is far below this), catching table corruption
+            // that might still slip under the loose paper bound.
+            assert!(
+                mse <= optimal(bw) * 1.05,
+                "{bw:?}: MSE {mse:.4} not near optimal {:.4}",
+                optimal(bw)
+            );
+        }
+    }
 }
