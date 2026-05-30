@@ -13,14 +13,17 @@
 //! coordinate.
 
 /// Supported quantization widths. `One` is included as a correctness/recall
-/// baseline against `ruvector-rabitq`'s 1-bit path; `Two`/`Four` are the
-/// production targets of ADR-194.
+/// baseline against `ruvector-rabitq`'s 1-bit path; `Two`/`Three`/`Four` are
+/// the production targets of ADR-194 (`Three` fills the 2↔4-bit recall gap).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BitWidth {
     /// 1 bit / coord (2 levels).
     One,
     /// 2 bits / coord (4 levels).
     Two,
+    /// 3 bits / coord (8 levels). Fills the recall gap between 2- and 4-bit;
+    /// near the paper's ~2.5–3.5 bpc quality-neutral sweet spot (ADR-194 §D3).
+    Three,
     /// 4 bits / coord (16 levels).
     Four,
 }
@@ -32,6 +35,7 @@ impl BitWidth {
         match self {
             BitWidth::One => 1,
             BitWidth::Two => 2,
+            BitWidth::Three => 3,
             BitWidth::Four => 4,
         }
     }
@@ -50,6 +54,10 @@ impl BitWidth {
             // ±sqrt(2/π)
             BitWidth::One => &[-0.797_884_6, 0.797_884_6],
             BitWidth::Two => &[-1.510_4, -0.452_8, 0.452_8, 1.510_4],
+            // 8-level Max (1960) optimal N(0,1) reconstruction levels.
+            BitWidth::Three => &[
+                -2.152_0, -1.344_0, -0.756_0, -0.245_1, 0.245_1, 0.756_0, 1.344_0, 2.152_0,
+            ],
             BitWidth::Four => &[
                 -2.732_6, -2.069_0, -1.618_0, -1.256_2, -0.942_4, -0.656_8, -0.388_1, -0.128_4,
                 0.128_4, 0.388_1, 0.656_8, 0.942_4, 1.256_2, 1.618_0, 2.069_0, 2.732_6,
@@ -147,7 +155,12 @@ mod tests {
 
     #[test]
     fn centroids_are_sorted_and_sized() {
-        for bw in [BitWidth::One, BitWidth::Two, BitWidth::Four] {
+        for bw in [
+            BitWidth::One,
+            BitWidth::Two,
+            BitWidth::Three,
+            BitWidth::Four,
+        ] {
             let c = bw.centroids();
             assert_eq!(c.len(), bw.levels());
             assert!(c.windows(2).all(|w| w[0] < w[1]), "{bw:?} not ascending");
@@ -156,7 +169,12 @@ mod tests {
 
     #[test]
     fn pack_unpack_roundtrip_all_widths() {
-        for bw in [BitWidth::One, BitWidth::Two, BitWidth::Four] {
+        for bw in [
+            BitWidth::One,
+            BitWidth::Two,
+            BitWidth::Three,
+            BitWidth::Four,
+        ] {
             let dim = 37; // deliberately not byte-aligned
             let codes: Vec<u8> = (0..dim).map(|i| (i % bw.levels()) as u8).collect();
             let packed = pack(&codes, bw);

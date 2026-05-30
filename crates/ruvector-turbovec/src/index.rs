@@ -5,7 +5,7 @@
 //! 1. `norm = ‖x‖`, `û = x / norm`         — strip & store length (§T1)
 //! 2. `r = P · û`  (randomized Hadamard)    — reuse `ruvector_rabitq` (§T1)
 //! 3. `z_i = (r_i − shift_i)/scale_i`        — TQ+ calibration (§T3)
-//! 4. `q_i = argmin |z_i − centroid|`        — Lloyd–Max 2/4-bit SQ (§T2)
+//! 4. `q_i = argmin |z_i − centroid|`        — Lloyd–Max 2/3/4-bit SQ (§T2)
 //! 5. `c_x = ⟨r, r̂⟩ / ⟨r̂, r̂⟩`              — per-vector unbiased scale (§T4)
 //!
 //! Scoring a query `q` (orthogonal `P` preserves inner products, so

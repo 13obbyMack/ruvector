@@ -1,6 +1,6 @@
 ---
 adr: 194
-title: "ruvector-turbovec — Multi-bit TurboQuant FastScan ANN Index (2/4-bit SQ + TQ+ calibration + nibble-LUT SIMD)"
+title: "ruvector-turbovec — Multi-bit TurboQuant FastScan ANN Index (2/3/4-bit SQ + TQ+ calibration + nibble-LUT SIMD)"
 status: accepted
 date: 2026-05-29
 authors: [oshaal, claude-flow]
@@ -17,16 +17,18 @@ tags: [quantization, ann, vector-search, turboquant, fastscan, simd, lloyd-max, 
 > ruvector crate that reuses our existing primitives. The TurboQuant *algorithm*
 > is already partially present in this repo (see §"What already exists"); the
 > contribution here is a **multi-bit scalar-quantized ANN search index** with a
-> FastScan SIMD kernel, which we do **not** currently have. Benchmark claims
-> below are **targets to be validated**, not measured results.
+> FastScan SIMD kernel, which we do **not** currently have. The *recall /
+> compression / bias* figures in "Validation" are **measured** (reproducible via
+> the demo); the *competitive* claims vs FAISS/Milvus remain **targets to be
+> validated** and are attributed to the upstream reference project where cited.
 
 ## Status
 
 **Accepted (M1 implemented).** The scalar reference milestone (M1) is
-implemented as `crates/ruvector-turbovec`: rotation reuse + Lloyd–Max 2/4-bit SQ
+implemented as `crates/ruvector-turbovec`: rotation reuse + Lloyd–Max 2/3/4-bit SQ
 + TQ+ calibration + length-renormalized unbiased scoring + `IdMapIndex`
 (O(1) delete, filtered search). Build is green
-(`cargo build --release -p ruvector-turbovec`); 12 unit tests + 1 doc-test pass;
+(`cargo build --release -p ruvector-turbovec`); 16 unit tests + 1 doc-test pass;
 clippy clean. M2–M4 (FastScan SIMD kernel, AVX-512, dispatcher registration)
 remain future work. Measured proof below.
 
@@ -40,6 +42,7 @@ exact brute-force L2:
 |-------|-----------|----------------------|-------------|------------------|
 | 1-bit | 0.308 | 48 | 25.6× | +0.0005 |
 | 2-bit | 0.561 | 80 | 14.2× | +0.0001 |
+| 3-bit | 0.767 | 112 | 9.8× | −0.0000 |
 | **4-bit** | **0.879** | **144** | **7.5×** | **−0.0000** |
 
 - **Recall rises monotonically with bit-width** — exactly the 2–4-bit regime the
@@ -87,7 +90,7 @@ ahead of FAISS `IndexPQ` at 4-bit, and FastScan-class scan throughput on ARM —
 all with online ingest and no training phase. **Those are the external project's
 numbers, not this crate's.** This crate's own *measured* results are the
 uniform-random worst-case table under "Validation" above (recall@10 of
-0.308 / 0.561 / 0.879 at 1/2/4-bit); broader competitive benchmarks are listed
+0.308 / 0.561 / 0.879 at 1/2/3/4-bit); broader competitive benchmarks are listed
 as targets-to-validate in "Acceptance criteria" and the SIMD-kernel milestones.
 
 [RyanCodrai/turbovec]: https://github.com/RyanCodrai/turbovec
@@ -131,12 +134,12 @@ coordinate is ~Beta-distributed → N(0, 1/d), making **per-coordinate scalar
 quantization optimal without a codebook**. We import this type rather than
 reimplement the FWHT.
 
-### T2 — Lloyd–Max scalar quantization (2-bit / 4-bit)
-Precompute MSE-optimal bucket boundaries for the canonical N(0,1/d) marginal at
-`bit_width ∈ {2, 4}` (4 and 16 buckets). Coordinates become 2-bit (0–3) or
-4-bit (0–15) integers. Boundaries are **constants of the distribution**, not of
-the data → zero training. (ruvllm's codec already has the MSE-quantizer math to
-borrow from.)
+### T2 — Lloyd–Max scalar quantization (2-bit / 3-bit / 4-bit)
+Precompute MSE-optimal bucket boundaries for the canonical N(0,1) marginal at
+`bit_width ∈ {2, 3, 4}` (4, 8, and 16 buckets). Coordinates become 2-bit (0–3),
+3-bit (0–7), or 4-bit (0–15) integers. Boundaries are **constants of the
+distribution**, not of the data → zero training. (ruvllm's codec already has the
+MSE-quantizer math to borrow from.)
 
 ### T3 — Per-coordinate calibration (TQ+)
 During the *first* `add()` batch, fit two scalars per coordinate
@@ -185,7 +188,7 @@ determinism contract are.
 | `AnnIndex` trait | `ruvector-rabitq::index` | **implement** |
 | `VectorKernel` / `KernelCaps` | `ruvector-rabitq::kernel` | **implement** |
 | MSE/Lloyd–Max quantizer math | `ruvllm::quantize` | **borrow/extract** |
-| Lloyd–Max boundary tables (2/4-bit) | TurboQuant constants | **build (new)** |
+| Lloyd–Max boundary tables (2/3/4-bit) | TurboQuant constants | **build (new)** |
 | TQ+ per-coordinate calibration | — | **build (new)** |
 | FastScan nibble-LUT SIMD kernel | — | **build (new)** |
 | 32-block SoA layout + filtered scan | — | **build (new)** |
@@ -260,7 +263,7 @@ rather than ad hoc. None of these are bugs in M1 — they are scope boundaries.
 |---|--------------|-----------------|------|
 | D1 | **Provably-unbiased** inner product via a **two-stage** estimator: MSE quantizer + **1-bit QJL on the residual** `r = x − x̂_mse`, score `⟨y, x̂_mse + x̂_qjl⟩`, unbiased by construction with a variance bound. | A single per-vector scalar `c_x = ⟨r,r̂⟩/⟨r̂,r̂⟩` (least-squares magnitude match). *Empirically* near-unbiased (mean cos-bias ≈ 0 on uniform data); **no theoretical guarantee**. Cheaper (no extra residual bits). | **M5 (new):** add the optional QJL-residual stage as a recall/accuracy upgrade path when `c_x` proves insufficient on clustered data. |
 | D2 | Per-coordinate quantizer is **Max-Lloyd-optimal for the exact Beta marginal** `f(x) ∝ (1−x²)^((d−3)/2)`, with tables precomputed **per (bit-width, dimension)**. | Hardcoded Lloyd–Max tables for the **N(0,1) limit** of that Beta + an empirical per-coordinate `shift/scale` (TQ+) patch. Exact only as `d → ∞`; approximate at low/medium `d`. (TQ+ itself is *not* in the paper.) | **M6 (new):** generate d-aware Beta-optimal codebooks offline; keep the N(0,1)+calibration path as the default fast option. |
-| D3 | Highlights **~2.5 and ~3.5 bits/channel** as the quality-neutral operating points. | Ships **1 / 2 / 4-bit** only; a visible recall cliff sits between 2-bit (0.56) and 4-bit (0.88). | **M2 stretch:** add a **3-bit** width (one centroid table) to fill the cliff. |
+| D3 | Highlights **~2.5 and ~3.5 bits/channel** as the quality-neutral operating points. | ✅ **Now ships 1 / 2 / 3 / 4-bit.** The added 3-bit width fills the old 2↔4-bit cliff: recall@10 **0.767** at **9.8×** compression (112 B/vec), measured. | Done in M1. Non-integer effective bit-widths (2.5/3.5 bpc) remain future work, achievable via D1's QJL residual or mixed-width coding. |
 | D4 | Closed-form distortion bounds: `D_mse ≤ (√3·π/2)·4^(−b)` (≈2.7× the info-theoretic floor) and `D_prod ≤ (√3·π²·‖y‖²/d)·4^(−b)`. | Tests assert only `recall > 0.5`. | **Test upgrade:** assert measured MSE/IP distortion stays **under the paper's bound** — a theory-grounded oracle stronger than a recall threshold. |
 | D5 | Bounds estimator **variance** (useful for ranking confidence / early termination). | Not surfaced. | Defer; revisit if IVF/rerank composition (ADR-193) needs confidence intervals. |
 
@@ -290,12 +293,12 @@ kernel (M2–M4) is a FAISS-lineage engineering layer, *not* part of the paper.
 Implement on branch `claude/ruvector-turbovec-optimization-FhaDh` (this ADR),
 crate work in a follow-up PR. Milestones:
 
-1. **M1 — Scalar reference (no SIMD).** Rotation reuse + Lloyd–Max 2/4-bit +
+1. **M1 — Scalar reference (no SIMD).** Rotation reuse + Lloyd–Max 2/3/4-bit +
    TQ+ + length-renormalized scoring + `AnnIndex`. Recall + memory parity test
    vs a brute f32 baseline on SIFT1M / a synthetic OpenAI-d1536 set. ✅ *done.*
 2. **M2 — FastScan SIMD kernel.** AVX2 + NEON nibble-LUT, fuzzed bit-identical
    to M1's scalar scorer; `VectorKernel` impl; criterion bench in
-   `benches/turbovec_bench.rs`. *Stretch:* add a **3-bit** width (D3).
+   `benches/turbovec_bench.rs`. (3-bit width already shipped in M1, see D3.)
 3. **M3 — IdMap + filtered search + persistence.** O(1) delete, block-level
    allowlist, `.tv` save/load round-trip test.
 4. **M4 — AVX-512BW kernel + rulake dispatcher registration.**

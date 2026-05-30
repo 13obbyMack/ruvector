@@ -78,7 +78,12 @@ fn main() {
 
     println!("\n=== TurboVec (ADR-194) proof — n={n}, dim={dim}, k={k} ===\n");
     println!("[1] Compression + recall vs exact brute-force L2 + estimator bias");
-    for bw in [BitWidth::One, BitWidth::Two, BitWidth::Four] {
+    for bw in [
+        BitWidth::One,
+        BitWidth::Two,
+        BitWidth::Three,
+        BitWidth::Four,
+    ] {
         recall_and_bias(bw, &data, &queries, dim, k);
     }
 
