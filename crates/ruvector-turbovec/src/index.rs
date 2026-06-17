@@ -1,4 +1,4 @@
-//! `TurboVecIndex` — the multi-bit TurboQuant flat ANN index (ADR-194).
+//! `TurboVecIndex` — the multi-bit TurboQuant flat ANN index (ADR-254).
 //!
 //! Pipeline per database vector `x`:
 //!

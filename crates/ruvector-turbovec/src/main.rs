@@ -1,4 +1,4 @@
-//! `turbovec-demo` — end-to-end **proof** that the TurboVec index (ADR-194)
+//! `turbovec-demo` — end-to-end **proof** that the TurboVec index (ADR-254)
 //! works correctly: compression, recall vs exact brute-force L2, estimator
 //! unbiasedness, determinism, and IdMap delete + filtered search.
 //!
@@ -76,7 +76,7 @@ fn main() {
     let data = random_vectors(n, dim, 10);
     let queries = random_vectors(200, dim, 99);
 
-    println!("\n=== TurboVec (ADR-194) proof — n={n}, dim={dim}, k={k} ===\n");
+    println!("\n=== TurboVec (ADR-254) proof — n={n}, dim={dim}, k={k} ===\n");
     println!("[1] Compression + recall vs exact brute-force L2 + estimator bias");
     for bw in [
         BitWidth::One,

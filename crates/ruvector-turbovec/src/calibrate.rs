@@ -1,4 +1,4 @@
-//! TQ+ per-coordinate calibration (ADR-194 §T3).
+//! TQ+ per-coordinate calibration (ADR-254 §T3).
 //!
 //! After the randomized Hadamard rotation, coordinate `i` of a *unit* vector is
 //! approximately `N(0, 1/d)` — but finite-`d` rotations leave a small residual

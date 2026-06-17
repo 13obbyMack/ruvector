@@ -1,7 +1,7 @@
 //! # ruvector-turbovec
 //!
 //! Multi-bit **TurboQuant** FastScan-style approximate-nearest-neighbor index
-//! (ADR-194). Fills the 2–4-bit scalar-quantized search regime that ruvector
+//! (ADR-254). Fills the 2–4-bit scalar-quantized search regime that ruvector
 //! lacked: `ruvector-rabitq` is 1-bit, `ruvllm`'s TurboQuant is a KV-cache value
 //! codec — neither is a multi-bit *search index*.
 //!
@@ -13,7 +13,7 @@
 //! - [`ruvector_rabitq::AnnIndex`] — the shared index trait, so this drops into
 //!   the same dispatcher/consumers as RaBitQ with no new plumbing.
 //!
-//! ## What it adds (ADR-194 §T2–T4, T6)
+//! ## What it adds (ADR-254 §T2–T4, T6)
 //!
 //! - **Lloyd–Max 2/4-bit scalar quantization** ([`quantize`]) — data-independent
 //!   centroids, online ingest, no training.

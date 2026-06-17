@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "TurboVec: multi-bit TurboQuant FastScan-style ANN index (2/3/4-bit Lloyd-Max scalar quantization + TQ+ per-coordinate calibration + length-renormalized unbiased scoring). Implements ADR-194."
+description = "TurboVec: multi-bit TurboQuant FastScan-style ANN index (2/3/4-bit Lloyd-Max scalar quantization + TQ+ per-coordinate calibration + length-renormalized unbiased scoring). Implements ADR-254."
 
 [[bin]]
 name = "turbovec-demo"

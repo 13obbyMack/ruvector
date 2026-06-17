@@ -1,5 +1,5 @@
 //! `IdMapIndex` — external `u64` ids, `O(1)` deletion, allowlist-filtered
-//! search (ADR-194 §T6).
+//! search (ADR-254 §T6).
 //!
 //! Wraps a [`TurboVecIndex`] whose internal ids are dense insertion positions.
 //! A tombstone bitmap + `id → pos` map give `O(1)` `remove`; deleted slots are

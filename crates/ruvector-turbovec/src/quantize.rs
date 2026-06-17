@@ -5,7 +5,7 @@
 //! TQ+ per-coordinate calibration (`crate::calibrate`), each coordinate is
 //! approximately `N(0, 1)`. We therefore quantize against **codebook-free**,
 //! data-independent Lloyd–Max centroids for the standard normal — no k-means,
-//! no training pass, online ingest (ADR-194 §T2).
+//! no training pass, online ingest (ADR-254 §T2).
 //!
 //! Quantization is nearest-centroid, which is exactly Lloyd–Max decision
 //! regions (boundaries are the midpoints between adjacent centroids). Storing
@@ -14,7 +14,7 @@
 
 /// Supported quantization widths. `One` is included as a correctness/recall
 /// baseline against `ruvector-rabitq`'s 1-bit path; `Two`/`Three`/`Four` are
-/// the production targets of ADR-194 (`Three` fills the 2↔4-bit recall gap).
+/// the production targets of ADR-254 (`Three` fills the 2↔4-bit recall gap).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BitWidth {
     /// 1 bit / coord (2 levels).
@@ -22,7 +22,7 @@ pub enum BitWidth {
     /// 2 bits / coord (4 levels).
     Two,
     /// 3 bits / coord (8 levels). Fills the recall gap between 2- and 4-bit;
-    /// near the paper's ~2.5–3.5 bpc quality-neutral sweet spot (ADR-194 §D3).
+    /// near the paper's ~2.5–3.5 bpc quality-neutral sweet spot (ADR-254 §D3).
     Three,
     /// 4 bits / coord (16 levels).
     Four,
@@ -75,7 +75,7 @@ impl BitWidth {
 /// Quantize one calibrated coordinate to its nearest centroid index.
 ///
 /// Linear scan over `levels` (≤ 16) — branch-predictable and trivially
-/// vectorizable; the FastScan SIMD kernel (ADR-194 §T5, future milestone)
+/// vectorizable; the FastScan SIMD kernel (ADR-254 §T5, future milestone)
 /// will replace this with a nibble LUT, but the *result* must stay identical.
 #[inline]
 pub fn quantize_coord(centroids: &[f32], z: f32) -> u8 {
@@ -204,7 +204,7 @@ mod tests {
         (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos()
     }
 
-    /// D4 (ADR-194): the per-coordinate quantization MSE on the canonical
+    /// D4 (ADR-254): the per-coordinate quantization MSE on the canonical
     /// `N(0,1)` marginal must stay under TurboQuant's distortion bound
     /// `D_mse ≤ (√3·π/2)·4^(−b)` (arXiv:2504.19874), and within a small
     /// margin of the *known* Max-1960 Lloyd–Max optimum. This is a

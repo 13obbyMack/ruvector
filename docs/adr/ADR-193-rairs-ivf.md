@@ -131,7 +131,7 @@ FAISS's two-phase API and to allow future re-clustering.
 ### Neutral
 
 - **IVF-PQ not yet implemented** — this ADR covers the flat (exact reranking)
-  variants only.  PQ integration is the natural next step (ADR-194 TBD).
+  variants only.  PQ integration is the natural next step (ADR-254 TBD).
 - **No SIMD distance kernels** — the list scan is pure scalar f32.  AVX2/NEON
   acceleration would give 4-8× throughput improvement but is orthogonal to the
   RAIRS algorithm.
@@ -170,7 +170,7 @@ for equal-memory dual assignment because the RAIR metric is directionally aware.
 Starting with compressed residuals would be more memory-efficient for large N.
 Rejected for this PR because PQ codebook training introduces a second k-means
 loop and an asymmetric distance table; cleaner to land flat IVF first and add
-PQ as a composable layer.  Tracking as ADR-194 future work.
+PQ as a composable layer.  Tracking as ADR-254 future work.
 
 ### 4. IVF-HNSW (HNSW routing over centroids)
 
