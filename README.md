@@ -119,7 +119,7 @@ Memory classes are application semantics over vectors, metadata, and graphs. The
 
 1. [`ruvllm::context::AgenticMemory`](./crates/ruvllm/src/context/agentic_memory.rs) combines working, episodic, semantic, and procedural memory behind one runtime API. It is implemented, but its unified manager is currently in memory and its cross type consolidation method is not complete.
 
-2. [`ruvector-core::AgenticDB`](./crates/ruvector-core/src/agenticdb.rs) persists Reflexion episodes, skills, causal edges, learning sessions, policy state, session turns, and a hash linked witness log. It is experimental and requires a real embedding provider for semantic use.
+2. [`ruvector-core::AgenticDB`](./crates/ruvector-core/src/agenticdb.rs) persists Reflexion episodes, skills, causal edges, learning sessions, policy state, session turns, and a hash linked witness log. Its experimental typed memory APIs support ONNX, Candle, and API embedding providers for semantic retrieval.
 
 | Memory class | Representation | RuVector surface | Maturity |
 | --- | --- | --- | --- |
@@ -131,8 +131,6 @@ Memory classes are application semantics over vectors, metadata, and graphs. The
 | Learning | Trajectories, rewards, adapters, EWC state | [`SONA`](./crates/sona) | Extension |
 | Shared | Contributions, provenance, voting, transfer | [`mcp-brain`](./crates/mcp-brain) | Optional hosted plane |
 | Auditable | Hash linked entries, snapshots, RVF witnesses | [`WitnessLog`](./crates/ruvector-core/src/agenticdb.rs), [`ruvector-snapshot`](./crates/ruvector-snapshot), [RVF](./crates/rvf) | Mixed |
-
-`AgenticDB::new` uses placeholder hash embeddings and is not suitable for semantic production search. Configure `OnnxEmbedding`, `CandleEmbedding`, or an API embedding provider when using those experimental typed memory APIs.
 
 ## Capability map
 
@@ -299,25 +297,23 @@ See [SECURITY.md](./SECURITY.md) for reporting and project security guidance.
 
 2. The unified four type `ruvllm::AgenticMemory` manager does not yet have native save and load support, and its episodic to semantic or procedural consolidation method currently returns no changes. Durable `VectorDB` storage and typed runtime memory are not yet one facade.
 
-3. `AgenticDB` is experimental and defaults to placeholder hash embeddings unless a real embedding provider is configured.
+3. Core metadata filtering currently narrows the retrieved candidate set. Highly selective filters may return fewer than `k` relevant results. Evaluate ACORN or an application level prefilter for selective workloads.
 
-4. Core metadata filtering currently narrows the retrieved candidate set. Highly selective filters may return fewer than `k` relevant results. Evaluate ACORN or an application level prefilter for selective workloads.
+4. Opening a persisted HNSW database currently enumerates stored vectors and rebuilds the index. Measure cold start time against the intended memory size.
 
-5. Opening a persisted HNSW database currently enumerates stored vectors and rebuilds the index. Measure cold start time against the intended memory size.
+5. Temporal coherence currently builds an exact pairwise coherence graph and is a proof of concept for moderate memory sets. The planned production path is an approximate neighbor graph.
 
-6. Temporal coherence currently builds an exact pairwise coherence graph and is a proof of concept for moderate memory sets. The planned production path is an approximate neighbor graph.
+6. Agent memory compaction is not yet wired into the default core, MCP, or RVF persistence path.
 
-7. Agent memory compaction is not yet wired into the default core, MCP, or RVF persistence path.
+7. Full snapshot serialization exists, but incremental snapshots, scheduling, cloud backends, and direct `VectorDB` restoration are not complete on the current main branch.
 
-8. Full snapshot serialization exists, but incremental snapshots, scheduling, cloud backends, and direct `VectorDB` restoration are not complete on the current main branch.
+8. Replication exposes local primitives and simulated transport behavior. Raft still has incomplete response transport and snapshot installation paths. These are not a complete production network replication plane.
 
-9. Replication exposes local primitives and simulated transport behavior. Raft still has incomplete response transport and snapshot installation paths. These are not a complete production network replication plane.
+9. GNN reranking, MRAgent reconstruction, and Darwin optimization are implemented research surfaces, not automatic behavior in `VectorDB::search`.
 
-10. GNN reranking, MRAgent reconstruction, and Darwin optimization are implemented research surfaces, not automatic behavior in `VectorDB::search`.
+10. RVF and PostgreSQL are separate build surfaces and are excluded from the default workspace build because they require their own toolchains.
 
-11. RVF and PostgreSQL are separate build surfaces and are excluded from the default workspace build because they require their own toolchains.
-
-12. Performance depends on vector dimension, index parameters, filter selectivity, recall target, hardware, and backend. Run the included benchmark for the component and workload you intend to deploy.
+11. Performance depends on vector dimension, index parameters, filter selectivity, recall target, hardware, and backend. Run the included benchmark for the component and workload you intend to deploy.
 
 ## Reproduce the evidence
 
