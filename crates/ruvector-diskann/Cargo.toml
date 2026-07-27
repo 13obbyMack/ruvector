@@ -1,6 +1,6 @@
 [package]
 name = "ruvector-diskann"
-version = "2.3.1"
+version = "2.3.2"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -24,13 +24,15 @@ thiserror = { workspace = true }
 rand = { workspace = true }
 parking_lot = "0.12"
 bytemuck = { version = "1.14", features = ["derive"] }
-simsimd = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # `rand` (used by PQ k-means training) pulls getrandom 0.2 transitively, which
 # needs the "js" backend to build for wasm32-unknown-unknown. Same shim as
 # ruvector-wasm/Cargo.toml.
 getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+simsimd = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3.9"
@@ -39,7 +41,6 @@ tempfile = "3.9"
 # wasm32 SIMD128 correctness + A/B timing tests (`wasm-pack test --node`).
 wasm-bindgen-test = "0.3"
 wasm-bindgen = { workspace = true }
-js-sys = { workspace = true }
 
 # Workspace cleanup pass: research-tier crate, doc/style churn deferred. Correctness + suspicious lints stay denied.
 [lints.rust]

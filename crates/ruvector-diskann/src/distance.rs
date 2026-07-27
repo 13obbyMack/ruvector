@@ -192,24 +192,24 @@ impl FlatVectors {
 /// L2 squared distance — dispatches to best available implementation
 #[inline]
 pub fn l2_squared(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len());
+    assert_eq!(a.len(), b.len(), "distance vectors must have equal lengths");
 
-    #[cfg(feature = "simd")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        wasm_simd128_l2_squared(a, b)
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "simd"))]
     {
         simd_l2_squared(a, b)
     }
 
-    #[cfg(not(feature = "simd"))]
+    #[cfg(any(
+        all(target_arch = "wasm32", not(target_feature = "simd128")),
+        all(not(target_arch = "wasm32"), not(feature = "simd"))
+    ))]
     {
-        #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-        {
-            wasm_simd128_l2_squared(a, b)
-        }
-
-        #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-        {
-            scalar_l2_squared(a, b)
-        }
+        scalar_l2_squared(a, b)
     }
 }
 
@@ -246,7 +246,7 @@ pub fn scalar_l2_squared(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// SimSIMD-accelerated L2² — uses hardware NEON/AVX2/AVX-512
-#[cfg(feature = "simd")]
+#[cfg(all(feature = "simd", not(target_arch = "wasm32")))]
 #[inline]
 pub fn simd_l2_squared(a: &[f32], b: &[f32]) -> f32 {
     // simsimd sqeuclidean returns squared Euclidean directly
@@ -264,6 +264,7 @@ pub fn simd_l2_squared(a: &[f32], b: &[f32]) -> f32 {
 pub fn wasm_simd128_l2_squared(a: &[f32], b: &[f32]) -> f32 {
     use core::arch::wasm32::*;
 
+    assert_eq!(a.len(), b.len(), "distance vectors must have equal lengths");
     let len = a.len();
     let mut acc0 = f32x4_splat(0.0);
     let mut acc1 = f32x4_splat(0.0);
@@ -294,8 +295,10 @@ pub fn wasm_simd128_l2_squared(a: &[f32], b: &[f32]) -> f32 {
     }
 
     let sum_vec = f32x4_add(acc0, acc1);
-    let arr: [f32; 4] = unsafe { core::mem::transmute(sum_vec) };
-    let mut sum = arr[0] + arr[1] + arr[2] + arr[3];
+    let mut sum = f32x4_extract_lane::<0>(sum_vec)
+        + f32x4_extract_lane::<1>(sum_vec)
+        + f32x4_extract_lane::<2>(sum_vec)
+        + f32x4_extract_lane::<3>(sum_vec);
 
     while i < len {
         let d = a[i] - b[i];
@@ -308,26 +311,26 @@ pub fn wasm_simd128_l2_squared(a: &[f32], b: &[f32]) -> f32 {
 /// Inner product distance (negated for min-heap)
 #[inline]
 pub fn inner_product(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len());
+    assert_eq!(a.len(), b.len(), "distance vectors must have equal lengths");
 
-    #[cfg(feature = "simd")]
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        wasm_simd128_inner_product(a, b)
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "simd"))]
     {
         simsimd::SpatialSimilarity::inner(a, b)
             .map(|d| -(d as f32))
             .unwrap_or_else(|| scalar_inner_product(a, b))
     }
 
-    #[cfg(not(feature = "simd"))]
+    #[cfg(any(
+        all(target_arch = "wasm32", not(target_feature = "simd128")),
+        all(not(target_arch = "wasm32"), not(feature = "simd"))
+    ))]
     {
-        #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
-        {
-            wasm_simd128_inner_product(a, b)
-        }
-
-        #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
-        {
-            scalar_inner_product(a, b)
-        }
+        scalar_inner_product(a, b)
     }
 }
 
@@ -364,6 +367,7 @@ fn scalar_inner_product(a: &[f32], b: &[f32]) -> f32 {
 pub fn wasm_simd128_inner_product(a: &[f32], b: &[f32]) -> f32 {
     use core::arch::wasm32::*;
 
+    assert_eq!(a.len(), b.len(), "distance vectors must have equal lengths");
     let len = a.len();
     let mut acc0 = f32x4_splat(0.0);
     let mut acc1 = f32x4_splat(0.0);
@@ -391,8 +395,10 @@ pub fn wasm_simd128_inner_product(a: &[f32], b: &[f32]) -> f32 {
     }
 
     let sum_vec = f32x4_add(acc0, acc1);
-    let arr: [f32; 4] = unsafe { core::mem::transmute(sum_vec) };
-    let mut sum = arr[0] + arr[1] + arr[2] + arr[3];
+    let mut sum = f32x4_extract_lane::<0>(sum_vec)
+        + f32x4_extract_lane::<1>(sum_vec)
+        + f32x4_extract_lane::<2>(sum_vec)
+        + f32x4_extract_lane::<3>(sum_vec);
 
     while i < len {
         sum += a[i] * b[i];
@@ -719,7 +725,7 @@ mod tests {
 /// so the comparison isn't confounded by separate builds. Run via:
 ///
 /// ```sh
-/// RUSTFLAGS="-C target-feature=+simd128" wasm-pack test --node crates/ruvector-diskann --no-default-features
+/// RUSTFLAGS="-C target-feature=+simd128" wasm-pack test --node crates/ruvector-diskann --release
 /// ```
 #[cfg(all(test, target_arch = "wasm32", target_feature = "simd128"))]
 mod wasm_simd128_tests {
@@ -794,6 +800,18 @@ mod wasm_simd128_tests {
     fn identical_vectors_are_zero_distance() {
         let a = vec![1.0f32; 384];
         assert!(wasm_simd128_l2_squared(&a, &a) < 1e-10);
+    }
+
+    #[wasm_bindgen_test]
+    #[should_panic(expected = "distance vectors must have equal lengths")]
+    fn l2_rejects_mismatched_lengths_before_unsafe_load() {
+        let _ = wasm_simd128_l2_squared(&[1.0; 8], &[1.0; 4]);
+    }
+
+    #[wasm_bindgen_test]
+    #[should_panic(expected = "distance vectors must have equal lengths")]
+    fn inner_product_rejects_mismatched_lengths_before_unsafe_load() {
+        let _ = wasm_simd128_inner_product(&[1.0; 8], &[1.0; 4]);
     }
 
     /// A/B timing: geometric mean of scalar/simd128 wall time across
