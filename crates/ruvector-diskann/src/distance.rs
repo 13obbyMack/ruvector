@@ -154,16 +154,16 @@ impl FlatVectors {
         }
     }
 
-    /// Zero out a vector (lazy deletion). Owned storage keeps writing NaN in place
-    /// (unchanged, zero extra cost); mmap storage sets a tombstone flag instead of
-    /// mutating the mapped file — both are observed identically through `get()`.
+    /// Replace an owned row with NaNs, or mask an mmap-backed row with a NaN
+    /// overlay. Kept for API compatibility; `DiskAnnIndex` deletion uses its
+    /// separate persistent tombstone bitmap so vectors remain usable for routing.
     #[inline]
     pub fn zero_out(&mut self, idx: usize) {
         match &mut self.storage {
             VectorStorage::Owned(data) => {
                 let start = idx * self.dim;
-                for v in &mut data[start..start + self.dim] {
-                    *v = f32::NAN;
+                for value in &mut data[start..start + self.dim] {
+                    *value = f32::NAN;
                 }
             }
             VectorStorage::Mmap { .. } => {
