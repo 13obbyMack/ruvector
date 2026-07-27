@@ -10764,6 +10764,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruvector-turbovec"
+version = "2.3.0"
+dependencies = [
+ "rand 0.8.6",
+ "ruvector-rabitq",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ruvector-verified"
 version = "0.1.1"
 dependencies = [
