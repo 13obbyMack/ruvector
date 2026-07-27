@@ -161,6 +161,110 @@ impl GraphDB {
         }
     }
 
+    /// Atomically update an existing node.
+    ///
+    /// Applies `f` to a clone of the current node, persists the new value, and
+    /// refreshes the label and property indexes. Concurrent updates to the same
+    /// node are serialized, so one update cannot silently overwrite another.
+    /// The node ID is immutable and changing it returns a constraint error.
+    ///
+    /// Returns `Ok(false)` if the node was not found (no error), `Ok(true)` if
+    /// updated successfully. This is the counterpart to `create_node` and
+    /// enables SUPERSEDES-style versioning where a prior node is marked
+    /// `deprecated` without deleting it.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// graph.update_node(&node_id, |n| {
+    ///     n.set_property("status", PropertyValue::from("deprecated"));
+    ///     n.set_property("deprecated_at", PropertyValue::from(now_iso8601));
+    /// })?;
+    /// ```
+    ///
+    /// The callback runs while the node's map shard is write-locked. It must
+    /// not call back into this `GraphDB`, because doing so may deadlock.
+    pub fn update_node<F>(&self, id: impl AsRef<str>, f: F) -> Result<bool>
+    where
+        F: FnOnce(&mut Node),
+    {
+        let id_ref = id.as_ref();
+        let Some(mut entry) = self.nodes.get_mut(id_ref) else {
+            return Ok(false);
+        };
+        let old_node = entry.value().clone();
+        let mut new_node = old_node.clone();
+        f(&mut new_node);
+
+        if new_node.id != old_node.id {
+            return Err(crate::error::GraphError::ConstraintViolation(
+                "A node's ID cannot be changed by update_node".to_string(),
+            ));
+        }
+
+        // Persist before changing memory so a storage error leaves the live
+        // node and its indexes untouched.
+        #[cfg(feature = "storage")]
+        if let Some(storage) = &self.storage {
+            storage.insert_node(&new_node)?;
+        }
+
+        self.label_index.remove_node(&old_node);
+        self.property_index.remove_node(&old_node);
+        *entry.value_mut() = new_node.clone();
+        self.label_index.add_node(&new_node);
+        self.property_index.add_node(&new_node);
+
+        Ok(true)
+    }
+
+    /// Keyword (BM25) search over a node text property.
+    ///
+    /// Builds a transient `Bm25Index` from the `text_field` property of all
+    /// nodes carrying `label`, and returns the top-`k` node IDs by BM25 score.
+    /// This is the keyword arm of hybrid search — pair with vector ANN for
+    /// reciprocal rank fusion.
+    ///
+    /// For large graphs, build the index once and reuse it; this method
+    /// rebuilds on every call (suitable for small-to-medium graphs or
+    /// one-shot queries). A cached variant can be added behind a feature
+    /// flag if needed.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let hits = graph.keyword_search("Memory", "content", "vector search", 10)?;
+    /// ```
+    pub fn keyword_search(
+        &self,
+        label: &str,
+        text_field: &str,
+        query: &str,
+        k: usize,
+    ) -> Result<Vec<(NodeId, f32)>> {
+        let docs: Vec<(NodeId, String)> = self
+            .node_ids_by_label(label)
+            .into_iter()
+            .filter_map(|id| {
+                self.with_node(&id, |node| {
+                    node.get_property(text_field).and_then(|value| match value {
+                        PropertyValue::String(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                })
+                .flatten()
+                .map(|text| (id, text))
+            })
+            .collect();
+
+        if docs.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let index = crate::bm25::Bm25Index::build(docs, crate::bm25::Bm25Params::default());
+        Ok(index.search(query, k))
+    }
+
     /// Get nodes by label
     pub fn get_nodes_by_label(&self, label: &str) -> Vec<Node> {
         self.label_index
@@ -418,6 +522,7 @@ mod tests {
     use crate::edge::EdgeBuilder;
     use crate::hyperedge::HyperedgeBuilder;
     use crate::node::NodeBuilder;
+    use std::sync::{Arc, Barrier};
 
     #[test]
     fn test_graph_creation() {
@@ -508,5 +613,270 @@ mod tests {
 
         let hedges = db.get_hyperedges_by_node(&id1);
         assert_eq!(hedges.len(), 1);
+    }
+
+    #[test]
+    fn test_update_node() {
+        let db = GraphDB::new();
+
+        let node = NodeBuilder::new()
+            .id("mem-001")
+            .label("Memory")
+            .property("content", "original content")
+            .property("status", "active")
+            .build();
+
+        db.create_node(node).unwrap();
+
+        // Update: mark as deprecated
+        let updated = db
+            .update_node("mem-001", |n| {
+                n.set_property("status", PropertyValue::from("deprecated"));
+                n.set_property("deprecated_at", PropertyValue::from("2026-07-12T12:00:00Z"));
+            })
+            .unwrap();
+        assert!(updated);
+
+        let retrieved = db.get_node("mem-001").unwrap();
+        assert_eq!(
+            retrieved.get_property("status").unwrap(),
+            &PropertyValue::from("deprecated")
+        );
+        assert!(retrieved.get_property("deprecated_at").is_some());
+
+        assert!(db
+            .get_nodes_by_property("status", &PropertyValue::from("active"))
+            .is_empty());
+        assert_eq!(
+            db.get_nodes_by_property("status", &PropertyValue::from("deprecated"))
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_update_node_refreshes_label_and_property_indexes() {
+        let db = GraphDB::new();
+        db.create_node(
+            NodeBuilder::new()
+                .id("indexed")
+                .label("OldLabel")
+                .property("state", "old")
+                .property("removed", true)
+                .build(),
+        )
+        .unwrap();
+
+        db.update_node("indexed", |node| {
+            node.remove_label("OldLabel");
+            node.add_label("NewLabel");
+            node.set_property("state", PropertyValue::from("new"));
+            node.properties.remove("removed");
+        })
+        .unwrap();
+
+        assert!(db.get_nodes_by_label("OldLabel").is_empty());
+        assert_eq!(db.get_nodes_by_label("NewLabel").len(), 1);
+        assert!(db
+            .get_nodes_by_property("state", &PropertyValue::from("old"))
+            .is_empty());
+        assert_eq!(
+            db.get_nodes_by_property("state", &PropertyValue::from("new"))
+                .len(),
+            1
+        );
+        assert!(db
+            .get_nodes_by_property("removed", &PropertyValue::from(true))
+            .is_empty());
+    }
+
+    #[test]
+    fn test_update_node_rejects_id_changes_without_side_effects() {
+        let db = GraphDB::new();
+        db.create_node(NodeBuilder::new().id("original").label("Old").build())
+            .unwrap();
+
+        let error = db
+            .update_node("original", |node| {
+                node.id = "replacement".to_string();
+                node.add_label("New");
+            })
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::error::GraphError::ConstraintViolation(_)
+        ));
+        assert!(db.get_node("replacement").is_none());
+        assert!(db.get_node("original").unwrap().has_label("Old"));
+        assert!(db.get_nodes_by_label("New").is_empty());
+    }
+
+    #[test]
+    fn test_concurrent_updates_do_not_lose_writes() {
+        const THREADS: usize = 8;
+        const UPDATES_PER_THREAD: usize = 100;
+
+        let db = Arc::new(GraphDB::new());
+        db.create_node(
+            NodeBuilder::new()
+                .id("counter")
+                .property("value", 0_i64)
+                .build(),
+        )
+        .unwrap();
+        let barrier = Arc::new(Barrier::new(THREADS));
+        let mut handles = Vec::new();
+
+        for _ in 0..THREADS {
+            let db = Arc::clone(&db);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..UPDATES_PER_THREAD {
+                    db.update_node("counter", |node| {
+                        let value = match node.get_property("value") {
+                            Some(PropertyValue::Integer(value)) => *value,
+                            _ => panic!("counter property is missing"),
+                        };
+                        node.set_property("value", PropertyValue::Integer(value + 1));
+                    })
+                    .unwrap();
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(
+            db.get_node("counter")
+                .unwrap()
+                .get_property("value")
+                .cloned(),
+            Some(PropertyValue::Integer(
+                (THREADS * UPDATES_PER_THREAD) as i64
+            ))
+        );
+    }
+
+    #[test]
+    fn test_update_node_not_found() {
+        let db = GraphDB::new();
+        let result = db.update_node("nonexistent", |_| {}).unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_keyword_search() {
+        let db = GraphDB::new();
+
+        let docs = vec![
+            ("mem-1", "the quick brown fox jumps over the lazy dog"),
+            ("mem-2", "machine learning models for vector search"),
+            ("mem-3", "vector databases enable semantic search at scale"),
+            ("mem-4", "a recipe for italian pasta with tomato sauce"),
+        ];
+
+        for (id, text) in docs {
+            let node = NodeBuilder::new()
+                .id(id)
+                .label("Memory")
+                .property("content", text)
+                .build();
+            db.create_node(node).unwrap();
+        }
+
+        let hits = db
+            .keyword_search("Memory", "content", "vector search", 4)
+            .unwrap();
+
+        assert!(!hits.is_empty());
+        // mem-2 and mem-3 both mention "vector" and "search"; pasta doc must not lead.
+        assert!(hits[0].0 == "mem-2" || hits[0].0 == "mem-3");
+        assert!(hits.iter().all(|(id, _)| id != "mem-4") || hits.last().unwrap().0 == "mem-4");
+    }
+
+    #[test]
+    fn test_keyword_search_empty_label() {
+        let db = GraphDB::new();
+        let hits = db
+            .keyword_search("Nonexistent", "content", "anything", 5)
+            .unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn test_keyword_search_ignores_other_labels_and_non_string_fields() {
+        let db = GraphDB::new();
+        for node in [
+            NodeBuilder::new()
+                .id("wanted")
+                .label("Memory")
+                .property("content", "unique needle")
+                .build(),
+            NodeBuilder::new()
+                .id("wrong-label")
+                .label("Other")
+                .property("content", "unique needle")
+                .build(),
+            NodeBuilder::new()
+                .id("wrong-type")
+                .label("Memory")
+                .property("content", 42_i64)
+                .build(),
+        ] {
+            db.create_node(node).unwrap();
+        }
+
+        let hits = db
+            .keyword_search("Memory", "content", "needle", 10)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0, "wanted");
+        assert!(db
+            .keyword_search("Memory", "content", "needle", 0)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[cfg(feature = "storage")]
+    #[test]
+    fn test_update_node_persists() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("graph.redb");
+
+        {
+            let db = GraphDB::with_storage(&path).unwrap();
+            db.create_node(
+                NodeBuilder::new()
+                    .id("persistent")
+                    .label("Old")
+                    .property("state", "old")
+                    .build(),
+            )
+            .unwrap();
+            db.update_node("persistent", |node| {
+                node.remove_label("Old");
+                node.add_label("New");
+                node.set_property("state", PropertyValue::from("new"));
+            })
+            .unwrap();
+        }
+
+        let reopened = GraphDB::with_storage(&path).unwrap();
+        let node = reopened.get_node("persistent").unwrap();
+        assert!(node.has_label("New"));
+        assert_eq!(
+            node.get_property("state"),
+            Some(&PropertyValue::from("new"))
+        );
+        assert_eq!(reopened.get_nodes_by_label("New").len(), 1);
+        assert_eq!(
+            reopened
+                .get_nodes_by_property("state", &PropertyValue::from("new"))
+                .len(),
+            1
+        );
     }
 }
