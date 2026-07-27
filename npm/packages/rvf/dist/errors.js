@@ -52,6 +52,9 @@ var RvfErrorCode;
     RvfErrorCode[RvfErrorCode["StoreClosed"] = 65282] = "StoreClosed";
     RvfErrorCode[RvfErrorCode["InvalidOptions"] = 65283] = "InvalidOptions";
     RvfErrorCode[RvfErrorCode["MetadataNotSupported"] = 65284] = "MetadataNotSupported";
+    // 0xff05 reserved
+    RvfErrorCode[RvfErrorCode["SidecarWriteFailed"] = 65286] = "SidecarWriteFailed";
+    RvfErrorCode[RvfErrorCode["SidecarCorrupt"] = 65287] = "SidecarCorrupt";
 })(RvfErrorCode || (exports.RvfErrorCode = RvfErrorCode = {}));
 /** Human-readable labels for each error code. */
 const ERROR_MESSAGES = {
@@ -93,6 +96,8 @@ const ERROR_MESSAGES = {
     [RvfErrorCode.InvalidOptions]: 'Invalid store creation options',
     [RvfErrorCode.MetadataNotSupported]: 'Per-vector metadata is not yet supported by this SDK (see issue #704) — ' +
         'ingest without a metadata field, or wait for durable metadata support',
+    [RvfErrorCode.SidecarWriteFailed]: 'Failed to persist the string-id map sidecar',
+    [RvfErrorCode.SidecarCorrupt]: 'The string-id map sidecar is missing fields or corrupt',
 };
 /**
  * Custom error class for all RVF operations.

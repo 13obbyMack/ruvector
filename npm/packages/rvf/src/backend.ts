@@ -113,6 +113,21 @@ export class NodeBackend implements RvfBackend {
     }
   }
 
+  /** Release a native handle without persisting mappings after open failed. */
+  private discardHandle(): void {
+    try {
+      this.handle?.close();
+    } catch {
+      // Preserve the original open/sidecar error.
+    } finally {
+      this.handle = null;
+      this.storePath = '';
+      this.idToLabel.clear();
+      this.labelToId.clear();
+      this.nextLabel = 1;
+    }
+  }
+
   async create(path: string, options: RvfOptions): Promise<void> {
     await this.loadNative();
     try {
@@ -133,6 +148,7 @@ export class NodeBackend implements RvfBackend {
       this.storePath = path;
       await this.loadMappings();
     } catch (err) {
+      this.discardHandle();
       throw RvfError.fromNative(err);
     }
   }
@@ -144,6 +160,7 @@ export class NodeBackend implements RvfBackend {
       this.storePath = path;
       await this.loadMappings();
     } catch (err) {
+      this.discardHandle();
       throw RvfError.fromNative(err);
     }
   }
@@ -264,11 +281,16 @@ export class NodeBackend implements RvfBackend {
 
   async close(): Promise<void> {
     if (!this.handle) return;
+    let failure: unknown;
     try {
       await this.saveMappings();
+    } catch (err) {
+      failure = err;
+    }
+    try {
       this.handle.close();
     } catch (err) {
-      throw RvfError.fromNative(err);
+      failure ??= err;
     } finally {
       this.handle = null;
       this.idToLabel.clear();
@@ -276,6 +298,7 @@ export class NodeBackend implements RvfBackend {
       this.nextLabel = 1;
       this.storePath = '';
     }
+    if (failure) throw RvfError.fromNative(failure);
   }
 
   async fileId(): Promise<string> {
@@ -437,43 +460,140 @@ export class NodeBackend implements RvfBackend {
     return this.storePath ? this.storePath + '.idmap.json' : '';
   }
 
-  /** Persist the string↔label mapping to a sidecar JSON file. */
+  /**
+   * Persist the string↔label mapping to a sidecar JSON file.
+   *
+   * `delete()` resolves string ids through this map and silently filters out
+   * anything unresolvable, so a lost or torn write turns every ingest since
+   * the last good save into an undeletable-by-id vector. Persistence is
+   * therefore NOT best-effort: the write is made atomic (temp file + rename,
+   * so a crash/ENOSPC mid-write can never leave partial JSON at `mp`) and a
+   * failure is surfaced rather than swallowed.
+   */
   private async saveMappings(): Promise<void> {
     const mp = this.mappingsPath();
     if (!mp) return;
+    const fs = await import('fs');
+    const data = JSON.stringify({
+      idToLabel: Object.fromEntries(this.idToLabel),
+      labelToId: Object.fromEntries(
+        Array.from(this.labelToId.entries()).map(([k, v]) => [String(k), v]),
+      ),
+      nextLabel: this.nextLabel,
+    });
+    // A shared `${mp}.tmp` races across processes opening the same store.
+    // Synchronous writes cannot interleave within one Node process; PID plus
+    // timestamp also keeps independently-running writers on separate paths.
+    const tmp = `${mp}.${process.pid}.${Date.now()}.tmp`;
     try {
-      const fs = await import('fs');
-      const data = JSON.stringify({
-        idToLabel: Object.fromEntries(this.idToLabel),
-        labelToId: Object.fromEntries(
-          Array.from(this.labelToId.entries()).map(([k, v]) => [String(k), v]),
-        ),
-        nextLabel: this.nextLabel,
-      });
-      fs.writeFileSync(mp, data, 'utf-8');
-    } catch {
-      // Non-fatal: mapping persistence is best-effort (e.g. read-only FS).
+      fs.writeFileSync(tmp, data, 'utf-8');
+      fs.renameSync(tmp, mp);
+    } catch (err) {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        // best-effort cleanup of the temp file
+      }
+      throw new RvfError(
+        RvfErrorCode.SidecarWriteFailed,
+        `at ${mp}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
-  /** Load the string↔label mapping from the sidecar JSON file if it exists. */
+  /**
+   * Load the string↔label mapping from the sidecar JSON file if it exists.
+   *
+   * A corrupt sidecar must NOT degrade to empty maps: `nextLabel` would reset
+   * to 1 and subsequent ingests would assign labels colliding with existing
+   * vectors (silent data corruption), and the next `saveMappings()` would
+   * overwrite the recoverable file. Instead the corrupt sidecar is quarantined
+   * (renamed aside so it is not clobbered) and a `SidecarCorrupt` error is
+   * raised so the caller learns string-id operations are unsafe.
+   */
   private async loadMappings(): Promise<void> {
     const mp = this.mappingsPath();
     if (!mp) return;
+    const fs = await import('fs');
+    if (!fs.existsSync(mp)) return; // fresh store: no sidecar yet is legitimate
+    let parsed: {
+      idToLabel: Record<string, number>;
+      labelToId: Record<string, string>;
+      nextLabel: number;
+    };
     try {
-      const fs = await import('fs');
-      if (!fs.existsSync(mp)) return;
-      const raw = JSON.parse(fs.readFileSync(mp, 'utf-8'));
-      this.idToLabel = new Map(Object.entries(raw.idToLabel ?? {}).map(
-        ([k, v]) => [k, Number(v)],
-      ));
-      this.labelToId = new Map(
-        Object.entries(raw.labelToId ?? {}).map(([k, v]) => [Number(k), v as string]),
+      const candidate: unknown = JSON.parse(fs.readFileSync(mp, 'utf-8'));
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+        throw new TypeError('sidecar root must be an object');
+      }
+      const raw = candidate as Record<string, unknown>;
+      if (
+        !raw.idToLabel ||
+        typeof raw.idToLabel !== 'object' ||
+        Array.isArray(raw.idToLabel) ||
+        !raw.labelToId ||
+        typeof raw.labelToId !== 'object' ||
+        Array.isArray(raw.labelToId) ||
+        !Number.isSafeInteger(raw.nextLabel) ||
+        (raw.nextLabel as number) < 1
+      ) {
+        throw new TypeError('sidecar must contain idToLabel, labelToId, and a positive nextLabel');
+      }
+
+      const idToLabel = raw.idToLabel as Record<string, unknown>;
+      const labelToId = raw.labelToId as Record<string, unknown>;
+      let maxLabel = 0;
+      for (const [id, label] of Object.entries(idToLabel)) {
+        if (!Number.isSafeInteger(label) || (label as number) < 1) {
+          throw new TypeError(`invalid label for id ${JSON.stringify(id)}`);
+        }
+        if (labelToId[String(label)] !== id) {
+          throw new TypeError(`idToLabel/labelToId mismatch for id ${JSON.stringify(id)}`);
+        }
+        maxLabel = Math.max(maxLabel, label as number);
+      }
+      for (const [label, id] of Object.entries(labelToId)) {
+        const numericLabel = Number(label);
+        if (
+          !Number.isSafeInteger(numericLabel) ||
+          numericLabel < 1 ||
+          String(numericLabel) !== label ||
+          typeof id !== 'string' ||
+          idToLabel[id] !== numericLabel
+        ) {
+          throw new TypeError(`invalid reverse mapping for label ${JSON.stringify(label)}`);
+        }
+      }
+      if ((raw.nextLabel as number) <= maxLabel) {
+        throw new TypeError('nextLabel must be greater than every allocated label');
+      }
+      parsed = {
+        idToLabel: idToLabel as Record<string, number>,
+        labelToId: labelToId as Record<string, string>,
+        nextLabel: raw.nextLabel as number,
+      };
+    } catch (err) {
+      const { randomUUID } = await import('crypto');
+      const quarantine = `${mp}.corrupt-${Date.now()}-${randomUUID()}`;
+      try {
+        fs.renameSync(mp, quarantine);
+      } catch {
+        // if we cannot move it aside, leave it in place — still fail loud
+      }
+      throw new RvfError(
+        RvfErrorCode.SidecarCorrupt,
+        `at ${mp} (quarantined to ${quarantine}): string-id delete()/ingest would ` +
+          `silently corrupt data — restore a valid sidecar or recreate the store; ` +
+          `${err instanceof Error ? err.message : String(err)}`,
       );
-      this.nextLabel = raw.nextLabel ?? this.idToLabel.size + 1;
-    } catch {
-      // Non-fatal: start with empty mappings.
     }
+    this.idToLabel = new Map(
+      Object.entries(parsed.idToLabel),
+    );
+    this.labelToId = new Map(
+      Object.entries(parsed.labelToId).map(([k, v]) => [Number(k), v]),
+    );
+    this.nextLabel = parsed.nextLabel;
   }
 }
 
