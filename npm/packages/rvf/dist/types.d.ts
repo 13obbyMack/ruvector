@@ -43,6 +43,13 @@ export interface RvfOptions {
     m?: number;
     /** HNSW ef_construction: beam width during index build. Default: `200`. */
     efConstruction?: number;
+    /**
+     * Overwrite an existing file at the target path. When `false` (default),
+     * `create()` on a path that already holds a file throws
+     * {@link RvfErrorCode.FileExists} rather than clobbering it — use
+     * `open()` to reuse an existing store, or set this to `true` to replace it.
+     */
+    overwrite?: boolean;
 }
 /** Primitive value types usable in filter expressions. */
 export type RvfFilterValue = number | string | boolean;
@@ -104,6 +111,20 @@ export interface RvfQueryOptions {
     /** Query timeout in milliseconds (0 = no timeout). Default: `0`. */
     timeoutMs?: number;
 }
+/**
+ * Query options that also carry the result count, for the object-argument
+ * call form `query(vector, { k: 10, efSearch: 200 })`. `k` is canonical;
+ * `topK` and `limit` are accepted as aliases. Supplying multiple aliases
+ * with different values is rejected as ambiguous.
+ */
+export interface RvfQueryOptionsWithCount extends RvfQueryOptions {
+    /** Number of nearest neighbors to return. */
+    k?: number;
+    /** Alias for {@link RvfQueryOptionsWithCount.k}. */
+    topK?: number;
+    /** Alias for {@link RvfQueryOptionsWithCount.k}. */
+    limit?: number;
+}
 /** A single search result: vector ID and distance. */
 export interface RvfSearchResult {
     /** The vector's unique identifier (string-encoded u64). */
@@ -163,7 +184,16 @@ export interface RvfIngestEntry {
     id: string;
     /** The embedding vector (must match store dimensions). */
     vector: Float32Array | number[];
-    /** Optional per-vector metadata fields. */
+    /**
+     * Optional per-vector metadata fields.
+     *
+     * **Not yet implemented** (see issue #704): the native layer stores
+     * metadata by numeric `fieldId`, but there is no SDK-level design yet for
+     * mapping these string field names to native field IDs, or for persisting
+     * metadata durably across close/reopen. Passing a non-empty object here
+     * throws `RvfError` with code `MetadataNotSupported` rather than silently
+     * dropping the data (the original bug).
+     */
     metadata?: Record<string, RvfFilterValue>;
 }
 /** Derivation type for creating derived stores. */
