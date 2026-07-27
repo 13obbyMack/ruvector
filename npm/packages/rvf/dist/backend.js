@@ -95,14 +95,64 @@ class NodeBackend {
     }
     async create(path, options) {
         await this.loadNative();
+        const fs = await Promise.resolve().then(() => __importStar(require('fs')));
+        const sidecarPath = `${path}.idmap.json`;
+        const existingPaths = [path, sidecarPath].filter((candidate) => fs.existsSync(candidate));
+        const backups = [];
         try {
+            // Precondition: refuse to clobber an existing file unless asked to.
+            // The native layer surfaces this as a misleading FsyncFailed, so check
+            // here and raise a clear, actionable error. An orphaned sidecar also
+            // blocks creation because silently retaining it can desynchronize IDs.
+            if (existingPaths.length > 0 && !options.overwrite) {
+                throw new errors_1.RvfError(errors_1.RvfErrorCode.FileExists, `${existingPaths.join(', ')} already exists; use RvfDatabase.open() to reuse the store, or pass { overwrite: true } to replace it`);
+            }
+            if (options.overwrite) {
+                const { randomUUID } = await Promise.resolve().then(() => __importStar(require('crypto')));
+                for (const original of existingPaths) {
+                    if (!fs.lstatSync(original).isFile()) {
+                        throw new errors_1.RvfError(errors_1.RvfErrorCode.InvalidArgument, `refusing to overwrite non-file path ${original}`);
+                    }
+                    const backup = `${original}.overwrite-${process.pid}-${randomUUID()}.bak`;
+                    fs.renameSync(original, backup);
+                    backups.push({ original, backup });
+                }
+            }
             this.handle = await this.native.create(path, mapOptionsToNative(options));
             this.storePath = path;
             this.idToLabel.clear();
             this.labelToId.clear();
             this.nextLabel = 1;
+            for (const { backup } of backups) {
+                try {
+                    fs.rmSync(backup, { force: true });
+                }
+                catch {
+                    // The new store is valid; retain the recoverable backup if cleanup fails.
+                }
+            }
         }
         catch (err) {
+            // If replacement fails after moving the old store aside, remove any
+            // partially-created replacement and restore the original files.
+            if (backups.length > 0) {
+                try {
+                    fs.rmSync(path, { force: true });
+                    fs.rmSync(sidecarPath, { force: true });
+                }
+                catch {
+                    // Continue restoring every backup that can be recovered.
+                }
+                for (const { original, backup } of backups.reverse()) {
+                    try {
+                        if (fs.existsSync(backup))
+                            fs.renameSync(backup, original);
+                    }
+                    catch {
+                        // The backup remains on disk with a unique, discoverable suffix.
+                    }
+                }
+            }
             throw errors_1.RvfError.fromNative(err);
         }
     }

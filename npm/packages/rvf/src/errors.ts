@@ -54,9 +54,10 @@ export enum RvfErrorCode {
   StoreClosed = 0xff02,
   InvalidOptions = 0xff03,
   MetadataNotSupported = 0xff04,
-  // 0xff05 reserved
+  InvalidArgument = 0xff05,
   SidecarWriteFailed = 0xff06,
   SidecarCorrupt = 0xff07,
+  FileExists = 0xff08,
 }
 
 /** Human-readable labels for each error code. */
@@ -100,8 +101,10 @@ const ERROR_MESSAGES: Record<number, string> = {
   [RvfErrorCode.MetadataNotSupported]:
     'Per-vector metadata is not yet supported by this SDK (see issue #704) — ' +
     'ingest without a metadata field, or wait for durable metadata support',
+  [RvfErrorCode.InvalidArgument]: 'Invalid argument',
   [RvfErrorCode.SidecarWriteFailed]: 'Failed to persist the string-id map sidecar',
   [RvfErrorCode.SidecarCorrupt]: 'The string-id map sidecar is missing fields or corrupt',
+  [RvfErrorCode.FileExists]: 'A file already exists at the target path',
 };
 
 /**

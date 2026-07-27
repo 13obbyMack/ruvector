@@ -117,15 +117,22 @@ class RvfDatabase {
     /**
      * Query for the `k` nearest neighbors of a given vector.
      *
+     * The count can be passed positionally (`query(vec, 10)`) or via an
+     * options object (`query(vec, { k: 10, efSearch: 200 })`, with `topK`
+     * and `limit` accepted as aliases for `k`). Conflicting aliases, an object
+     * without a usable count, or a count outside the positive `u32` range throws a clear
+     * {@link RvfErrorCode.InvalidArgument} rather than a low-level N-API error.
+     *
      * @param vector   The query embedding.
-     * @param k        Number of results to return.
+     * @param k        Number of results, or an options object carrying it.
      * @param options  Optional query parameters (efSearch, filter, timeout).
      * @returns        Sorted search results (closest first).
      */
     async query(vector, k, options) {
         this.ensureOpen();
+        const { count, queryOptions } = normalizeQueryArgs(k, options);
         const f32 = vector instanceof Float32Array ? vector : new Float32Array(vector);
-        return this.backend.query(f32, k, options);
+        return this.backend.query(f32, count, queryOptions);
     }
     // -----------------------------------------------------------------------
     // Maintenance
@@ -253,4 +260,41 @@ class RvfDatabase {
     }
 }
 exports.RvfDatabase = RvfDatabase;
+/**
+ * Resolve the `(k, options)` arguments of `query()` into a validated result
+ * count and query options, accepting both the positional (`k: number`) and
+ * object (`{ k | topK | limit, ...options }`) call forms.
+ *
+ * Throws {@link RvfErrorCode.InvalidArgument} for an object with no usable
+ * count or for a count that is not a positive integer — a clear SDK-level
+ * error instead of the low-level N-API "Failed to convert napi value Object
+ * into rust type `u32`" that leaks through otherwise.
+ */
+function normalizeQueryArgs(k, options) {
+    let count;
+    let queryOptions = options;
+    if (typeof k === 'object' && k !== null) {
+        const { k: kk, topK, limit, ...rest } = k;
+        const aliases = [kk, topK, limit].filter((value) => value !== undefined);
+        if (aliases.length === 0) {
+            throw new errors_1.RvfError(errors_1.RvfErrorCode.InvalidArgument, 'query() options object must specify a result count as `k`, `topK`, or `limit`');
+        }
+        if (aliases.some((value) => value !== aliases[0])) {
+            throw new errors_1.RvfError(errors_1.RvfErrorCode.InvalidArgument, '`k`, `topK`, and `limit` must agree when more than one is supplied');
+        }
+        count = aliases[0];
+        // Merge object-form options with any explicit third argument (explicit wins).
+        queryOptions = { ...rest, ...options };
+    }
+    else {
+        count = k;
+    }
+    if (typeof count !== 'number' ||
+        !Number.isSafeInteger(count) ||
+        count <= 0 ||
+        count > 4294967295) {
+        throw new errors_1.RvfError(errors_1.RvfErrorCode.InvalidArgument, `query() result count must be a positive u32 integer, got ${String(count)}`);
+    }
+    return { count, queryOptions };
+}
 //# sourceMappingURL=database.js.map
