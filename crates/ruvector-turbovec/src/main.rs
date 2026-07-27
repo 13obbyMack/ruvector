@@ -1,6 +1,6 @@
 //! `turbovec-demo` — end-to-end **proof** that the TurboVec index (ADR-254)
 //! works correctly: compression, recall vs exact brute-force L2, estimator
-//! unbiasedness, determinism, and IdMap delete + filtered search.
+//! empirical estimator bias, determinism, and IdMap delete + filtered search.
 //!
 //! Run: `cargo run --release -p ruvector-turbovec`
 
@@ -44,7 +44,7 @@ fn recall_and_bias(bw: BitWidth, data: &[Vec<f32>], queries: &[Vec<f32>], dim: u
     }
     let recall = hits as f32 / total as f32;
 
-    // Mean signed cosine error (unbiasedness).
+    // Mean signed cosine error (empirical bias measurement).
     let mut sum_err = 0.0f64;
     let mut n = 0u64;
     for q in queries.iter().take(20) {
@@ -52,7 +52,7 @@ fn recall_and_bias(bw: BitWidth, data: &[Vec<f32>], queries: &[Vec<f32>], dim: u
         for (pos, x) in data.iter().enumerate().take(300) {
             let nx: f32 = x.iter().map(|t| t * t).sum::<f32>().sqrt();
             let true_cos = q.iter().zip(x).map(|(a, b)| a * b).sum::<f32>() / (nq * nx);
-            sum_err += (ix.estimate_cosine(q, pos) - true_cos) as f64;
+            sum_err += (ix.estimate_cosine(q, pos).unwrap() - true_cos) as f64;
             n += 1;
         }
     }

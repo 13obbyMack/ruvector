@@ -13,6 +13,26 @@ pub enum TurboVecError {
     #[error("dimension must be > 0")]
     ZeroDim,
 
+    /// An inserted vector contained NaN or infinity.
+    #[error("vector contains a non-finite value")]
+    NonFiniteVector,
+
+    /// A query contained NaN or infinity.
+    #[error("query contains a non-finite value")]
+    NonFiniteQuery,
+
+    /// A scoring helper was called before calibration was frozen.
+    #[error("index has not been finalized")]
+    NotFinalized,
+
+    /// A scoring helper was called with an invalid row position.
+    #[error("position {pos} is out of bounds for {len} encoded vectors")]
+    PositionOutOfBounds { pos: usize, len: usize },
+
+    /// Search was requested on an empty index.
+    #[error("index is empty")]
+    EmptyIndex,
+
     /// An external id was reused in `add_with_ids`.
     #[error("duplicate external id: {0}")]
     DuplicateId(u64),

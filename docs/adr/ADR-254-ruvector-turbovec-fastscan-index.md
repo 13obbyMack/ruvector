@@ -35,9 +35,9 @@ tags: [quantization, ann, vector-search, turboquant, fastscan, simd, lloyd-max, 
 
 **Accepted (M1 implemented).** The scalar reference milestone (M1) is
 implemented as `crates/ruvector-turbovec`: rotation reuse + Lloyd–Max 2/3/4-bit SQ
-+ TQ+ calibration + length-renormalized unbiased scoring + `IdMapIndex`
++ TQ+ calibration + empirically bias-corrected scoring + `IdMapIndex`
 (O(1) delete, filtered search). Build is green
-(`cargo build --release -p ruvector-turbovec`); 17 unit tests + 1 doc-test pass;
+(`cargo build --release -p ruvector-turbovec`); 21 unit tests + 1 doc-test pass;
 clippy clean. M2–M4 (FastScan SIMD kernel, AVX-512, dispatcher registration)
 remain future work. Measured proof below.
 
@@ -94,8 +94,9 @@ What we are **missing** is the regime that production vector DBs (FAISS
 - competitive recall **without** a mandatory f32 rerank pass.
 
 The upstream reference project ([RyanCodrai/turbovec]) *reports* this regime
-reaching ~16× compression (6,144 → 384 bytes for d=1536), R@1 competitive with or
-ahead of FAISS `IndexPQ` at 4-bit, and FastScan-class scan throughput on ARM —
+reaching ~16× code-only compression at 2-bit (6,144 → 384 bytes for d=1536),
+R@1 competitive with or ahead of FAISS `IndexPQ` at 4-bit, and FastScan-class
+scan throughput on ARM —
 all with online ingest and no training phase. **Those are the external project's
 numbers, not this crate's.** This crate's own *measured* results are the
 uniform-random worst-case table under "Validation" above (recall@10 of
@@ -130,9 +131,10 @@ ruvllm's codec, and build the missing multi-bit FastScan *search index*.**
 ## Decision
 
 Introduce **`crates/ruvector-turbovec`**, a multi-bit TurboQuant ANN index that
-implements the existing `ruvector_rabitq::AnnIndex` trait and exposes a FastScan
-SIMD kernel via the existing `VectorKernel`/`KernelCaps` contract, so it drops
-into the `ruvector-rulake` dispatcher (ADR-155/157) with no new plumbing.
+implements the existing `ruvector_rabitq::AnnIndex` trait. The scalar M1 in this
+PR is the correctness oracle; M2–M4 will expose a FastScan SIMD kernel through
+the existing `VectorKernel`/`KernelCaps` contract and register it with the
+`ruvector-rulake` dispatcher (ADR-155/157).
 
 Six techniques are ported/adapted from turbovec/TurboQuant:
 
@@ -176,10 +178,10 @@ lookups** (`vpshufb`/`tbl`) instead of arithmetic:
   (`_mm256_shuffle_epi8`), targeting `x86-64-v3` like rabitq does.
 - **ARM**: `NEON` `vqtbl1q_u8` nibble lookups.
 - **WASM**: scalar fallback (matches rabitq's wasm policy; bit-identical).
-Implements `VectorKernel`; advertises `accelerator: "cpu-simd-fastscan"` via
-`KernelCaps`. rabitq's existing AVX2/512 *popcount* kernels are **not**
-reusable here (popcount ≠ table-lookup), but the trait, dispatch, and
-determinism contract are.
+The M2 implementation will implement `VectorKernel` and advertise
+`accelerator: "cpu-simd-fastscan"` via `KernelCaps`. rabitq's existing AVX2/512
+*popcount* kernels are **not** reusable here (popcount ≠ table-lookup), but the
+trait, dispatch, and determinism contract are.
 
 ### T6 — Block-granularity filtered search + stable IDs
 - **Filtered search**: an allowlist is tested at **32-vector block
@@ -215,27 +217,34 @@ use ruvector_turbovec::{TurboVecIndex, IdMapIndex, BitWidth};
 
 let mut idx = TurboVecIndex::new(/*dim=*/1536, BitWidth::Four)?; // 4-bit
 idx.add(0, vector)?;                       // online ingest (AnnIndex)
-idx.add_batch(rows)?;                       // warms up TQ+ calibration on 1st batch
+for (id, row) in rows.into_iter().enumerate() {
+    idx.add(id + 1, row)?;
+}
+idx.finalize();                             // freeze TQ+ calibration
 let hits = idx.search(&query, 10)?;         // Vec<SearchResult{ id, score }>
 
 // External IDs + deletion + filtered search
 let mut m = IdMapIndex::new(1536, BitWidth::Four)?;
 m.add_with_ids(&vectors, &ids /* &[u64] */)?;
-m.remove(1002)?;                            // O(1)
+let removed = m.remove(1002);               // O(1)
 let hits = m.search_filtered(&query, 10, &allowlist /* &[u64] */)?;
 ```
 
 ## Consequences
 
 ### Positive
-- **Closes the 2–4-bit FastScan gap** — the one mainstream production ANN regime
-  ruvector lacks; makes us comparable to FAISS `IndexPQFastScan`/Milvus IVF-SQ.
-- **16× compression** with **online ingest, no training** (d=1536: 6 KB → 384 B).
+- **Establishes the scalar 2–4-bit search foundation** for the missing FastScan
+  regime. SIMD parity with FAISS/Milvus remains an explicit M2–M4 target.
+- **Compressed online ingest without k-means/codebook training.** TQ+
+  calibration still fits shift/scale values on the warm-up batch.
+- **Geometry-safe arbitrary dimensions.** Inputs are zero-padded and quantized
+  in the full next-power-of-two Hadamard space. At d=1536 this means 2048 coded
+  coordinates: about 11.6× at 2-bit and 5.9× at 4-bit including norm,
+  correction scalar, and ID.
 - **Recall without mandatory f32 rerank** (via T4 length-renormalized scoring),
   so the memory win is real, unlike 1-bit-with-rerank.
-- **Zero new plumbing** — implements existing `AnnIndex` + `VectorKernel`, so it
-  registers with the `ruvector-rulake` dispatcher and inherits its
-  determinism/witness contract.
+- **Reuses existing plumbing** — M1 implements `AnnIndex`; future SIMD work will
+  use the existing `VectorKernel`/dispatcher determinism contract.
 - **Composable**: the same block-SoA codes can later back an IVF posting list
   (`ruvector-rairs` IVF-SQ-FastScan) — a natural ADR-193 follow-up.
 
@@ -303,13 +312,15 @@ Implement on branch `claude/ruvector-turbovec-optimization-FhaDh` (this ADR),
 crate work in a follow-up PR. Milestones:
 
 1. **M1 — Scalar reference (no SIMD).** Rotation reuse + Lloyd–Max 2/3/4-bit +
-   TQ+ + length-renormalized scoring + `AnnIndex`. Recall + memory parity test
-   vs a brute f32 baseline on SIFT1M / a synthetic OpenAI-d1536 set. ✅ *done.*
+   TQ+ + length-renormalized scoring + `AnnIndex`. Uniform-random recall,
+   distortion, determinism, non-finite-input, and d=1536 geometry tests.
+   SIFT1M/production-embedding validation remains future work. ✅ *done.*
 2. **M2 — FastScan SIMD kernel.** AVX2 + NEON nibble-LUT, fuzzed bit-identical
    to M1's scalar scorer; `VectorKernel` impl; criterion bench in
    `benches/turbovec_bench.rs`. (3-bit width already shipped in M1, see D3.)
-3. **M3 — IdMap + filtered search + persistence.** O(1) delete, block-level
-   allowlist, `.tv` save/load round-trip test.
+3. **M3 — Persistence and block filtering.** M1 already includes `IdMapIndex`,
+   O(1) tombstone delete, and reference allowlist search. M3 adds block-level
+   short-circuiting and `.tv` save/load round-trip tests.
 4. **M4 — AVX-512BW kernel + rulake dispatcher registration.**
 5. **M5 — Paper-grade unbiased estimator (D1).** Optional two-stage MSE +
    1-bit-QJL-residual scoring as an accuracy upgrade over the `c_x` heuristic,
@@ -319,7 +330,8 @@ crate work in a follow-up PR. Milestones:
    stays the default fast path.
 
 **Acceptance (targets, to validate — not yet measured):**
-- ≥ **15× compression** at d=1536, 4-bit, incl. norm + calibration overhead.
+- ≥ **11.5× at 2-bit** and ≥ **5.8× at 4-bit** for d=1536, including padded
+  codes, norm, correction scalar, and ID.
 - **R@1 within ±1 point of, or better than,** the 1-bit-RaBitQ-with-rerank path
   at equal or lower memory.
 - FastScan kernel **≥ 3× faster** than the scalar reference scorer on x86-64-v3.

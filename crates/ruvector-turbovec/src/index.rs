@@ -6,14 +6,14 @@
 //! 2. `r = P · û`  (randomized Hadamard)    — reuse `ruvector_rabitq` (§T1)
 //! 3. `z_i = (r_i − shift_i)/scale_i`        — TQ+ calibration (§T3)
 //! 4. `q_i = argmin |z_i − centroid|`        — Lloyd–Max 2/3/4-bit SQ (§T2)
-//! 5. `c_x = ⟨r, r̂⟩ / ⟨r̂, r̂⟩`              — per-vector unbiased scale (§T4)
+//! 5. `c_x = ⟨r, r̂⟩ / ⟨r̂, r̂⟩`              — per-vector bias correction (§T4)
 //!
 //! Scoring a query `q` (orthogonal `P` preserves inner products, so
 //! `⟨r,s⟩ = ⟨û,q̂⟩ = cos`):
 //!
 //! ```text
 //!   s = P · q̂                                  (unit, rotated once / query)
-//!   cos_est = c_x · Σ_i r̂_i · s_i              (unbiased over random queries)
+//!   cos_est = c_x · Σ_i r̂_i · s_i              (empirical bias correction)
 //!   ⟨q,x⟩_est = ‖q‖ · ‖x‖ · cos_est
 //!   score = ‖q‖² + ‖x‖² − 2⟨q,x⟩_est ≈ ‖q − x‖²
 //! ```
@@ -32,7 +32,11 @@ pub const DEFAULT_WARMUP: usize = 256;
 
 /// A flat multi-bit TurboQuant index over `dim`-dimensional vectors.
 pub struct TurboVecIndex {
+    /// Public input dimensionality.
     dim: usize,
+    /// Full power-of-two Hadamard space. Keeping every rotated coordinate is
+    /// required for exact norm and inner-product preservation.
+    rotated_dim: usize,
     bw: BitWidth,
     rotation: RandomRotation,
     warmup: usize,
@@ -54,10 +58,12 @@ impl TurboVecIndex {
         if dim == 0 {
             return Err(TurboVecError::ZeroDim);
         }
+        let rotated_dim = dim.next_power_of_two();
         Ok(Self {
             dim,
+            rotated_dim,
             bw,
-            rotation: RandomRotation::hadamard(dim, seed),
+            rotation: RandomRotation::hadamard(rotated_dim, seed),
             warmup: DEFAULT_WARMUP,
             staging: Vec::new(),
             calibration: None,
@@ -94,15 +100,27 @@ impl TurboVecIndex {
     /// Bytes per encoded vector: packed code + norm(f32) + corr(f32) + id(usize).
     #[inline]
     pub fn bytes_per_vector(&self) -> usize {
-        self.bw.code_bytes(self.dim) + 4 + 4 + std::mem::size_of::<usize>()
+        self.bw.code_bytes(self.rotated_dim) + 4 + 4 + std::mem::size_of::<usize>()
     }
 
     /// Compression ratio of encoded storage vs raw `f32` (codes+scalars only,
     /// rotation/calibration are amortized shared overhead).
     pub fn compression_ratio(&self) -> f32 {
         let raw = (self.dim * 4) as f32;
-        let comp = (self.bw.code_bytes(self.dim) + 8) as f32; // code + norm + corr
+        let comp = (self.bw.code_bytes(self.rotated_dim) + 8) as f32; // code + norm + corr
         raw / comp
+    }
+
+    /// Rotate a normalized input in the full padded Hadamard space.
+    ///
+    /// Truncating a padded Hadamard output is not orthogonal when the input
+    /// dimension is far from a power of two (notably 1536 → 2048). Retaining
+    /// all padded coordinates preserves L2 geometry exactly.
+    fn rotate_unit(&self, unit: &[f32]) -> Vec<f32> {
+        debug_assert_eq!(unit.len(), self.dim);
+        let mut padded = vec![0.0; self.rotated_dim];
+        padded[..self.dim].copy_from_slice(unit);
+        self.rotation.apply(&padded)
     }
 
     /// Freeze calibration on the staged batch and encode everything. Idempotent.
@@ -121,10 +139,10 @@ impl TurboVecIndex {
             .map(|(_, v)| {
                 let mut u = v.clone();
                 normalize_inplace(&mut u);
-                self.rotation.apply(&u)
+                self.rotate_unit(&u)
             })
             .collect();
-        let cal = Calibration::fit(&rotated, self.dim);
+        let cal = Calibration::fit(&rotated, self.rotated_dim);
         // Encode each staged vector using the frozen calibration.
         let staged = std::mem::take(&mut self.staging);
         self.calibration = Some(cal);
@@ -149,7 +167,7 @@ impl TurboVecIndex {
             // Degenerate zero vector: store an all-zero code, neutral scalars.
             self.ids.push(id);
             self.codes
-                .extend(std::iter::repeat(0u8).take(self.bw.code_bytes(self.dim)));
+                .extend(std::iter::repeat(0u8).take(self.bw.code_bytes(self.rotated_dim)));
             self.norms.push(0.0);
             self.corr.push(0.0);
             return;
@@ -157,10 +175,10 @@ impl TurboVecIndex {
         for x in u.iter_mut() {
             *x /= norm;
         }
-        let r = self.rotation.apply(&u);
+        let r = self.rotate_unit(&u);
 
         // Quantize + reconstruct, accumulating ⟨r,r̂⟩ and ⟨r̂,r̂⟩ for c_x.
-        let mut q_codes = vec![0u8; self.dim];
+        let mut q_codes = vec![0u8; self.rotated_dim];
         let mut dot_r_rhat = 0.0f32;
         let mut dot_rhat = 0.0f32;
         for (i, (&ri, slot)) in r.iter().zip(q_codes.iter_mut()).enumerate() {
@@ -186,7 +204,7 @@ impl TurboVecIndex {
     /// The encoded code-slice for stored vector `pos`.
     #[inline]
     fn code_slice(&self, pos: usize) -> &[u8] {
-        let cb = self.bw.code_bytes(self.dim);
+        let cb = self.bw.code_bytes(self.rotated_dim);
         &self.codes[pos * cb..(pos + 1) * cb]
     }
 
@@ -195,7 +213,7 @@ impl TurboVecIndex {
     #[inline]
     fn estimate_l2(&self, pos: usize, s: &[f32], nq: f32, cal: &Calibration) -> f32 {
         let centroids = self.bw.centroids();
-        let codes = unpack(self.code_slice(pos), self.dim, self.bw);
+        let codes = unpack(self.code_slice(pos), self.rotated_dim, self.bw);
         let mut ip_unit = 0.0f32;
         for (i, (&code, &si)) in codes.iter().zip(s.iter()).enumerate() {
             let rhat = cal.reconstruct(i, centroids[code as usize]);
@@ -207,20 +225,37 @@ impl TurboVecIndex {
     }
 
     /// Estimated cosine similarity between `query` and stored vector `pos`.
-    /// Exposed for the bias/unbiasedness proof in tests and the demo.
-    pub fn estimate_cosine(&self, query: &[f32], pos: usize) -> f32 {
-        debug_assert!(self.is_finalized());
-        let cal = self.calibration.as_ref().expect("finalized");
+    /// Exposed for bias measurement in tests and the demo.
+    pub fn estimate_cosine(&self, query: &[f32], pos: usize) -> Result<f32> {
+        if query.len() != self.dim {
+            return Err(TurboVecError::DimMismatch {
+                expected: self.dim,
+                got: query.len(),
+            });
+        }
+        if !query.iter().all(|value| value.is_finite()) {
+            return Err(TurboVecError::NonFiniteQuery);
+        }
+        let cal = self
+            .calibration
+            .as_ref()
+            .ok_or(TurboVecError::NotFinalized)?;
+        if pos >= self.ids.len() {
+            return Err(TurboVecError::PositionOutOfBounds {
+                pos,
+                len: self.ids.len(),
+            });
+        }
         let mut qn = query.to_vec();
         normalize_inplace(&mut qn);
-        let s = self.rotation.apply(&qn);
+        let s = self.rotate_unit(&qn);
         let centroids = self.bw.centroids();
-        let codes = unpack(self.code_slice(pos), self.dim, self.bw);
+        let codes = unpack(self.code_slice(pos), self.rotated_dim, self.bw);
         let mut ip_unit = 0.0f32;
         for (i, (&code, &si)) in codes.iter().zip(s.iter()).enumerate() {
             ip_unit += cal.reconstruct(i, centroids[code as usize]) * si;
         }
-        self.corr[pos] * ip_unit
+        Ok(self.corr[pos] * ip_unit)
     }
 
     /// Shared search core (used by `AnnIndex::search`). When the index has not
@@ -234,11 +269,17 @@ impl TurboVecIndex {
                 got: query.len(),
             });
         }
+        if !query.iter().all(|value| value.is_finite()) {
+            return Err(TurboVecError::NonFiniteQuery);
+        }
+        if self.count() == 0 {
+            return Err(TurboVecError::EmptyIndex);
+        }
         let mut scored: Vec<SearchResult> = if let Some(cal) = self.calibration.as_ref() {
             let mut qn = query.to_vec();
             let nq: f32 = qn.iter().map(|x| x * x).sum::<f32>().sqrt();
             normalize_inplace(&mut qn);
-            let s = self.rotation.apply(&qn);
+            let s = self.rotate_unit(&qn);
             (0..self.ids.len())
                 .map(|pos| SearchResult {
                     id: self.ids[pos],
@@ -255,8 +296,14 @@ impl TurboVecIndex {
                 })
                 .collect()
         };
-        scored.sort_unstable_by(|a, b| a.score.total_cmp(&b.score));
-        scored.truncate(k);
+        let compare = |a: &SearchResult, b: &SearchResult| {
+            a.score.total_cmp(&b.score).then_with(|| a.id.cmp(&b.id))
+        };
+        if k < scored.len() {
+            scored.select_nth_unstable_by(k, compare);
+            scored.truncate(k);
+        }
+        scored.sort_unstable_by(compare);
         Ok(scored)
     }
 
@@ -288,6 +335,11 @@ impl AnnIndex for TurboVecIndex {
                 actual: vector.len(),
             });
         }
+        if !vector.iter().all(|value| value.is_finite()) {
+            return Err(ruvector_rabitq::error::RabitqError::InvalidParameter(
+                "vector contains a non-finite value".to_string(),
+            ));
+        }
         if self.is_finalized() {
             self.encode_and_store(id, &vector);
         } else {
@@ -302,11 +354,15 @@ impl AnnIndex for TurboVecIndex {
     fn search(&self, query: &[f32], k: usize) -> ruvector_rabitq::error::Result<Vec<SearchResult>> {
         // Propagate dimension mismatches rather than masking them as an empty
         // result (which would hide caller bugs).
-        self.search_core(query, k).map_err(|_| {
-            ruvector_rabitq::error::RabitqError::DimensionMismatch {
-                expected: self.dim,
-                actual: query.len(),
+        self.search_core(query, k).map_err(|error| match error {
+            TurboVecError::DimMismatch { expected, got } => {
+                ruvector_rabitq::error::RabitqError::DimensionMismatch {
+                    expected,
+                    actual: got,
+                }
             }
+            TurboVecError::EmptyIndex => ruvector_rabitq::error::RabitqError::EmptyIndex,
+            other => ruvector_rabitq::error::RabitqError::InvalidParameter(other.to_string()),
         })
     }
 
@@ -410,7 +466,7 @@ mod tests {
             for (pos, x) in data.iter().enumerate().take(200) {
                 let nx: f32 = x.iter().map(|t| t * t).sum::<f32>().sqrt();
                 let true_cos = q.iter().zip(x).map(|(a, b)| a * b).sum::<f32>() / (nq * nx);
-                let est_cos = ix.estimate_cosine(q, pos);
+                let est_cos = ix.estimate_cosine(q, pos).unwrap();
                 sum_err += (est_cos - true_cos) as f64;
                 n += 1;
             }
@@ -432,6 +488,55 @@ mod tests {
         // search with wrong-length query must error, not return empty.
         assert!(ix.search(&[0.0; 8], 1).is_err());
         assert!(ix.search(&[0.0; 16], 1).is_ok());
+    }
+
+    #[test]
+    fn rejects_non_finite_vectors_and_queries() {
+        let mut ix = TurboVecIndex::new(16, BitWidth::Four).unwrap();
+        let mut bad = vec![0.0; 16];
+        bad[3] = f32::NAN;
+        assert!(ix.add(0, bad).is_err());
+        ix.add(0, vec![0.1; 16]).unwrap();
+        ix.finalize();
+
+        let mut bad_query = vec![0.0; 16];
+        bad_query[5] = f32::INFINITY;
+        assert!(ix.search(&bad_query, 1).is_err());
+        assert!(matches!(
+            ix.estimate_cosine(&bad_query, 0),
+            Err(TurboVecError::NonFiniteQuery)
+        ));
+    }
+
+    #[test]
+    fn padded_rotation_preserves_geometry_at_1536_dimensions() {
+        let dim = 1536;
+        let ix = TurboVecIndex::with_seed(dim, BitWidth::Four, 17).unwrap();
+        assert_eq!(ix.rotated_dim, 2048);
+
+        let mut a: Vec<f32> = (0..dim).map(|i| ((i * 17) as f32).sin()).collect();
+        let mut b: Vec<f32> = (0..dim).map(|i| ((i * 29) as f32).cos()).collect();
+        normalize_inplace(&mut a);
+        normalize_inplace(&mut b);
+        let dot_before: f32 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
+        let ra = ix.rotate_unit(&a);
+        let rb = ix.rotate_unit(&b);
+        let dot_after: f32 = ra.iter().zip(&rb).map(|(x, y)| x * y).sum();
+        let norm_a: f32 = ra.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm_b: f32 = rb.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+        assert!((norm_a - 1.0).abs() < 1e-4);
+        assert!((norm_b - 1.0).abs() < 1e-4);
+        assert!((dot_before - dot_after).abs() < 1e-4);
+    }
+
+    #[test]
+    fn empty_index_returns_empty_index_error() {
+        let ix = TurboVecIndex::new(8, BitWidth::Two).unwrap();
+        assert!(matches!(
+            ix.search(&[0.0; 8], 1),
+            Err(ruvector_rabitq::error::RabitqError::EmptyIndex)
+        ));
     }
 
     #[test]

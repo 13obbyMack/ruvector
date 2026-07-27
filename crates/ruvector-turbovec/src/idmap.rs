@@ -84,6 +84,9 @@ impl IdMapIndex {
                 got: vector.len(),
             });
         }
+        if !vector.iter().all(|value| value.is_finite()) {
+            return Err(TurboVecError::NonFiniteVector);
+        }
         if self.id_to_pos.contains_key(&id) {
             return Err(TurboVecError::DuplicateId(id));
         }
@@ -111,6 +114,21 @@ impl IdMapIndex {
                 vectors: vectors.len(),
                 ids: ids.len(),
             });
+        }
+        let mut batch_ids = HashSet::with_capacity(ids.len());
+        for (vector, &id) in vectors.iter().zip(ids) {
+            if vector.len() != self.inner.dim() {
+                return Err(TurboVecError::DimMismatch {
+                    expected: self.inner.dim(),
+                    got: vector.len(),
+                });
+            }
+            if !vector.iter().all(|value| value.is_finite()) {
+                return Err(TurboVecError::NonFiniteVector);
+            }
+            if self.id_to_pos.contains_key(&id) || !batch_ids.insert(id) {
+                return Err(TurboVecError::DuplicateId(id));
+            }
         }
         for (v, &id) in vectors.iter().zip(ids.iter()) {
             self.add_with_id(id, v.clone())?;
@@ -241,6 +259,25 @@ mod tests {
             ix.add_with_ids(&vectors, &ids),
             Err(TurboVecError::BatchLenMismatch { vectors: 2, ids: 1 })
         ));
+    }
+
+    #[test]
+    fn batch_validation_is_atomic() {
+        let mut ix = IdMapIndex::new(8, BitWidth::Two).unwrap();
+        let vectors = vec![vec![1.0; 8], vec![2.0; 8]];
+        assert!(matches!(
+            ix.add_with_ids(&vectors, &[7, 7]),
+            Err(TurboVecError::DuplicateId(7))
+        ));
+        assert!(ix.is_empty());
+
+        let mut invalid = vec![2.0; 8];
+        invalid[0] = f32::NAN;
+        assert!(matches!(
+            ix.add_with_ids(&[vec![1.0; 8], invalid], &[1, 2]),
+            Err(TurboVecError::NonFiniteVector)
+        ));
+        assert!(ix.is_empty());
     }
 
     #[test]

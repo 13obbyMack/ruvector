@@ -6,14 +6,14 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "TurboVec: multi-bit TurboQuant FastScan-style ANN index (2/3/4-bit Lloyd-Max scalar quantization + TQ+ per-coordinate calibration + length-renormalized unbiased scoring). Implements ADR-254."
+description = "TurboVec: multi-bit TurboQuant ANN scalar reference with 2/3/4-bit Lloyd-Max quantization, TQ+ calibration, and length-renormalized scoring."
 
 [[bin]]
 name = "turbovec-demo"
 path = "src/main.rs"
 
 [dependencies]
-ruvector-rabitq = { path = "../ruvector-rabitq" }
+ruvector-rabitq = { version = "2.2.0", path = "../ruvector-rabitq" }
 # `rand` is a normal dependency because the `turbovec-demo` binary (and the
 # unit tests) use it; binaries cannot pull from `[dev-dependencies]`.
 rand = { workspace = true }

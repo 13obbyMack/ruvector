@@ -15,17 +15,21 @@
 //!
 //! ## What it adds (ADR-254 §T2–T4, T6)
 //!
-//! - **Lloyd–Max 2/4-bit scalar quantization** ([`quantize`]) — data-independent
+//! - **Lloyd–Max 2/3/4-bit scalar quantization** ([`quantize`]) — data-independent
 //!   centroids, online ingest, no training.
 //! - **TQ+ per-coordinate calibration** ([`calibrate`]) — frozen after warm-up.
-//! - **Length-renormalized unbiased scoring** — a per-vector scalar makes the
-//!   inner-product estimator unbiased at zero query-time cost, so recall holds
-//!   *without* a mandatory f32 rerank.
+//! - **Length-renormalized scoring** — a per-vector scalar empirically reduces
+//!   inner-product bias at zero query-time cost. It is not the paper's
+//!   provably-unbiased QJL-residual estimator.
 //! - **`IdMapIndex`** ([`idmap`]) — external `u64` ids, `O(1)` deletion,
 //!   allowlist-filtered search.
 //!
 //! The FastScan nibble-LUT SIMD kernel (§T5) is a separate future milestone; the
 //! scalar scorer here is its determinism oracle.
+//!
+//! Non-power-of-two input dimensions are zero-padded to the next power of two
+//! and quantized in that full rotated space. This preserves L2 geometry (unlike
+//! truncating a padded Hadamard transform) at the cost of additional code bytes.
 //!
 //! ## Example
 //!
