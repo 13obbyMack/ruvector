@@ -152,7 +152,10 @@ fn run_case(n: usize) {
 }
 
 fn main() {
-    println!("BENCHMARK hardware=Apple_M2_Max threads=1 profile=release dim={DIM} k={K}");
+    let threads = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1);
+    println!("BENCHMARK threads={threads} profile=release dim={DIM} k={K}");
     for n in [20_000, 100_000] {
         run_case(n);
     }
