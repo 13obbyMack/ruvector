@@ -13,6 +13,10 @@ on:
       - '.github/workflows/postgres-extension-ci.yml'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -101,6 +105,10 @@ jobs:
         run: cargo pgrx init --pg${{ matrix.pg_version }}=/opt/homebrew/opt/postgresql@${{ matrix.pg_version }}/bin/pg_config
         working-directory: crates/ruvector-postgres
 
+      - name: Configure macOS extension linking
+        if: runner.os == 'macOS'
+        run: echo 'RUSTFLAGS=-D warnings -C link-arg=-undefined -C link-arg=dynamic_lookup' >> "$GITHUB_ENV"
+
       - name: Check code formatting
         run: cargo fmt --all -- --check
         working-directory: crates/ruvector-postgres
@@ -159,6 +167,7 @@ jobs:
   benchmark:
     name: Benchmark
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: github.event_name == 'pull_request'
 
     steps:
@@ -185,7 +194,19 @@ jobs:
         working-directory: crates/ruvector-postgres
 
       - name: Run benchmarks
-        run: cargo bench --no-default-features --features pg17 -- --output-format bencher | tee benchmark-output.txt
+        # The quantization benches link extension entry points that PostgreSQL
+        # supplies at load time, so they cannot be executed as standalone
+        # Linux binaries. Run the self-contained Criterion targets here; the
+        # quantization paths are covered by the pgrx test jobs above.
+        run: |
+          set -o pipefail
+          cargo bench --no-default-features --features pg17 \
+            --bench distance_bench \
+            --bench e2e_bench \
+            --bench hybrid_bench \
+            --bench index_bench \
+            --bench integrity_bench \
+            -- --output-format bencher | tee benchmark-output.txt
         working-directory: crates/ruvector-postgres
 
       - name: Store benchmark result
