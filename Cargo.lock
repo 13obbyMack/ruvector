@@ -1523,15 +1523,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc14f565cf027a105f7a44ccf9e5b424348421a1d8952a8fc9d499d313107789"
 
 [[package]]
-name = "concurrent-queue"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2677,11 +2668,10 @@ dependencies = [
 
 [[package]]
 name = "event-listener"
-version = "5.4.1"
+version = "5.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13b66accf52311f30a0db42147dadea9850cb48cd070028831ae5f5d4b856ab"
+checksum = "5a23add41df1562121a9393cb065eab5146a1242410f23a644851e90cfd669d2"
 dependencies = [
- "concurrent-queue",
  "parking",
  "pin-project-lite",
 ]
@@ -9219,6 +9209,7 @@ dependencies = [
  "rkyv",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "simsimd",
  "tempfile",
  "thiserror 2.0.18",
@@ -9226,6 +9217,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "unicode-normalization",
  "uuid",
 ]
 
@@ -9804,6 +9796,7 @@ dependencies = [
  "ruvector-core 2.3.0",
  "serde_json",
  "sha2 0.10.9",
+ "tempfile",
  "thiserror 2.0.18",
  "tokenizers",
 ]
@@ -10583,6 +10576,7 @@ dependencies = [
  "csv",
  "flate2",
  "hdf5",
+ "ndarray 0.15.6",
  "rand 0.8.6",
  "rand_distr 0.4.3",
  "rayon",
