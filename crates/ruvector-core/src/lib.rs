@@ -37,6 +37,7 @@ pub mod agenticdb;
 
 pub mod distance;
 pub mod embeddings;
+pub mod encoding;
 pub mod error;
 pub mod index;
 pub mod pdx;

@@ -212,6 +212,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::identity_op, clippy::neg_multiply)] // literal per-dim products mirror the layout
     fn known_small_case() {
         // dim 4: dims 0,1 in low nibbles of bytes 0,1; dims 2,3 in high.
         // code: dim0=15 (level 127), dim1=0 (level -127), dim2=8 (6), dim3=7 (-6)

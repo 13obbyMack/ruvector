@@ -139,7 +139,24 @@ pub enum QuantizationConfig {
         /// exact rescoring pass. The recall/latency dial; default 4.
         #[serde(default = "default_turbo4_rescore_multiplier")]
         rescore_multiplier: usize,
+        /// Outcome-level policy governing adaptive escalation (ADR-297 §3/§9).
+        #[serde(default)]
+        policy: SearchPolicy,
     },
+}
+
+/// Outcome-level search policy (ADR-297 §9). Users pick a goal; the engine
+/// maps it to escalation thresholds, rescore pools, and verification tiers —
+/// no quantization knowledge required.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SearchPolicy {
+    /// Maximum retrieval quality: aggressive escalation on uncertain queries.
+    Quality,
+    /// Default trade-off: escalate only when the result margin is unstable.
+    #[default]
+    Balanced,
+    /// Minimum memory/latency: never escalate beyond the base quantized pass.
+    MaxCompression,
 }
 
 /// Default rotation seed for [`QuantizationConfig::Turbo4`].

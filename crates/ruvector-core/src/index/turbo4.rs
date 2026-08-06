@@ -14,12 +14,44 @@
 
 use crate::error::{Result, RuvectorError};
 use crate::index::VectorIndex;
-use crate::types::{DistanceMetric, HnswConfig, SearchResult, VectorId};
+use crate::types::{DistanceMetric, HnswConfig, SearchPolicy, SearchResult, VectorId};
 use dashmap::DashMap;
 use hnsw_rs::prelude::*;
 use parking_lot::RwLock;
-use ruvector_turboquant::{score, Metric, Turbo4Codec};
+use ruvector_turboquant::{score, Metric, Turbo4Codec, Turbo4Query};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+/// Escalation parameters derived from a [`SearchPolicy`] (ADR-297 §3/§9):
+/// relative score-margin below which a query is "uncertain", the ef widening
+/// factor per escalation round, and how many rounds are allowed.
+struct EscalationParams {
+    margin_threshold: f32,
+    ef_mult: usize,
+    max_rounds: usize,
+}
+
+impl EscalationParams {
+    fn for_policy(policy: SearchPolicy) -> Self {
+        match policy {
+            SearchPolicy::Quality => Self {
+                margin_threshold: 0.05,
+                ef_mult: 3,
+                max_rounds: 2,
+            },
+            SearchPolicy::Balanced => Self {
+                margin_threshold: 0.02,
+                ef_mult: 2,
+                max_rounds: 1,
+            },
+            SearchPolicy::MaxCompression => Self {
+                margin_threshold: 0.0,
+                ef_mult: 1,
+                max_rounds: 0,
+            },
+        }
+    }
+}
 
 /// Distance functor over Turbo4 blobs. Chooses the kernel from blob lengths:
 /// hnsw_rs passes the search query straight through to `eval`, which is what
@@ -84,6 +116,10 @@ pub struct Turbo4HnswIndex {
     metric: Metric,
     dimensions: usize,
     rescore_multiplier: usize,
+    escalation: EscalationParams,
+    /// Adaptive-plane telemetry: total queries / queries that escalated.
+    queries: AtomicU64,
+    escalated: AtomicU64,
 }
 
 impl Turbo4HnswIndex {
@@ -94,6 +130,7 @@ impl Turbo4HnswIndex {
         config: HnswConfig,
         rotation_seed: u64,
         rescore_multiplier: usize,
+        policy: SearchPolicy,
     ) -> Result<Self> {
         let metric = to_turbo_metric(metric)?;
         let codec = Turbo4Codec::new(dimensions, rotation_seed).map_err(|e| {
@@ -125,12 +162,68 @@ impl Turbo4HnswIndex {
             metric,
             dimensions,
             rescore_multiplier: rescore_multiplier.max(1),
+            escalation: EscalationParams::for_policy(policy),
+            queries: AtomicU64::new(0),
+            escalated: AtomicU64::new(0),
         })
     }
 
     /// Stored bytes per vector (`D/2 + 8`).
     pub fn code_len(&self) -> usize {
         self.codec.code_len()
+    }
+
+    /// Adaptive-plane telemetry: `(total_queries, escalated_queries)`.
+    /// A healthy workload escalates only a small fraction (~5–15 %).
+    pub fn adaptive_stats(&self) -> (u64, u64) {
+        (
+            self.queries.load(Ordering::Relaxed),
+            self.escalated.load(Ordering::Relaxed),
+        )
+    }
+
+    /// One traversal + exact-rescore pass. Returns the full rescored
+    /// candidate list, ascending — the margin between `list[k-1]` and
+    /// `list[k]` is the stability signal for adaptive escalation.
+    fn traverse_and_rescore(
+        &self,
+        inner: &Turbo4Inner,
+        prepared: &Turbo4Query,
+        fetch: usize,
+        ef: usize,
+    ) -> Vec<SearchResult> {
+        let neighbors = inner.hnsw.search(&prepared.blob, fetch, ef);
+        let mut results: Vec<SearchResult> = neighbors
+            .into_iter()
+            .filter_map(|n| {
+                let id = inner.idx_to_id.get(&n.d_id)?.clone();
+                let code = inner.codes.get(&id)?;
+                let dist = score::rescore(self.metric, prepared, code.value(), self.dimensions);
+                Some(SearchResult {
+                    id,
+                    score: dist,
+                    vector: None,
+                    metadata: None,
+                })
+            })
+            .collect();
+        results.sort_unstable_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results
+    }
+
+    /// Relative margin between the last kept and first dropped candidate.
+    /// `f32::INFINITY` when nothing is dropped (result already exhaustive).
+    fn boundary_margin(results: &[SearchResult], k: usize) -> f32 {
+        if results.len() <= k || k == 0 {
+            return f32::INFINITY;
+        }
+        let kept = results[k - 1].score;
+        let dropped = results[k].score;
+        (dropped - kept) / kept.abs().max(1e-6)
     }
 
     /// Search with an explicit `ef_search`.
@@ -159,33 +252,43 @@ impl Turbo4HnswIndex {
         if inner.codes.is_empty() {
             return Ok(vec![]);
         }
+        self.queries.fetch_add(1, Ordering::Relaxed);
 
-        // Over-fetch for the exact rescoring pass.
-        let fetch = k.saturating_mul(self.rescore_multiplier);
-        let effective_ef = ef_search.max(fetch);
-        let neighbors = inner.hnsw.search(&prepared.blob, fetch, effective_ef);
+        // Base pass: over-fetch for the exact rescoring step.
+        let mut fetch = k.saturating_mul(self.rescore_multiplier);
+        let mut ef = ef_search.max(fetch);
+        let mut results = self.traverse_and_rescore(&inner, &prepared, fetch, ef);
 
-        // Re-rank candidates with the exact f32 query against stored codes.
-        let mut results: Vec<SearchResult> = neighbors
-            .into_iter()
-            .filter_map(|n| {
-                let id = inner.idx_to_id.get(&n.d_id)?.clone();
-                let code = inner.codes.get(&id)?;
-                let dist = score::rescore(self.metric, &prepared, code.value(), self.dimensions);
-                Some(SearchResult {
-                    id,
-                    score: dist,
-                    vector: None,
-                    metadata: None,
-                })
-            })
-            .collect();
+        // Adaptive escalation (ADR-297 §3): if the kept/dropped boundary sits
+        // inside the quantization noise band, widen the search. Stop as soon
+        // as the top-k membership is stable across rounds — that's the
+        // candidate-stability signal, independent of absolute scores.
+        let mut round = 0;
+        let mut did_escalate = false;
+        while round < self.escalation.max_rounds
+            && Self::boundary_margin(&results, k) < self.escalation.margin_threshold
+        {
+            did_escalate = true;
+            fetch = fetch.saturating_mul(2);
+            ef = ef.saturating_mul(self.escalation.ef_mult);
+            let wider = self.traverse_and_rescore(&inner, &prepared, fetch, ef);
 
-        results.sort_unstable_by(|a, b| {
-            a.score
-                .partial_cmp(&b.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+            let stable = wider.len() >= k
+                && results.len() >= k
+                && wider[..k]
+                    .iter()
+                    .zip(&results[..k])
+                    .all(|(a, b)| a.id == b.id);
+            results = wider;
+            round += 1;
+            if stable {
+                break;
+            }
+        }
+        if did_escalate {
+            self.escalated.fetch_add(1, Ordering::Relaxed);
+        }
+
         results.truncate(k);
         Ok(results)
     }
@@ -326,7 +429,14 @@ mod tests {
 
     #[test]
     fn manhattan_is_rejected() {
-        let err = Turbo4HnswIndex::new(64, DistanceMetric::Manhattan, HnswConfig::default(), 42, 4);
+        let err = Turbo4HnswIndex::new(
+            64,
+            DistanceMetric::Manhattan,
+            HnswConfig::default(),
+            42,
+            4,
+            SearchPolicy::Balanced,
+        );
         assert!(err.is_err());
     }
 
@@ -380,7 +490,14 @@ mod tests {
             .map(|(i, v)| (format!("v{i}"), v.clone()))
             .collect();
 
-        let mut t4 = Turbo4HnswIndex::new(dim, DistanceMetric::Euclidean, config.clone(), 42, 8)?;
+        let mut t4 = Turbo4HnswIndex::new(
+            dim,
+            DistanceMetric::Euclidean,
+            config.clone(),
+            42,
+            8,
+            SearchPolicy::Balanced,
+        )?;
         t4.add_batch(entries.clone())?;
         assert_eq!(t4.len(), n);
         let mut f32_ix = HnswIndex::new(dim, DistanceMetric::Euclidean, config)?;
@@ -453,7 +570,14 @@ mod tests {
             .enumerate()
             .map(|(i, v)| (format!("v{i}"), v.clone()))
             .collect();
-        let mut t4 = Turbo4HnswIndex::new(dim, DistanceMetric::Euclidean, config, 42, 8)?;
+        let mut t4 = Turbo4HnswIndex::new(
+            dim,
+            DistanceMetric::Euclidean,
+            config,
+            42,
+            8,
+            SearchPolicy::Balanced,
+        )?;
         t4.add_batch(entries)?;
 
         let queries = gauss_vecs(20, dim, 12345);
@@ -486,7 +610,14 @@ mod tests {
     fn self_query_returns_self_first() -> Result<()> {
         let dim = 64;
         let config = HnswConfig::default();
-        let mut index = Turbo4HnswIndex::new(dim, DistanceMetric::Cosine, config, 42, 4)?;
+        let mut index = Turbo4HnswIndex::new(
+            dim,
+            DistanceMetric::Cosine,
+            config,
+            42,
+            4,
+            SearchPolicy::Balanced,
+        )?;
         let vectors = gauss_vecs(50, dim, 3);
         for (i, v) in vectors.iter().enumerate() {
             index.add(format!("v{i}"), v.clone())?;
@@ -496,10 +627,132 @@ mod tests {
         Ok(())
     }
 
+    /// Adaptive escalation (ADR-297 §3): MaxCompression must never escalate;
+    /// Quality must escalate on distance-concentrated (uncertain) queries and
+    /// must not lose recall relative to the non-escalating policy.
+    #[test]
+    fn adaptive_escalation_follows_policy() -> Result<()> {
+        let dim = 128;
+        let n = 400;
+        let config = HnswConfig {
+            m: 16,
+            ef_construction: 200,
+            ef_search: 60,
+            max_elements: 1000,
+        };
+        // i.i.d. Gaussian ⇒ tight boundary margins ⇒ escalation should fire.
+        let vectors = gauss_vecs(n, dim, 21);
+        let entries: Vec<_> = vectors
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (format!("v{i}"), v.clone()))
+            .collect();
+
+        let mut fixed = Turbo4HnswIndex::new(
+            dim,
+            DistanceMetric::Euclidean,
+            config.clone(),
+            42,
+            2,
+            SearchPolicy::MaxCompression,
+        )?;
+        fixed.add_batch(entries.clone())?;
+        let mut adaptive = Turbo4HnswIndex::new(
+            dim,
+            DistanceMetric::Euclidean,
+            config,
+            42,
+            2,
+            SearchPolicy::Quality,
+        )?;
+        adaptive.add_batch(entries)?;
+
+        let queries = gauss_vecs(25, dim, 4242);
+        let (mut fixed_hits, mut adaptive_hits, mut total) = (0usize, 0usize, 0usize);
+        for q in &queries {
+            let mut truth: Vec<(usize, f32)> = vectors
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (i, l2(q, v)))
+                .collect();
+            truth.sort_by(|a, b| a.1.total_cmp(&b.1));
+            let top10: std::collections::HashSet<String> =
+                truth[..10].iter().map(|(i, _)| format!("v{i}")).collect();
+            fixed_hits += fixed
+                .search(q, 10)?
+                .iter()
+                .filter(|r| top10.contains(&r.id))
+                .count();
+            adaptive_hits += adaptive
+                .search(q, 10)?
+                .iter()
+                .filter(|r| top10.contains(&r.id))
+                .count();
+            total += 10;
+        }
+
+        let (fq, fe) = fixed.adaptive_stats();
+        assert_eq!(fq, 25);
+        assert_eq!(fe, 0, "MaxCompression must never escalate");
+
+        let (aq, ae) = adaptive.adaptive_stats();
+        assert_eq!(aq, 25);
+        assert!(
+            ae > 0,
+            "Quality policy should escalate on concentrated Gaussian queries"
+        );
+        assert!(
+            adaptive_hits >= fixed_hits,
+            "escalation must not lose recall: adaptive {adaptive_hits} vs fixed {fixed_hits} of {total}"
+        );
+        Ok(())
+    }
+
+    /// Easy well-separated queries must not trigger escalation under
+    /// Balanced — the ~5–15 % escalation budget depends on margins staying
+    /// wide when results are unambiguous.
+    #[test]
+    fn easy_queries_do_not_escalate() -> Result<()> {
+        let dim = 64;
+        let config = HnswConfig::default();
+        let mut index = Turbo4HnswIndex::new(
+            dim,
+            DistanceMetric::Euclidean,
+            config,
+            42,
+            4,
+            SearchPolicy::Balanced,
+        )?;
+        // Well-separated clusters of exactly k members, so the kept/dropped
+        // boundary falls BETWEEN clusters (wide margin). A boundary inside a
+        // cluster is genuinely ambiguous and escalating on it is correct.
+        let vectors = clustered_vecs(200, dim, 5, 0.05, 33);
+        for (i, v) in vectors.iter().enumerate() {
+            index.add(format!("v{i}"), v.iter().map(|x| x * 10.0).collect())?;
+        }
+        for j in 0..10 {
+            let q: Vec<f32> = vectors[j * 20].iter().map(|x| x * 10.0).collect();
+            index.search(&q, 5)?;
+        }
+        let (queries, escalated) = index.adaptive_stats();
+        assert_eq!(queries, 10);
+        assert!(
+            escalated <= 2,
+            "well-separated queries escalated {escalated}/10 times"
+        );
+        Ok(())
+    }
+
     #[test]
     fn empty_index_is_safe() -> Result<()> {
-        let index =
-            Turbo4HnswIndex::new(64, DistanceMetric::Euclidean, HnswConfig::default(), 42, 4)?;
+        let index = Turbo4HnswIndex::new(
+            64,
+            DistanceMetric::Euclidean,
+            HnswConfig::default(),
+            42,
+            4,
+            SearchPolicy::Balanced,
+        )?;
         assert!(index.search(&vec![0.5; 64], 5)?.is_empty());
         Ok(())
     }
