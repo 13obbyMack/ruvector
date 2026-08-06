@@ -108,6 +108,46 @@ struct Turbo4Inner {
     next_idx: usize,
 }
 
+/// Serializable state of a [`Turbo4HnswIndex`]. Only codes and mappings are
+/// stored — the graph is rebuilt deterministically on load (same approach as
+/// the f32 `HnswState`), and the codec is reconstructed from
+/// `(dimensions, rotation_seed)`, which is exactly why ADR-296 requires the
+/// rotation to be bit-stable.
+#[derive(bincode::Encode, bincode::Decode)]
+struct Turbo4State {
+    codes: Vec<(String, Vec<u8>)>,
+    id_to_idx: Vec<(String, usize)>,
+    idx_to_id: Vec<(usize, String)>,
+    next_idx: usize,
+    m: usize,
+    ef_construction: usize,
+    ef_search: usize,
+    max_elements: usize,
+    dimensions: usize,
+    /// 0 = Euclidean, 1 = Cosine, 2 = DotProduct.
+    metric: u8,
+    rotation_seed: u64,
+    rescore_multiplier: usize,
+    /// 0 = Quality, 1 = Balanced, 2 = MaxCompression.
+    policy: u8,
+}
+
+fn policy_to_u8(p: SearchPolicy) -> u8 {
+    match p {
+        SearchPolicy::Quality => 0,
+        SearchPolicy::Balanced => 1,
+        SearchPolicy::MaxCompression => 2,
+    }
+}
+
+fn policy_from_u8(v: u8) -> SearchPolicy {
+    match v {
+        0 => SearchPolicy::Quality,
+        2 => SearchPolicy::MaxCompression,
+        _ => SearchPolicy::Balanced,
+    }
+}
+
 /// HNSW index storing only Turbo4 packed codes.
 pub struct Turbo4HnswIndex {
     inner: Arc<RwLock<Turbo4Inner>>,
@@ -115,7 +155,9 @@ pub struct Turbo4HnswIndex {
     config: HnswConfig,
     metric: Metric,
     dimensions: usize,
+    rotation_seed: u64,
     rescore_multiplier: usize,
+    policy: SearchPolicy,
     escalation: EscalationParams,
     /// Adaptive-plane telemetry: total queries / queries that escalated.
     queries: AtomicU64,
@@ -161,11 +203,114 @@ impl Turbo4HnswIndex {
             config,
             metric,
             dimensions,
+            rotation_seed,
             rescore_multiplier: rescore_multiplier.max(1),
+            policy,
             escalation: EscalationParams::for_policy(policy),
             queries: AtomicU64::new(0),
             escalated: AtomicU64::new(0),
         })
+    }
+
+    /// Serialize codes + mappings + parameters (bincode). The graph itself is
+    /// not stored; it is rebuilt deterministically by [`Self::deserialize`].
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        let inner = self.inner.read();
+        let metric_u8 = match self.metric {
+            Metric::Euclidean => 0u8,
+            Metric::Cosine => 1,
+            Metric::DotProduct => 2,
+        };
+        let state = Turbo4State {
+            codes: inner
+                .codes
+                .iter()
+                .map(|e| (e.key().clone(), e.value().clone()))
+                .collect(),
+            id_to_idx: inner
+                .id_to_idx
+                .iter()
+                .map(|e| (e.key().clone(), *e.value()))
+                .collect(),
+            idx_to_id: inner
+                .idx_to_id
+                .iter()
+                .map(|e| (*e.key(), e.value().clone()))
+                .collect(),
+            next_idx: inner.next_idx,
+            m: self.config.m,
+            ef_construction: self.config.ef_construction,
+            ef_search: self.config.ef_search,
+            max_elements: self.config.max_elements,
+            dimensions: self.dimensions,
+            metric: metric_u8,
+            rotation_seed: self.rotation_seed,
+            rescore_multiplier: self.rescore_multiplier,
+            policy: policy_to_u8(self.policy),
+        };
+        bincode::encode_to_vec(&state, bincode::config::standard()).map_err(|e| {
+            RuvectorError::SerializationError(format!("Failed to serialize Turbo4 index: {e}"))
+        })
+    }
+
+    /// Rebuild an index from [`Self::serialize`] output. Codes are inserted
+    /// into a fresh graph in index order; vectors are never re-encoded (the
+    /// stored blobs are the source of truth).
+    pub fn deserialize(bytes: &[u8]) -> Result<Self> {
+        let (state, _): (Turbo4State, usize) =
+            bincode::decode_from_slice(bytes, bincode::config::standard()).map_err(|e| {
+                RuvectorError::SerializationError(format!(
+                    "Failed to deserialize Turbo4 index: {e}"
+                ))
+            })?;
+        let metric = match state.metric {
+            0 => DistanceMetric::Euclidean,
+            1 => DistanceMetric::Cosine,
+            2 => DistanceMetric::DotProduct,
+            other => {
+                return Err(RuvectorError::SerializationError(format!(
+                    "unknown Turbo4 metric tag {other}"
+                )))
+            }
+        };
+        let config = HnswConfig {
+            m: state.m,
+            ef_construction: state.ef_construction,
+            ef_search: state.ef_search,
+            max_elements: state.max_elements,
+        };
+        let index = Self::new(
+            state.dimensions,
+            metric,
+            config,
+            state.rotation_seed,
+            state.rescore_multiplier,
+            policy_from_u8(state.policy),
+        )?;
+        {
+            let mut inner = index.inner.write();
+            let codes_lookup: std::collections::HashMap<&str, &Vec<u8>> =
+                state.codes.iter().map(|(id, c)| (id.as_str(), c)).collect();
+            let mut sorted: Vec<(usize, &String)> =
+                state.idx_to_id.iter().map(|(i, id)| (*i, id)).collect();
+            sorted.sort_unstable_by_key(|(i, _)| *i);
+            for (idx, id) in &sorted {
+                if let Some(blob) = codes_lookup.get(id.as_str()) {
+                    inner.hnsw.insert_data(blob, *idx);
+                }
+            }
+            for (id, blob) in state.codes {
+                inner.codes.insert(id, blob);
+            }
+            for (id, idx) in state.id_to_idx {
+                inner.id_to_idx.insert(id, idx);
+            }
+            for (idx, id) in state.idx_to_id {
+                inner.idx_to_id.insert(idx, id);
+            }
+            inner.next_idx = state.next_idx;
+        }
+        Ok(index)
     }
 
     /// Stored bytes per vector (`D/2 + 8`).
@@ -744,6 +889,43 @@ mod tests {
             escalated <= 2,
             "well-separated queries escalated {escalated}/10 times"
         );
+        Ok(())
+    }
+
+    /// Serialization roundtrip: codes are byte-identical, the rebuilt graph
+    /// serves the same queries, and self-queries still rank themselves first
+    /// with identical rescored distances (rescoring is graph-independent).
+    #[test]
+    fn serialization_roundtrip() -> Result<()> {
+        let dim = 64;
+        let mut index = Turbo4HnswIndex::new(
+            dim,
+            DistanceMetric::Euclidean,
+            HnswConfig::default(),
+            42,
+            4,
+            SearchPolicy::Balanced,
+        )?;
+        let vectors = clustered_vecs(120, dim, 6, 0.2, 55);
+        for (i, v) in vectors.iter().enumerate() {
+            index.add(format!("v{i}"), v.clone())?;
+        }
+        let bytes = index.serialize()?;
+        let restored = Turbo4HnswIndex::deserialize(&bytes)?;
+        assert_eq!(restored.len(), 120);
+        assert_eq!(restored.code_len(), index.code_len());
+
+        for probe in [3usize, 47, 99] {
+            let orig = index.search(&vectors[probe], 3)?;
+            let rest = restored.search(&vectors[probe], 3)?;
+            assert_eq!(rest[0].id, format!("v{probe}"), "self-query after restore");
+            assert!(
+                (orig[0].score - rest[0].score).abs() < 1e-6,
+                "rescored self distance must be identical: {} vs {}",
+                orig[0].score,
+                rest[0].score
+            );
+        }
         Ok(())
     }
 

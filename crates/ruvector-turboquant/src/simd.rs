@@ -83,14 +83,25 @@ mod avx2 {
     }
 
     /// Multiply signed i8 lanes of `a` and `b`, accumulating i32 into `acc`.
+    ///
+    /// Uses the abs/sign + `maddubs` idiom (the pshufb-LUT kernel shape
+    /// production engines converge on — ADR-296 refinements §3):
+    /// `maddubs(|a|, sign(b, a))` computes exact `aᵢ·bᵢ` pairs in i16, then
+    /// one `madd(1)` widens to i32. Replaces the previous four
+    /// `cvtepi8_epi16` + two `madd` sequence (~35 % fewer µops).
+    ///
+    /// Operand contract: `a` may span the full i8 range including −128
+    /// (`abs` feeds `maddubs`'s *unsigned* operand, where the 0x80 pattern
+    /// reads as +128); `b` must lie in [−127, 127], because `sign(b, a)`
+    /// negates `b` and −128 would wrap. Every Turbo4 call site puts the
+    /// level table (±127 by construction) in `b`. Saturation-free: pair
+    /// sums are ≤ 2·128·127 = 32 512 < i16::MAX.
     #[inline]
     unsafe fn madd_i8(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
-        // Widen each 128-bit half to i16 and use madd_epi16 (i16×i16 → i32 pairs).
-        let a_lo = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(a));
-        let a_hi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(a, 1));
-        let b_lo = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(b));
-        let b_hi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b, 1));
-        let p = _mm256_add_epi32(_mm256_madd_epi16(a_lo, b_lo), _mm256_madd_epi16(a_hi, b_hi));
+        let a_abs = _mm256_abs_epi8(a);
+        let b_signed = _mm256_sign_epi8(b, a);
+        let pairs_i16 = _mm256_maddubs_epi16(a_abs, b_signed);
+        let p = _mm256_madd_epi16(pairs_i16, _mm256_set1_epi16(1));
         _mm256_add_epi32(acc, p)
     }
 
@@ -119,12 +130,12 @@ mod avx2 {
             let lo_idx = _mm256_and_si256(packed, mask);
             let lo_lev = _mm256_shuffle_epi8(table, lo_idx);
             let q_lo = _mm256_loadu_si256(q.as_ptr().add(i) as *const __m256i);
-            acc = madd_i8(acc, lo_lev, q_lo);
+            acc = madd_i8(acc, q_lo, lo_lev);
             // High nibbles → levels for dims half+i..half+i+32 (run 2).
             let hi_idx = _mm256_and_si256(_mm256_srli_epi16(packed, 4), mask);
             let hi_lev = _mm256_shuffle_epi8(table, hi_idx);
             let q_hi = _mm256_loadu_si256(q.as_ptr().add(half + i) as *const __m256i);
-            acc = madd_i8(acc, hi_lev, q_hi);
+            acc = madd_i8(acc, q_hi, hi_lev);
         }
 
         let mut total = hsum_i32(acc);

@@ -11,3 +11,10 @@ description = "Turbo4: 4-bit Lloyd-Max quantized vector datatype with determinis
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "kernels"
+harness = false

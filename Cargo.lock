@@ -10749,6 +10749,7 @@ dependencies = [
 name = "ruvector-turboquant"
 version = "2.3.0"
 dependencies = [
+ "criterion 0.5.1",
  "serde",
  "thiserror 2.0.18",
 ]
