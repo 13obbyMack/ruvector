@@ -142,7 +142,23 @@ pub enum QuantizationConfig {
         /// Outcome-level policy governing adaptive escalation (ADR-297 §3/§9).
         #[serde(default)]
         policy: SearchPolicy,
+        /// Which representation drives graph traversal (ADR-297 §2).
+        #[serde(default)]
+        search_quantization: SearchQuantization,
     },
+}
+
+/// Traversal representation for a Turbo4 index (ADR-297 §2): what the HNSW
+/// walk scores against before Turbo4 rescoring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SearchQuantization {
+    /// Score traversal directly on Turbo4 codes (int8 query × nibbles).
+    #[default]
+    Turbo4Direct,
+    /// Score traversal on 1-bit sign codes (RaBitQ-style, pure popcount —
+    /// ~4× less memory traffic), rescore candidates with Turbo4. Stores
+    /// both planes (~5 bits/dim total).
+    RaBitQ1,
 }
 
 /// Outcome-level search policy (ADR-297 §9). Users pick a goal; the engine

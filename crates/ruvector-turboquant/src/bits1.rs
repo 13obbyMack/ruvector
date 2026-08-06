@@ -124,42 +124,91 @@ impl Bits1Query {
     /// Estimated distance to a 1-bit code blob under `metric`. Pure
     /// AND+POPCNT per plane; conventions match the Turbo4 scorers.
     pub fn distance_to(&self, metric: Metric, blob: &[u8]) -> f32 {
-        let n_words = self.dim.div_ceil(64);
-        debug_assert_eq!(blob.len(), n_words * 8 + META_BYTES);
-        let alpha = f32::from_le_bytes(blob[n_words * 8..n_words * 8 + 4].try_into().unwrap());
-        let c = f32::from_le_bytes(blob[n_words * 8 + 4..n_words * 8 + 8].try_into().unwrap());
+        let qblob = self.to_blob();
+        query_blob_distance(metric, &qblob, blob, self.dim)
+    }
 
-        // Σ q_u8·s via bit-planes, plus pop(bits) for the bias correction.
-        let mut dot_u8 = 0i64;
-        let mut bits_pop = 0u32;
-        let words = |k: usize| u64::from_le_bytes(blob[k * 8..k * 8 + 8].try_into().unwrap());
+    /// Serialize into the flat query-blob form consumed by
+    /// [`query_blob_distance`] — this is what travels through
+    /// `hnsw_rs::Distance<u8>::eval` in cascade mode.
+    ///
+    /// Layout: `[8 planes × bits_len | 8 × plane_pop u32 | qscale | ‖q‖²]`.
+    pub fn to_blob(&self) -> Vec<u8> {
+        let bl = bits_len(self.dim);
+        let mut out = Vec::with_capacity(query1_len(self.dim));
+        for plane in &self.planes {
+            for w in plane {
+                out.extend_from_slice(&w.to_le_bytes());
+            }
+        }
+        for p in &self.plane_pops {
+            out.extend_from_slice(&p.to_le_bytes());
+        }
+        out.extend_from_slice(&self.qscale.to_le_bytes());
+        out.extend_from_slice(&self.norm_sq.to_le_bytes());
+        debug_assert_eq!(out.len(), 8 * bl + 40);
+        out
+    }
+}
+
+/// Query-blob length for `dim` (`8·bits_len + 40`).
+#[inline]
+pub fn query1_len(dim: usize) -> usize {
+    8 * bits_len(dim) + 40
+}
+
+/// Score a serialized 1-bit query blob (see [`Bits1Query::to_blob`]) against
+/// a 1-bit code blob, on raw slices — no allocation, callable from inside a
+/// `Distance<u8>` functor.
+pub fn query_blob_distance(metric: Metric, qblob: &[u8], code: &[u8], dim: usize) -> f32 {
+    let n_words = dim.div_ceil(64);
+    let bl = n_words * 8;
+    debug_assert_eq!(qblob.len(), 8 * bl + 40);
+    debug_assert_eq!(code.len(), bl + META_BYTES);
+
+    let alpha = f32::from_le_bytes(code[bl..bl + 4].try_into().unwrap());
+    let c = f32::from_le_bytes(code[bl + 4..bl + 8].try_into().unwrap());
+    let qscale = f32::from_le_bytes(qblob[8 * bl + 32..8 * bl + 36].try_into().unwrap());
+    let q_norm_sq = f32::from_le_bytes(qblob[8 * bl + 36..8 * bl + 40].try_into().unwrap());
+
+    let word = |bytes: &[u8], k: usize| -> u64 {
+        u64::from_le_bytes(bytes[k * 8..k * 8 + 8].try_into().unwrap())
+    };
+
+    let mut bits_pop = 0u32;
+    for k in 0..n_words {
+        bits_pop += word(code, k).count_ones();
+    }
+    let mut dot_u8 = 0i64;
+    for p in 0..8 {
+        let plane = &qblob[p * bl..(p + 1) * bl];
+        let pop_p = u32::from_le_bytes(
+            qblob[8 * bl + p * 4..8 * bl + p * 4 + 4]
+                .try_into()
+                .unwrap(),
+        );
+        let mut agree = 0u32;
         for k in 0..n_words {
-            bits_pop += words(k).count_ones();
+            agree += (word(plane, k) & word(code, k)).count_ones();
         }
-        for (p, plane) in self.planes.iter().enumerate() {
-            let mut agree = 0u32;
-            for (k, &pw) in plane.iter().enumerate() {
-                agree += (pw & words(k)).count_ones();
-            }
-            dot_u8 += (1i64 << p) * (2 * agree as i64 - self.plane_pops[p] as i64);
-        }
-        let sum_s = 2 * bits_pop as i64 - self.dim as i64;
-        let dot_i8 = dot_u8 - 128 * sum_s;
-        let dot = self.qscale * alpha * c * dot_i8 as f32;
+        dot_u8 += (1i64 << p) * (2 * agree as i64 - pop_p as i64);
+    }
+    let sum_s = 2 * bits_pop as i64 - dim as i64;
+    let dot_i8 = dot_u8 - 128 * sum_s;
+    let dot = qscale * alpha * c * dot_i8 as f32;
 
-        let norm_sq_v = alpha * alpha * self.dim as f32; // exact
-        match metric {
-            Metric::Euclidean => (self.norm_sq + norm_sq_v - 2.0 * dot).max(0.0).sqrt(),
-            Metric::Cosine => {
-                let denom = (self.norm_sq * norm_sq_v).sqrt();
-                if denom > 0.0 {
-                    (1.0 - dot / denom).max(0.0)
-                } else {
-                    1.0
-                }
+    let norm_sq_v = alpha * alpha * dim as f32; // exact
+    match metric {
+        Metric::Euclidean => (q_norm_sq + norm_sq_v - 2.0 * dot).max(0.0).sqrt(),
+        Metric::Cosine => {
+            let denom = (q_norm_sq * norm_sq_v).sqrt();
+            if denom > 0.0 {
+                (1.0 - dot / denom).max(0.0)
+            } else {
+                1.0
             }
-            Metric::DotProduct => (-dot).max(0.0),
         }
+        Metric::DotProduct => (-dot).max(0.0),
     }
 }
 

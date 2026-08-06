@@ -75,6 +75,7 @@ impl From<JsQuantizationConfig> for QuantizationConfig {
                 rotation_seed: ruvector_core::types::default_turbo4_rotation_seed(),
                 rescore_multiplier: ruvector_core::types::default_turbo4_rescore_multiplier(),
                 policy: ruvector_core::types::SearchPolicy::default(),
+                search_quantization: ruvector_core::types::SearchQuantization::default(),
             },
             _ => QuantizationConfig::Scalar,
         }

@@ -19,7 +19,7 @@
 
 use crate::codec::{split_code, split_query, Turbo4Query};
 use crate::simd::{dot_i8_nibble, dot_nibble_nibble};
-use crate::tables::{I8_UNIT, LEVELS_F32};
+use crate::tables::I8_UNIT;
 
 /// Distance metrics Turbo4 can score directly. (Manhattan does not decompose
 /// over the dot product and is rejected at index construction.)
@@ -90,13 +90,10 @@ pub fn asymmetric_distance(metric: Metric, query: &[u8], code: &[u8], dim: usize
 /// traversal candidates.
 pub fn rescore(metric: Metric, query: &Turbo4Query, code: &[u8], dim: usize) -> f32 {
     let (nc, alpha, s) = split_code(code, dim);
-    let half = dim / 2;
-    let q = &query.rotated;
-    let mut dot_lvl = 0.0f32;
-    for i in 0..half {
-        dot_lvl += q[i] * LEVELS_F32[(nc[i] & 0x0F) as usize]
-            + q[i + half] * LEVELS_F32[(nc[i] >> 4) as usize];
-    }
+    // SIMD f32×nibble kernel on the int8 level grid; the grid rounding
+    // (≤ I8_UNIT/2) is ~1 % of the code error, so this tier stays the
+    // highest-fidelity scorer.
+    let dot_lvl = crate::simd::dot_f32_nibble(nc, &query.rotated, dim) * I8_UNIT;
     let dot = dot_lvl * alpha * renorm(dim, s);
     finish(metric, dot, query.norm_sq, alpha * alpha * dim as f32)
 }

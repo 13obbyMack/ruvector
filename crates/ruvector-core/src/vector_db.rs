@@ -84,7 +84,13 @@ impl VectorDB {
                 rotation_seed,
                 rescore_multiplier,
                 policy,
-            }) => Some((*rotation_seed, *rescore_multiplier, *policy)),
+                search_quantization,
+            }) => Some((
+                *rotation_seed,
+                *rescore_multiplier,
+                *policy,
+                *search_quantization,
+            )),
             _ => None,
         };
 
@@ -92,7 +98,9 @@ impl VectorDB {
         let mut index: Box<dyn VectorIndex> = if let Some(hnsw_config) = &options.hnsw_config {
             #[cfg(feature = "hnsw")]
             {
-                if let Some((rotation_seed, rescore_multiplier, policy)) = turbo4_params {
+                if let Some((rotation_seed, rescore_multiplier, policy, search_quantization)) =
+                    turbo4_params
+                {
                     tracing::info!(
                         "Turbo4 quantization active ({policy:?} policy): {} bytes/vector instead of {}",
                         options.dimensions / 2 + 8,
@@ -105,6 +113,7 @@ impl VectorDB {
                         rotation_seed,
                         rescore_multiplier,
                         policy,
+                        search_quantization,
                     )?) as Box<dyn VectorIndex>
                 } else {
                     Box::new(HnswIndex::new(
@@ -387,6 +396,7 @@ mod tests {
                 rotation_seed: 42,
                 rescore_multiplier: 4,
                 policy: SearchPolicy::Balanced,
+                search_quantization: SearchQuantization::default(),
             });
             options
         };

@@ -45,6 +45,35 @@ pub fn dot_nibble_nibble(a: &[u8], b: &[u8], dim: usize) -> i32 {
     dot_nibble_nibble_scalar(a, b, dim)
 }
 
+/// Rescore dot: Σᵢ q[i] · L_i8[code[i]] with an f32 query, returned in level
+/// units (multiply by `I8_UNIT · α` for the physical dot). Uses the int8
+/// level grid on every path so scalar and SIMD agree in semantics; the grid's
+/// rounding (≤ `I8_UNIT/2` ≈ 0.011 per level) is ~1 % of the intrinsic 4-bit
+/// code error, so the rescore tier remains the highest-fidelity scorer.
+#[inline]
+pub fn dot_f32_nibble(nibbles: &[u8], q: &[f32], dim: usize) -> f32 {
+    debug_assert_eq!(nibbles.len(), dim / 2);
+    debug_assert!(q.len() >= dim);
+    #[cfg(target_arch = "x86_64")]
+    {
+        if dim >= 64 && is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            return unsafe { dot_f32_nibble_avx2(nibbles, q, dim) };
+        }
+    }
+    dot_f32_nibble_scalar(nibbles, q, dim)
+}
+
+pub(crate) fn dot_f32_nibble_scalar(nibbles: &[u8], q: &[f32], dim: usize) -> f32 {
+    let half = dim / 2;
+    let mut acc = 0.0f32;
+    for i in 0..half {
+        let lo = LEVELS_I8[(nibbles[i] & 0x0F) as usize] as f32;
+        let hi = LEVELS_I8[(nibbles[i] >> 4) as usize] as f32;
+        acc += q[i] * lo + q[i + half] * hi;
+    }
+    acc
+}
+
 pub(crate) fn dot_i8_nibble_scalar(nibbles: &[u8], q: &[u8], dim: usize) -> i32 {
     let half = dim / 2;
     let mut acc = 0i32;
@@ -151,6 +180,59 @@ mod avx2 {
         total
     }
 
+    /// Accumulate `q[k..k+8] · f32(levels_i8[k..k+8])` for the 32 i8 levels
+    /// in `lev` starting at query offset `base`. Byte order out of `pshufb`
+    /// is sequential, so query loads stay contiguous — no scrambling.
+    #[inline]
+    #[target_feature(enable = "avx2", enable = "fma")]
+    unsafe fn fmadd_levels(acc: __m256, lev: __m256i, q: &[f32], base: usize) -> __m256 {
+        let lo128 = _mm256_castsi256_si128(lev);
+        let hi128 = _mm256_extracti128_si256(lev, 1);
+        let mut acc = acc;
+        for (g, half) in [(0usize, lo128), (2usize, hi128)] {
+            let g0 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(half));
+            let q0 = _mm256_loadu_ps(q.as_ptr().add(base + g * 8));
+            acc = _mm256_fmadd_ps(g0, q0, acc);
+            let g1 = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(_mm_srli_si128(half, 8)));
+            let q1 = _mm256_loadu_ps(q.as_ptr().add(base + (g + 1) * 8));
+            acc = _mm256_fmadd_ps(g1, q1, acc);
+        }
+        acc
+    }
+
+    #[target_feature(enable = "avx2", enable = "fma")]
+    pub unsafe fn dot_f32_nibble_avx2(nibbles: &[u8], q: &[f32], dim: usize) -> f32 {
+        let half = dim / 2;
+        let table = level_table();
+        let mask = _mm256_set1_epi8(0x0F);
+        let mut acc = _mm256_setzero_ps();
+
+        let chunks = half / 32;
+        for c in 0..chunks {
+            let i = c * 32;
+            let packed = _mm256_loadu_si256(nibbles.as_ptr().add(i) as *const __m256i);
+            let lo_lev = _mm256_shuffle_epi8(table, _mm256_and_si256(packed, mask));
+            acc = fmadd_levels(acc, lo_lev, q, i);
+            let hi_lev =
+                _mm256_shuffle_epi8(table, _mm256_and_si256(_mm256_srli_epi16(packed, 4), mask));
+            acc = fmadd_levels(acc, hi_lev, q, half + i);
+        }
+
+        // Horizontal sum of 8 f32 lanes.
+        let hi = _mm256_extractf128_ps(acc, 1);
+        let s = _mm_add_ps(_mm256_castps256_ps128(acc), hi);
+        let s = _mm_add_ps(s, _mm_movehl_ps(s, s));
+        let s = _mm_add_ss(s, _mm_shuffle_ps(s, s, 1));
+        let mut total = _mm_cvtss_f32(s);
+
+        for i in chunks * 32..half {
+            let lo = LEVELS_I8[(nibbles[i] & 0x0F) as usize] as f32;
+            let hi = LEVELS_I8[(nibbles[i] >> 4) as usize] as f32;
+            total += q[i] * lo + q[i + half] * hi;
+        }
+        total
+    }
+
     #[target_feature(enable = "avx2")]
     pub unsafe fn dot_nibble_nibble_avx2(a: &[u8], b: &[u8], dim: usize) -> i32 {
         let half = dim / 2;
@@ -184,7 +266,7 @@ mod avx2 {
 }
 
 #[cfg(target_arch = "x86_64")]
-use avx2::{dot_i8_nibble_avx2, dot_nibble_nibble_avx2};
+use avx2::{dot_f32_nibble_avx2, dot_i8_nibble_avx2, dot_nibble_nibble_avx2};
 
 #[cfg(test)]
 mod tests {
@@ -220,6 +302,35 @@ mod tests {
                     dot_nibble_nibble(&code_a, &code_b, dim),
                     dot_nibble_nibble_scalar(&code_a, &code_b, dim),
                     "sym dim {dim} seed {seed}"
+                );
+            }
+        }
+    }
+
+    /// The f32 kernel is float math, so SIMD and scalar differ only by
+    /// summation order — bound the relative error tightly.
+    #[test]
+    fn f32_kernel_matches_scalar_within_epsilon() {
+        for dim in [64usize, 128, 384, 1536, 100] {
+            let dim = dim & !1;
+            let half = dim / 2;
+            for seed in 0..4u64 {
+                let code = random_code(half, seed * 5 + 1);
+                let mut s = seed * 5 + 2;
+                let q: Vec<f32> = (0..dim)
+                    .map(|_| {
+                        let mut st = s;
+                        s = s.wrapping_add(1);
+                        st = st.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(7);
+                        ((st >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+                    })
+                    .collect();
+                let fast = dot_f32_nibble(&code, &q, dim);
+                let oracle = dot_f32_nibble_scalar(&code, &q, dim);
+                let tol = 1e-3 * oracle.abs().max(1.0);
+                assert!(
+                    (fast - oracle).abs() <= tol,
+                    "dim {dim} seed {seed}: {fast} vs {oracle}"
                 );
             }
         }
