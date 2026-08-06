@@ -428,7 +428,10 @@ mod tests {
             let db = VectorDB::new(mk_options())?;
             assert!(matches!(
                 db.options().quantization,
-                Some(QuantizationConfig::Turbo4 { rotation_seed: 42, .. })
+                Some(QuantizationConfig::Turbo4 {
+                    rotation_seed: 42,
+                    ..
+                })
             ));
             let results = db.search(SearchQuery {
                 vector: vectors[12].clone(),

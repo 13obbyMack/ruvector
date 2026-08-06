@@ -105,7 +105,11 @@ impl Rotation {
             bit -= 1;
         }
 
-        Self { dim, rounds, blocks }
+        Self {
+            dim,
+            rounds,
+            blocks,
+        }
     }
 
     /// Dimensionality this rotation was built for.

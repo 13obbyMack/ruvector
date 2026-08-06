@@ -138,7 +138,10 @@ mod tests {
                     Metric::Euclidean => 0.06 * truth.max(1.0),
                     _ => 0.05,
                 };
-                assert!((sym - truth).abs() < 2.0 * tol, "{metric:?} sym {sym} vs {truth}");
+                assert!(
+                    (sym - truth).abs() < 2.0 * tol,
+                    "{metric:?} sym {sym} vs {truth}"
+                );
                 assert!(
                     (asym - truth).abs() < tol,
                     "{metric:?} asym {asym} vs {truth}"

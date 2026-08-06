@@ -90,10 +90,7 @@ mod avx2 {
         let a_hi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(a, 1));
         let b_lo = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(b));
         let b_hi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(b, 1));
-        let p = _mm256_add_epi32(
-            _mm256_madd_epi16(a_lo, b_lo),
-            _mm256_madd_epi16(a_hi, b_hi),
-        );
+        let p = _mm256_add_epi32(_mm256_madd_epi16(a_lo, b_lo), _mm256_madd_epi16(a_hi, b_hi));
         _mm256_add_epi32(acc, p)
     }
 

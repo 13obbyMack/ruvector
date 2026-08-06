@@ -41,7 +41,12 @@ impl Distance<u8> for Turbo4DistanceFn {
         } else if b.len() == self.query_len && a.len() == self.code_len {
             score::asymmetric_distance(self.metric, b, a, self.dim)
         } else {
-            debug_assert!(false, "unrecognized Turbo4 blob lengths {}/{}", a.len(), b.len());
+            debug_assert!(
+                false,
+                "unrecognized Turbo4 blob lengths {}/{}",
+                a.len(),
+                b.len()
+            );
             f32::MAX
         }
     }
@@ -129,7 +134,12 @@ impl Turbo4HnswIndex {
     }
 
     /// Search with an explicit `ef_search`.
-    pub fn search_with_ef(&self, query: &[f32], k: usize, ef_search: usize) -> Result<Vec<SearchResult>> {
+    pub fn search_with_ef(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef_search: usize,
+    ) -> Result<Vec<SearchResult>> {
         if query.len() != self.dimensions {
             return Err(RuvectorError::DimensionMismatch {
                 expected: self.dimensions,
@@ -171,7 +181,11 @@ impl Turbo4HnswIndex {
             })
             .collect();
 
-        results.sort_unstable_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_unstable_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(k);
         Ok(results)
     }
@@ -318,7 +332,13 @@ mod tests {
 
     /// Clustered vectors: `n` points around `n / cluster_size` Gaussian
     /// centers — the neighbor structure real embedding corpora have.
-    fn clustered_vecs(n: usize, dim: usize, cluster_size: usize, spread: f32, seed: u64) -> Vec<Vec<f32>> {
+    fn clustered_vecs(
+        n: usize,
+        dim: usize,
+        cluster_size: usize,
+        spread: f32,
+        seed: u64,
+    ) -> Vec<Vec<f32>> {
         let n_centers = n.div_ceil(cluster_size);
         let centers = gauss_vecs(n_centers, dim, seed);
         let noise = gauss_vecs(n, dim, seed ^ 0xABCD_EF01);
@@ -478,7 +498,8 @@ mod tests {
 
     #[test]
     fn empty_index_is_safe() -> Result<()> {
-        let index = Turbo4HnswIndex::new(64, DistanceMetric::Euclidean, HnswConfig::default(), 42, 4)?;
+        let index =
+            Turbo4HnswIndex::new(64, DistanceMetric::Euclidean, HnswConfig::default(), 42, 4)?;
         assert!(index.search(&vec![0.5; 64], 5)?.is_empty());
         Ok(())
     }
