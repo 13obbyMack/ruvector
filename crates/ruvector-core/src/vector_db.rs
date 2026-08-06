@@ -161,6 +161,56 @@ impl VectorDB {
             }
         }
 
+        // ADR-297 §7: persist the collection-level provenance record and
+        // validate the codec contract on reopen. Codes encoded under one
+        // rotation seed are meaningless under another, and a codec_version
+        // bump means tables/layout changed — refuse to open rather than
+        // silently serve wrong results (a migration re-encodes; ADR-297
+        // phase D wires that path).
+        #[cfg(feature = "storage")]
+        if let Some((rotation_seed, _, _, _)) = turbo4_params {
+            use crate::encoding::{CodecKind, VectorProvenance, CODEC_VERSION};
+            const PROVENANCE_KEY: &str = "turbo4_provenance";
+            let current = VectorProvenance {
+                model_id: None,
+                codec: CodecKind::Turbo4,
+                codec_version: CODEC_VERSION,
+                rotation_seed: Some(rotation_seed),
+                dim: options.dimensions,
+                metric: options.distance_metric,
+                source_hash: None,
+                lineage: Vec::new(),
+            };
+            match storage.load_config_value(PROVENANCE_KEY)? {
+                Some(stored_json) => {
+                    let stored: VectorProvenance =
+                        serde_json::from_str(&stored_json).map_err(|e| {
+                            crate::error::RuvectorError::SerializationError(format!(
+                                "corrupt turbo4 provenance record: {e}"
+                            ))
+                        })?;
+                    if stored.rotation_seed != current.rotation_seed
+                        || stored.dim != current.dim
+                        || stored.metric != current.metric
+                        || stored.codec_version != current.codec_version
+                    {
+                        return Err(crate::error::RuvectorError::InvalidParameter(format!(
+                            "Turbo4 provenance mismatch: stored {stored:?} vs requested \
+                             {current:?}. Codes are bound to (rotation_seed, dim, metric, \
+                             codec_version); migrate the collection instead of changing \
+                             them in place."
+                        )));
+                    }
+                }
+                None => {
+                    let json = serde_json::to_string(&current).map_err(|e| {
+                        crate::error::RuvectorError::SerializationError(e.to_string())
+                    })?;
+                    storage.save_config_value(PROVENANCE_KEY, &json)?;
+                }
+            }
+        }
+
         // Rebuild index from persisted vectors if storage is not empty
         // This fixes the bug where search() returns empty results after restart
         #[cfg(feature = "storage")]
@@ -454,6 +504,58 @@ mod tests {
             })?;
             assert_eq!(results[0].id, "v12", "self-query after restart");
         }
+        Ok(())
+    }
+
+    /// Provenance record (ADR-297 §7): written on create, readable, and a
+    /// tampered rotation seed refuses to open.
+    #[test]
+    #[cfg(all(feature = "hnsw", feature = "storage"))]
+    fn test_turbo4_provenance_guard() -> Result<()> {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("prov.db").to_string_lossy().to_string();
+        let mk_options = || {
+            let mut options = DbOptions::default();
+            options.storage_path = db_path.clone();
+            options.dimensions = 64;
+            options.distance_metric = DistanceMetric::Euclidean;
+            options.quantization = Some(QuantizationConfig::Turbo4 {
+                rotation_seed: 42,
+                rescore_multiplier: 4,
+                policy: SearchPolicy::Balanced,
+                search_quantization: SearchQuantization::default(),
+            });
+            options
+        };
+
+        {
+            let db = VectorDB::new(mk_options())?;
+            let json = db
+                .load_config_value("turbo4_provenance")?
+                .expect("provenance record must be written when Turbo4 is active");
+            let prov: crate::encoding::VectorProvenance = serde_json::from_str(&json).unwrap();
+            assert_eq!(prov.rotation_seed, Some(42));
+            assert_eq!(prov.dim, 64);
+            assert_eq!(prov.codec_version, crate::encoding::CODEC_VERSION);
+        }
+
+        // Clean reopen with the same parameters succeeds.
+        {
+            let db = VectorDB::new(mk_options())?;
+            // Tamper: claim the codes were made with a different seed.
+            let mut prov: crate::encoding::VectorProvenance =
+                serde_json::from_str(&db.load_config_value("turbo4_provenance")?.unwrap()).unwrap();
+            prov.rotation_seed = Some(7);
+            db.save_config_value("turbo4_provenance", &serde_json::to_string(&prov).unwrap())?;
+        }
+
+        // Reopen must now refuse: stored contract disagrees with the seed
+        // the (restored) config asks for.
+        let err = VectorDB::new(mk_options());
+        assert!(
+            err.is_err(),
+            "reopen with mismatched provenance must fail, got Ok"
+        );
         Ok(())
     }
 
