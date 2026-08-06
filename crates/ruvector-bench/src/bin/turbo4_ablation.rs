@@ -240,7 +240,11 @@ fn main() {
             // escalation rate from the live index now.
             let (q, e) = ix.adaptive_stats();
             Report {
-                escalated_pct: if q > 0 { 100.0 * e as f64 / q as f64 } else { 0.0 },
+                escalated_pct: if q > 0 {
+                    100.0 * e as f64 / q as f64
+                } else {
+                    0.0
+                },
                 ..r
             }
         };
