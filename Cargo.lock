@@ -9207,6 +9207,7 @@ dependencies = [
  "redb",
  "reqwest 0.12.28",
  "rkyv",
+ "ruvector-turboquant",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -10742,6 +10743,15 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "web-sys",
+]
+
+[[package]]
+name = "ruvector-turboquant"
+version = "2.3.0"
+dependencies = [
+ "criterion 0.5.1",
+ "serde",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
