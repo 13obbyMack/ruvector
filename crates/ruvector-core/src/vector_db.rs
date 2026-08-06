@@ -285,7 +285,23 @@ impl VectorDB {
     /// Search for similar vectors
     pub fn search(&self, query: SearchQuery) -> Result<Vec<SearchResult>> {
         let index = self.index.read();
-        let mut results = index.search(&query.vector, query.k)?;
+        // Verification tier (ADR-297 §2): with Turbo4 quantization, over-fetch
+        // 2k candidates and re-rank them against the stored f32 vectors.
+        // Ablation (20k×768-D clustered): this recovers the precision-bound
+        // tail ranks that wider quantized traversal cannot — recall@10 went
+        // from −7 pp vs the f32 index to +1.4 pp, at ~f32 latency — and it is
+        // nearly free here because result enrichment fetches the stored
+        // vectors anyway.
+        let verify = matches!(
+            self.options.quantization,
+            Some(crate::types::QuantizationConfig::Turbo4 { .. })
+        );
+        let fetch_k = if verify {
+            query.k.saturating_mul(2)
+        } else {
+            query.k
+        };
+        let mut results = index.search(&query.vector, fetch_k)?;
 
         // Enrich results with full data if needed
         for result in &mut results {
@@ -293,6 +309,24 @@ impl VectorDB {
                 result.vector = Some(entry.vector);
                 result.metadata = entry.metadata;
             }
+        }
+
+        if verify {
+            for r in &mut results {
+                if let Some(v) = &r.vector {
+                    r.score = crate::encoding::metric_distance(
+                        self.options.distance_metric,
+                        &query.vector,
+                        v,
+                    );
+                }
+            }
+            results.sort_unstable_by(|a, b| {
+                a.score
+                    .partial_cmp(&b.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            results.truncate(query.k);
         }
 
         // Apply metadata filters if specified
