@@ -20,8 +20,12 @@ use crate::tables::LEVELS_I8;
 /// `nibbles.len() == dim/2`, `q.len() == dim`.
 #[inline]
 pub fn dot_i8_nibble(nibbles: &[u8], q: &[u8], dim: usize) -> i32 {
-    debug_assert_eq!(nibbles.len(), dim / 2);
-    debug_assert!(q.len() >= dim);
+    // These are safety preconditions for the unchecked AVX2 loads below, so
+    // they must remain enforced in release builds. A debug-only assertion
+    // would make this safe public function unsound for malformed slices.
+    assert_eq!(dim % 2, 0, "Turbo4 dimensions must be even");
+    assert_eq!(nibbles.len(), dim / 2, "invalid Turbo4 code length");
+    assert!(q.len() >= dim, "invalid Turbo4 query length");
     #[cfg(target_arch = "x86_64")]
     {
         if dim >= 64 && is_x86_feature_detected!("avx2") {
@@ -34,8 +38,11 @@ pub fn dot_i8_nibble(nibbles: &[u8], q: &[u8], dim: usize) -> i32 {
 /// Symmetric dot: Σᵢ L_i8[a[i]] · L_i8[b[i]] over two packed codes.
 #[inline]
 pub fn dot_nibble_nibble(a: &[u8], b: &[u8], dim: usize) -> i32 {
-    debug_assert_eq!(a.len(), dim / 2);
-    debug_assert_eq!(b.len(), dim / 2);
+    // Keep the unchecked AVX2 loads memory-safe for every caller, including
+    // release builds and callers outside this crate.
+    assert_eq!(dim % 2, 0, "Turbo4 dimensions must be even");
+    assert_eq!(a.len(), dim / 2, "invalid left Turbo4 code length");
+    assert_eq!(b.len(), dim / 2, "invalid right Turbo4 code length");
     #[cfg(target_arch = "x86_64")]
     {
         if dim >= 64 && is_x86_feature_detected!("avx2") {
@@ -52,8 +59,10 @@ pub fn dot_nibble_nibble(a: &[u8], b: &[u8], dim: usize) -> i32 {
 /// code error, so the rescore tier remains the highest-fidelity scorer.
 #[inline]
 pub fn dot_f32_nibble(nibbles: &[u8], q: &[f32], dim: usize) -> f32 {
-    debug_assert_eq!(nibbles.len(), dim / 2);
-    debug_assert!(q.len() >= dim);
+    // These checks guard raw-pointer vector loads in the AVX2/FMA path.
+    assert_eq!(dim % 2, 0, "Turbo4 dimensions must be even");
+    assert_eq!(nibbles.len(), dim / 2, "invalid Turbo4 code length");
+    assert!(q.len() >= dim, "invalid Turbo4 query length");
     #[cfg(target_arch = "x86_64")]
     {
         if dim >= 64 && is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
@@ -345,5 +354,14 @@ mod tests {
         let q = vec![1i8 as u8, 2i8 as u8, 3i8 as u8, (-4i8) as u8];
         let expect = 1 * 127 + 2 * -127 + 3 * 6 + -4 * -6;
         assert_eq!(dot_i8_nibble_scalar(&code, &q, 4), expect);
+    }
+
+    #[test]
+    fn malformed_buffers_are_rejected_before_simd_dispatch() {
+        let dim = 64;
+        assert!(std::panic::catch_unwind(|| dot_i8_nibble(&[0; 31], &[0; 64], dim)).is_err());
+        assert!(std::panic::catch_unwind(|| dot_nibble_nibble(&[0; 32], &[0; 31], dim)).is_err());
+        assert!(std::panic::catch_unwind(|| dot_f32_nibble(&[0; 32], &[0.0; 63], dim)).is_err());
+        assert!(std::panic::catch_unwind(|| dot_i8_nibble(&[0; 32], &[0; 65], 65)).is_err());
     }
 }

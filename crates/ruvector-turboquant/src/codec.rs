@@ -184,7 +184,8 @@ impl Turbo4Codec {
 #[inline]
 pub fn split_code(blob: &[u8], dim: usize) -> (&[u8], f32, f32) {
     let half = dim / 2;
-    debug_assert_eq!(blob.len(), half + META_BYTES);
+    assert_eq!(dim % 2, 0, "Turbo4 dimensions must be even");
+    assert_eq!(blob.len(), half + META_BYTES, "invalid Turbo4 code length");
     let alpha = f32::from_le_bytes(blob[half..half + 4].try_into().unwrap());
     let s = f32::from_le_bytes(blob[half + 4..half + 8].try_into().unwrap());
     (&blob[..half], alpha, s)
@@ -193,7 +194,8 @@ pub fn split_code(blob: &[u8], dim: usize) -> (&[u8], f32, f32) {
 /// Split a query blob into (int8 codes, qscale, ‖q‖²).
 #[inline]
 pub fn split_query(blob: &[u8], dim: usize) -> (&[u8], f32, f32) {
-    debug_assert_eq!(blob.len(), dim + META_BYTES);
+    assert_eq!(dim % 2, 0, "Turbo4 dimensions must be even");
+    assert_eq!(blob.len(), dim + META_BYTES, "invalid Turbo4 query length");
     let qscale = f32::from_le_bytes(blob[dim..dim + 4].try_into().unwrap());
     let norm_sq = f32::from_le_bytes(blob[dim + 4..dim + 8].try_into().unwrap());
     (&blob[..dim], qscale, norm_sq)

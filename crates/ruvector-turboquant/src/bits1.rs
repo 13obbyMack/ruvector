@@ -163,8 +163,9 @@ pub fn query1_len(dim: usize) -> usize {
 pub fn query_blob_distance(metric: Metric, qblob: &[u8], code: &[u8], dim: usize) -> f32 {
     let n_words = dim.div_ceil(64);
     let bl = n_words * 8;
-    debug_assert_eq!(qblob.len(), 8 * bl + 40);
-    debug_assert_eq!(code.len(), bl + META_BYTES);
+    assert!(dim >= 2, "1-bit query dimensions must be at least 2");
+    assert_eq!(qblob.len(), 8 * bl + 40, "invalid 1-bit query length");
+    assert_eq!(code.len(), bl + META_BYTES, "invalid 1-bit code length");
 
     let alpha = f32::from_le_bytes(code[bl..bl + 4].try_into().unwrap());
     let c = f32::from_le_bytes(code[bl + 4..bl + 8].try_into().unwrap());
