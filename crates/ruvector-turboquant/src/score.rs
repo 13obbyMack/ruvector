@@ -46,6 +46,22 @@ fn finish(metric: Metric, dot: f32, norm_sq_a: f32, norm_sq_b: f32) -> f32 {
     }
 }
 
+/// RaBitQ-style length renormalization (the bias fix Qdrant's production
+/// Turbo4 borrows; see ADR-296 refinements). The reconstruction `α·L[cᵢ]`
+/// has norm `α√S`, while the true norm is exactly `α√D` (standardized
+/// coordinates satisfy `Σzᵢ² = D`). Scaling the level dot by `√(D/S)` per
+/// side makes the estimate use norm-exact directions, removing the
+/// magnitude component of Lloyd-Max's inner-product bias at zero storage
+/// and near-zero compute cost.
+#[inline]
+fn renorm(dim: usize, s: f32) -> f32 {
+    if s > 0.0 {
+        (dim as f32 / s).sqrt()
+    } else {
+        0.0
+    }
+}
+
 /// Code×code distance (both sides 4-bit). Used for HNSW graph construction
 /// and neighbor-to-neighbor evaluation.
 #[inline]
@@ -53,14 +69,10 @@ pub fn symmetric_distance(metric: Metric, a: &[u8], b: &[u8], dim: usize) -> f32
     let (na, alpha_a, s_a) = split_code(a, dim);
     let (nb, alpha_b, s_b) = split_code(b, dim);
     let dot_int = dot_nibble_nibble(na, nb, dim) as f32;
-    let dot = dot_int * I8_UNIT * I8_UNIT * alpha_a * alpha_b;
-    // ‖a‖² ≈ αₐ²·Sₐ (S uses exact f32 levels — tighter than the int grid).
-    finish(
-        metric,
-        dot,
-        alpha_a * alpha_a * s_a,
-        alpha_b * alpha_b * s_b,
-    )
+    let dot = dot_int * I8_UNIT * I8_UNIT * alpha_a * alpha_b * renorm(dim, s_a) * renorm(dim, s_b);
+    // Norms are exact under renormalization: ‖v‖² = α²·D.
+    let d = dim as f32;
+    finish(metric, dot, alpha_a * alpha_a * d, alpha_b * alpha_b * d)
 }
 
 /// Query×code distance (8-bit query, 4-bit code). Used during traversal.
@@ -69,8 +81,8 @@ pub fn asymmetric_distance(metric: Metric, query: &[u8], code: &[u8], dim: usize
     let (q_i8, qscale, q_norm_sq) = split_query(query, dim);
     let (nc, alpha, s) = split_code(code, dim);
     let dot_int = dot_i8_nibble(nc, q_i8, dim) as f32;
-    let dot = dot_int * qscale * I8_UNIT * alpha;
-    finish(metric, dot, q_norm_sq, alpha * alpha * s)
+    let dot = dot_int * qscale * I8_UNIT * alpha * renorm(dim, s);
+    finish(metric, dot, q_norm_sq, alpha * alpha * dim as f32)
 }
 
 /// Exact rescore: f32 rotated query × code. No integer error — only the
@@ -85,8 +97,8 @@ pub fn rescore(metric: Metric, query: &Turbo4Query, code: &[u8], dim: usize) -> 
         dot_lvl += q[i] * LEVELS_F32[(nc[i] & 0x0F) as usize]
             + q[i + half] * LEVELS_F32[(nc[i] >> 4) as usize];
     }
-    let dot = dot_lvl * alpha;
-    finish(metric, dot, query.norm_sq, alpha * alpha * s)
+    let dot = dot_lvl * alpha * renorm(dim, s);
+    finish(metric, dot, query.norm_sq, alpha * alpha * dim as f32)
 }
 
 #[cfg(test)]
@@ -158,6 +170,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The renormalized estimator must be (near-)unbiased: across many
+    /// pairs the *mean signed* relative L2 error stays near zero. Without
+    /// renormalization Lloyd-Max reconstructions are systematically short
+    /// (‖r‖ = α√S < α√D), which skews distances one direction — the bias
+    /// Qdrant corrects with RaBitQ-style renormalization.
+    #[test]
+    fn renormalized_estimator_is_unbiased() {
+        let dim = 512;
+        let codec = Turbo4Codec::new(dim, 42).unwrap();
+        let mut sum_rel = 0.0f64;
+        let n = 30;
+        for seed in 0..n {
+            let a = gauss_vec(dim, 1000 + seed);
+            let b = gauss_vec(dim, 2000 + seed);
+            let qa = codec.encode_query(&a).unwrap();
+            let cb = codec.encode(&b).unwrap();
+            let truth = exact(Metric::Euclidean, &a, &b);
+            let est = rescore(Metric::Euclidean, &qa, &cb, dim);
+            sum_rel += ((est - truth) / truth) as f64;
+        }
+        let mean_rel = sum_rel / n as f64;
+        assert!(
+            mean_rel.abs() < 0.01,
+            "mean signed relative L2 error {mean_rel:.4} indicates estimator bias"
+        );
     }
 
     #[test]

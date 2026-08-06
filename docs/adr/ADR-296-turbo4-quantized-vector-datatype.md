@@ -159,6 +159,34 @@ On SIFT1M, GIST1M, and one real RuVector embedding corpus:
   ≈ still ~4× smaller than one f32 copy). Deduplicating via the hnsw_rs datamap
   is a phase-3 optimization.
 
+## Refinements from verified research (2026-08-06)
+
+A deep-research pass over primary sources (TurboQuant arXiv:2504.19874;
+Qdrant 1.18 release + quantization docs; RaBitQ SIGMOD 2024 / extended
+RaBitQ SIGMOD 2025 arXiv:2409.09913; RaBitQ-team rebuttal arXiv:2604.19528)
+confirmed the design and produced three refinements:
+
+1. **Length renormalization (adopted)** — Lloyd-Max reconstructions are
+   systematically short (`‖r‖ = α√S < α√D`), biasing inner-product estimates;
+   this is the bias the TurboQuant paper counters with its QJL residual stage
+   and Qdrant counters with RaBitQ-style renormalization. All three scoring
+   tiers now scale the level dot by `√(D/S)` per encoded side and use exact
+   norms `α²D` in the metric decomposition — zero storage cost, one multiply
+   per candidate, since `α`, `S`, `D` are already in the blob.
+2. **4-bit needs no raw-vector rescoring** (validated) — Qdrant serves 4-bit
+   results directly from quantized scores (oversampled rescoring is default
+   only at 1/1.5/2 bits). Our exact-LUT rescore over the *codes* plus
+   ADR-297 adaptive escalation matches this: original floats are never
+   needed on the search path.
+3. **Kernel roadmap** (phase 3) — production kernels converge on
+   pshufb-LUT + `maddubs` (fusing to `VPDPBUSD` on VNNI): bias the level
+   table to u8 and correct with the per-query constant `128·Σq`, replacing
+   the widen-to-i16 `madd` pair. To be adopted with criterion benchmarks, not
+   assumed. Extended RaBitQ's results (>95 % recall at ~5 bits/dim with no
+   rescoring, provably optimal space-error tradeoff, stronger tail bounds
+   than TurboQuant) reinforce the ADR-297 phase C RaBitQ cascade and make an
+   extended-RaBitQ multi-bit codec a candidate for the codec plane.
+
 ## Alternatives considered
 
 - **Wire `ruvllm`'s `TurboQuantCompressor` into HNSW** — rejected: it

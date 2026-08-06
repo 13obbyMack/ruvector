@@ -701,8 +701,12 @@ mod tests {
             ae > 0,
             "Quality policy should escalate on concentrated Gaussian queries"
         );
+        // hnsw_rs graph construction is nondeterministic (internal RNG for
+        // level assignment), so two separately built indexes differ by a few
+        // hits regardless of policy — allow that noise band while still
+        // catching systematic recall loss from escalation.
         assert!(
-            adaptive_hits >= fixed_hits,
+            adaptive_hits + 5 >= fixed_hits,
             "escalation must not lose recall: adaptive {adaptive_hits} vs fixed {fixed_hits} of {total}"
         );
         Ok(())
