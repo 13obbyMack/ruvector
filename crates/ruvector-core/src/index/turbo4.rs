@@ -34,6 +34,14 @@ struct EscalationParams {
 }
 
 impl EscalationParams {
+    /// Policy → escalation mapping, calibrated by the ADR-297 phase-G
+    /// ablation (20k×768-D clustered): on concentrated neighborhoods a tight
+    /// boundary margin is usually *precision*-bound, which wider traversal
+    /// cannot fix (recall@10 moved +0.7 pp for 2.5× latency) — the
+    /// `VectorDB`-level f32 verification tier resolves those instead
+    /// (−7 pp → +1.4 pp vs the f32 index). So `Balanced` no longer
+    /// escalates; `Quality` keeps escalation as the safety net for
+    /// deployments where no higher-precision tier exists above this index.
     fn for_policy(policy: SearchPolicy) -> Self {
         match policy {
             SearchPolicy::Quality => Self {
@@ -41,12 +49,7 @@ impl EscalationParams {
                 ef_mult: 3,
                 max_rounds: 2,
             },
-            SearchPolicy::Balanced => Self {
-                margin_threshold: 0.02,
-                ef_mult: 2,
-                max_rounds: 1,
-            },
-            SearchPolicy::MaxCompression => Self {
+            SearchPolicy::Balanced | SearchPolicy::MaxCompression => Self {
                 margin_threshold: 0.0,
                 ef_mult: 1,
                 max_rounds: 0,
