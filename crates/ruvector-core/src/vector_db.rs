@@ -76,16 +76,41 @@ impl VectorDB {
         #[cfg(not(feature = "storage"))]
         let storage = Arc::new(VectorStorage::new(options.dimensions)?);
 
-        // Choose index based on configuration and available features
+        // Choose index based on configuration and available features.
+        // Turbo4 quantization (ADR-296) is applied here: with an HNSW config
+        // it swaps the f32 index for one that stores only packed 4-bit codes.
+        let turbo4_params = match &options.quantization {
+            Some(crate::types::QuantizationConfig::Turbo4 {
+                rotation_seed,
+                rescore_multiplier,
+            }) => Some((*rotation_seed, *rescore_multiplier)),
+            _ => None,
+        };
+
         #[allow(unused_mut)] // `index` is mutated only when feature = "storage"
         let mut index: Box<dyn VectorIndex> = if let Some(hnsw_config) = &options.hnsw_config {
             #[cfg(feature = "hnsw")]
             {
-                Box::new(HnswIndex::new(
-                    options.dimensions,
-                    options.distance_metric,
-                    hnsw_config.clone(),
-                )?)
+                if let Some((rotation_seed, rescore_multiplier)) = turbo4_params {
+                    tracing::info!(
+                        "Turbo4 quantization active: {} bytes/vector instead of {}",
+                        options.dimensions / 2 + 8,
+                        options.dimensions * 4
+                    );
+                    Box::new(crate::index::turbo4::Turbo4HnswIndex::new(
+                        options.dimensions,
+                        options.distance_metric,
+                        hnsw_config.clone(),
+                        rotation_seed,
+                        rescore_multiplier,
+                    )?) as Box<dyn VectorIndex>
+                } else {
+                    Box::new(HnswIndex::new(
+                        options.dimensions,
+                        options.distance_metric,
+                        hnsw_config.clone(),
+                    )?) as Box<dyn VectorIndex>
+                }
             }
             #[cfg(not(feature = "hnsw"))]
             {
@@ -97,20 +122,32 @@ impl VectorDB {
             Box::new(FlatIndex::new(options.dimensions, options.distance_metric))
         };
 
-        // `DbOptions.quantization` is persisted/restored but not yet applied to
-        // the index or storage representation (issue #563). Warn loudly rather
-        // than silently ignoring a requested quantization so callers don't
-        // assume a memory reduction that isn't happening.
-        if !matches!(
-            options.quantization,
-            None | Some(crate::types::QuantizationConfig::None)
-        ) {
-            tracing::warn!(
-                "DbOptions.quantization = {:?} is set but not yet applied — the \
-                 index is stored unquantized (no compression / memory reduction). \
-                 See issue #563.",
-                options.quantization
-            );
+        // The legacy variants of `DbOptions.quantization` are persisted and
+        // restored but not applied to the index or storage representation
+        // (issue #563). Warn loudly rather than silently ignoring a requested
+        // quantization so callers don't assume a memory reduction that isn't
+        // happening. `Turbo4` (ADR-296) IS applied — but only on the HNSW
+        // path, so warn if it was requested without one.
+        match &options.quantization {
+            None | Some(crate::types::QuantizationConfig::None) => {}
+            Some(crate::types::QuantizationConfig::Turbo4 { .. }) => {
+                if options.hnsw_config.is_none() || cfg!(not(feature = "hnsw")) {
+                    tracing::warn!(
+                        "QuantizationConfig::Turbo4 requires an HNSW index (hnsw_config set \
+                         and the `hnsw` feature enabled); falling back to an unquantized \
+                         flat index — no compression is happening."
+                    );
+                }
+            }
+            other => {
+                tracing::warn!(
+                    "DbOptions.quantization = {:?} is set but not yet applied — the \
+                     index is stored unquantized (no compression / memory reduction). \
+                     See issue #563. Use QuantizationConfig::Turbo4 for applied \
+                     quantization (ADR-296).",
+                    other
+                );
+            }
         }
 
         // Rebuild index from persisted vectors if storage is not empty
@@ -328,6 +365,79 @@ mod tests {
             "Exact match should have ~0 distance"
         );
 
+        Ok(())
+    }
+
+    /// Turbo4 quantization end-to-end: insert, search, restart-rebuild (ADR-296).
+    #[test]
+    #[cfg(all(feature = "hnsw", feature = "storage"))]
+    fn test_turbo4_quantized_db() -> Result<()> {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("turbo4.db").to_string_lossy().to_string();
+        let dim = 64usize;
+
+        let mk_options = || {
+            let mut options = DbOptions::default();
+            options.storage_path = db_path.clone();
+            options.dimensions = dim;
+            options.distance_metric = DistanceMetric::Euclidean;
+            options.quantization = Some(QuantizationConfig::Turbo4 {
+                rotation_seed: 42,
+                rescore_multiplier: 4,
+            });
+            options
+        };
+
+        // Deterministic, pairwise-distinct pseudo-random vectors (SplitMix64
+        // hash of (i, j) — a modular pattern here can silently produce
+        // identical vectors, making "self is nearest" ambiguous).
+        let vectors: Vec<Vec<f32>> = (0..80u64)
+            .map(|i| {
+                (0..dim as u64)
+                    .map(|j| {
+                        let mut z = (i << 32 | j).wrapping_add(0x9E3779B97F4A7C15);
+                        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+                        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+                        ((z >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
+                    })
+                    .collect()
+            })
+            .collect();
+
+        {
+            let db = VectorDB::new(mk_options())?;
+            for (i, v) in vectors.iter().enumerate() {
+                db.insert(VectorEntry {
+                    id: Some(format!("v{i}")),
+                    vector: v.clone(),
+                    metadata: None,
+                })?;
+            }
+            let results = db.search(SearchQuery {
+                vector: vectors[5].clone(),
+                k: 3,
+                filter: None,
+                ef_search: None,
+            })?;
+            assert_eq!(results[0].id, "v5", "self-query must return itself first");
+        }
+
+        // Restart: config (incl. quantization) restored from storage, index
+        // rebuilt by re-encoding persisted vectors.
+        {
+            let db = VectorDB::new(mk_options())?;
+            assert!(matches!(
+                db.options().quantization,
+                Some(QuantizationConfig::Turbo4 { rotation_seed: 42, .. })
+            ));
+            let results = db.search(SearchQuery {
+                vector: vectors[12].clone(),
+                k: 3,
+                filter: None,
+                ef_search: None,
+            })?;
+            assert_eq!(results[0].id, "v12", "self-query after restart");
+        }
         Ok(())
     }
 

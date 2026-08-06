@@ -121,6 +121,35 @@ pub enum QuantizationConfig {
     },
     /// Binary quantization (target: 32x compression — not yet applied)
     Binary,
+    /// Turbo4 4-bit Lloyd-Max quantization (ADR-296). Unlike the legacy
+    /// variants above, this one **is applied**: with an HNSW config the index
+    /// stores only packed 4-bit codes (`D/2 + 8` bytes per vector, ~7.9x
+    /// payload compression at 1536-D) and scores directly on them —
+    /// symmetric during graph construction, asymmetric int8 during
+    /// traversal, exact f32 rescoring of the top `k * rescore_multiplier`
+    /// candidates. Requires an even dimension and Euclidean/Cosine/DotProduct
+    /// metric (Manhattan is rejected).
+    Turbo4 {
+        /// Seed of the deterministic randomized rotation. Part of the
+        /// persisted index contract: codes encoded under one seed are
+        /// meaningless under another.
+        #[serde(default = "default_turbo4_rotation_seed")]
+        rotation_seed: u64,
+        /// How many candidates (times `k`) the traversal fetches for the
+        /// exact rescoring pass. The recall/latency dial; default 4.
+        #[serde(default = "default_turbo4_rescore_multiplier")]
+        rescore_multiplier: usize,
+    },
+}
+
+/// Default rotation seed for [`QuantizationConfig::Turbo4`].
+pub fn default_turbo4_rotation_seed() -> u64 {
+    42
+}
+
+/// Default rescore multiplier for [`QuantizationConfig::Turbo4`].
+pub fn default_turbo4_rescore_multiplier() -> usize {
+    4
 }
 
 impl Default for DbOptions {
