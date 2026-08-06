@@ -94,8 +94,31 @@ impl Turbo4Codec {
         let rotated = self.rotation.apply(v);
         let norm_sq: f32 = rotated.iter().map(|x| x * x).sum();
         let alpha = (norm_sq / self.dim as f32).sqrt();
-        let inv = if alpha > 0.0 { 1.0 / alpha } else { 0.0 };
+        Ok(self.encode_rotated(&rotated, alpha))
+    }
 
+    /// Encode both planes from one rotation pass: the Turbo4 code and the
+    /// 1-bit candidate-generation code (ADR-297 phase C). The bits blob
+    /// shares this codec's rotation, so a single query prep serves both.
+    pub fn encode_dual(&self, v: &[f32]) -> Result<(Vec<u8>, Vec<u8>), TurboQuantError> {
+        if v.len() != self.dim {
+            return Err(TurboQuantError::DimensionMismatch {
+                expected: self.dim,
+                actual: v.len(),
+            });
+        }
+        let rotated = self.rotation.apply(v);
+        let norm_sq: f32 = rotated.iter().map(|x| x * x).sum();
+        let alpha = (norm_sq / self.dim as f32).sqrt();
+        let bits = crate::bits1::encode_bits(&rotated, alpha);
+        let turbo4 = self.encode_rotated(&rotated, alpha);
+        Ok((turbo4, bits))
+    }
+
+    /// Pack an already-rotated vector (with its standardization factor) into
+    /// the Turbo4 blob — the shared tail of `encode` / `encode_dual`.
+    fn encode_rotated(&self, rotated: &[f32], alpha: f32) -> Vec<u8> {
+        let inv = if alpha > 0.0 { 1.0 / alpha } else { 0.0 };
         let half = self.dim / 2;
         let mut blob = vec![0u8; self.code_len()];
         let mut s = 0.0f32;
@@ -107,7 +130,7 @@ impl Turbo4Codec {
         }
         blob[half..half + 4].copy_from_slice(&alpha.to_le_bytes());
         blob[half + 4..half + 8].copy_from_slice(&s.to_le_bytes());
-        Ok(blob)
+        blob
     }
 
     /// Prepare a query for traversal + rescoring.
@@ -247,6 +270,16 @@ mod tests {
             let codec = Turbo4Codec::new(dim, 1).unwrap();
             assert_ne!(codec.code_len(), codec.query_len());
         }
+    }
+
+    #[test]
+    fn encode_dual_matches_single_encoders() {
+        let dim = 128;
+        let codec = Turbo4Codec::new(dim, 42).unwrap();
+        let v = gauss_vec(dim, 17);
+        let (t4, bits) = codec.encode_dual(&v).unwrap();
+        assert_eq!(t4, codec.encode(&v).unwrap());
+        assert_eq!(bits.len(), crate::bits1::code1_len(dim));
     }
 
     #[test]

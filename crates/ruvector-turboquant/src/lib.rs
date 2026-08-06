@@ -34,12 +34,14 @@
 //! assert!((d_exact - d_asym).abs() < 0.1 * d_asym.max(1.0));
 //! ```
 
+pub mod bits1;
 pub mod codec;
 pub mod rotation;
 pub mod score;
 pub mod simd;
 pub mod tables;
 
+pub use bits1::{encode_bits, Bits1Query};
 pub use codec::{Turbo4Codec, Turbo4Query, META_BYTES};
 pub use rotation::Rotation;
 pub use score::{asymmetric_distance, rescore, symmetric_distance, Metric};

@@ -77,6 +77,7 @@ mod avx2 {
     /// The 16-entry level grid broadcast to both 128-bit lanes for
     /// `_mm256_shuffle_epi8` (which shuffles within lanes).
     #[inline]
+    #[target_feature(enable = "avx2")]
     unsafe fn level_table() -> __m256i {
         let t = _mm_loadu_si128(LEVELS_I8.as_ptr() as *const __m128i);
         _mm256_broadcastsi128_si256(t)
@@ -97,6 +98,7 @@ mod avx2 {
     /// level table (±127 by construction) in `b`. Saturation-free: pair
     /// sums are ≤ 2·128·127 = 32 512 < i16::MAX.
     #[inline]
+    #[target_feature(enable = "avx2")]
     unsafe fn madd_i8(acc: __m256i, a: __m256i, b: __m256i) -> __m256i {
         let a_abs = _mm256_abs_epi8(a);
         let b_signed = _mm256_sign_epi8(b, a);
@@ -106,6 +108,7 @@ mod avx2 {
     }
 
     #[inline]
+    #[target_feature(enable = "avx2")]
     unsafe fn hsum_i32(v: __m256i) -> i32 {
         let lo = _mm256_castsi256_si128(v);
         let hi = _mm256_extracti128_si256(v, 1);
