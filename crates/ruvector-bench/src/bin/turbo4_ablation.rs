@@ -251,6 +251,75 @@ fn main() {
         reports.push(report);
     }
 
+    // Verification-tier configs (ADR-297 §2): fetch 2k from the quantized
+    // index, re-rank those ids against the ORIGINAL f32 vectors (which the
+    // storage layer keeps), truncate to k. Tests whether f32 verification
+    // recovers the precision-bound tail ranks that wider traversal cannot.
+    for (label, mult, policy, sq) in [
+        (
+            "t4 maxcomp+verify",
+            2,
+            SearchPolicy::MaxCompression,
+            SearchQuantization::Turbo4Direct,
+        ),
+        (
+            "cascade mc+verify",
+            2,
+            SearchPolicy::MaxCompression,
+            SearchQuantization::RaBitQ1,
+        ),
+    ] {
+        let mut ix =
+            Turbo4HnswIndex::new(dim, metric, config.clone(), 42, mult, policy, sq).unwrap();
+        let bytes = match sq {
+            SearchQuantization::Turbo4Direct => dim / 2 + 8,
+            SearchQuantization::RaBitQ1 => dim / 2 + 8 + dim.div_ceil(64) * 8 + 8,
+        };
+        let entries: Vec<_> = vectors
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (format!("v{i}"), v.clone()))
+            .collect();
+        let t0 = Instant::now();
+        ix.add_batch(entries).expect("build");
+        let build_ms = t0.elapsed().as_secs_f64() * 1e3;
+        let mut lat_us: Vec<f64> = Vec::with_capacity(queries.len());
+        let (mut hit1, mut hit10, mut total) = (0usize, 0usize, 0usize);
+        for (q, t) in queries.iter().zip(&truth) {
+            let t0 = Instant::now();
+            let res = ix.search(q, 20).expect("search");
+            let mut verified: Vec<(usize, f32)> = res
+                .iter()
+                .map(|r| {
+                    let id = r.id[1..].parse::<usize>().unwrap();
+                    (id, l2(q, &vectors[id]))
+                })
+                .collect();
+            verified.sort_by(|a, b| a.1.total_cmp(&b.1));
+            verified.truncate(10);
+            lat_us.push(t0.elapsed().as_secs_f64() * 1e6);
+            let ids: Vec<usize> = verified.iter().map(|(i, _)| *i).collect();
+            if !ids.is_empty() && ids[0] == t[0] {
+                hit1 += 1;
+            }
+            let tset: std::collections::HashSet<usize> = t.iter().copied().collect();
+            hit10 += ids.iter().filter(|i| tset.contains(i)).count();
+            total += 10;
+        }
+        lat_us.sort_by(|a, b| a.total_cmp(b));
+        let pct = |p: f64| lat_us[((lat_us.len() as f64 - 1.0) * p) as usize];
+        reports.push(Report {
+            name: label.to_string(),
+            build_ms,
+            recall1: hit1 as f32 / queries.len() as f32,
+            recall10: hit10 as f32 / total as f32,
+            p50_us: pct(0.50),
+            p95_us: pct(0.95),
+            bytes_per_vec: bytes,
+            escalated_pct: 0.0,
+        });
+    }
+
     println!();
     println!(
         "{:<18} {:>9} {:>9} {:>10} {:>10} {:>10} {:>8} {:>7}",
