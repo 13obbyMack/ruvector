@@ -291,6 +291,14 @@ members = [
     "crates/ruvector-timesfm",
     # Speculative ANN search: draft-verify with adaptive candidate multiplier (ADR-272)
     "crates/ruvector-speculative-ann",
+    # Hierarchical cluster-summary retrieval for agent-memory RAG (ADR-300)
+    "crates/ruvector-cluster-rag",
+    # S-T mincut namespace routing for multi-namespace search (ADR-299)
+    "crates/ruvector-namespace-merge",
+    # Semantic query-result reuse for repeated agent-memory queries (ADR-301)
+    "crates/ruvector-query-cache",
+    # Reservoir-sampled adaptive product quantization under drift (ADR-302)
+    "crates/ruvector-streaming-qng",
 ]
 resolver = "2"
 
@@ -321,7 +329,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 # Node.js bindings
-napi = { version = "2.16", default-features = false, features = ["napi9", "async", "tokio_rt"] }
+napi = { version = "2.16", default-features = false, features = ["napi9", "async", "tokio_rt", "dyn-symbols"] }
 napi-derive = "2.16"
 
 # WASM
