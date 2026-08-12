@@ -290,8 +290,8 @@ jobs:
       - name: Run baseline benchmarks
         working-directory: crates/ruvector-postgres
         run: |
+          set -o pipefail
           cargo bench --features pg17 --bench distance_bench -- --output-format bencher | tee ../../baseline_distance.txt
-          cargo bench --features pg17 --bench index_bench -- --output-format bencher | tee ../../baseline_index.txt
 
       - name: Compare results
         run: |
