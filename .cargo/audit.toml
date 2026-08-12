@@ -28,6 +28,7 @@ ignore = [
     # and revisit when the parent dep migrates.
 
     "RUSTSEC-2021-0140",  # rusttype — transitive via plotters; pure rendering, no untrusted input
+    "RUSTSEC-2021-0127",  # serde_cbor — unmaintained transitive dependency of pgrx; no maintained version satisfies pgrx
     "RUSTSEC-2022-0054",  # wee_alloc — transitive via wasm-bindgen-cli internals
     "RUSTSEC-2024-0370",  # proc-macro-error — build-time only (proc-macro), no runtime exposure
     "RUSTSEC-2024-0380",  # pqcrypto-dilithium — replaced by pqcrypto-mldsa, awaiting parent migration
