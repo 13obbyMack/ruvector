@@ -376,7 +376,10 @@ jobs:
 
       - name: Run benchmarks
         run: |
-          cargo bench --features pg17 -- --output-format bencher | tee benchmark-results.txt
+          set -o pipefail
+          cargo bench --no-default-features --features pg17 \
+            --bench distance_bench \
+            -- --output-format bencher | tee benchmark-results.txt
         working-directory: crates/ruvector-postgres
 
       - name: Store benchmark results
