@@ -1777,6 +1777,18 @@ program
   .option('--path <file>', 'Persistent graph database path')
   .option('--info', 'Show graph info and stats')
   .action(async (options) => {
+    const requestedOperation = options.info || options.query || options.create || options.relate;
+    if (!requestedOperation) {
+      console.error(chalk.red('  Specify one of --info, --query, --create, or --relate.'));
+      process.exitCode = 1;
+      return;
+    }
+    if (!options.path) {
+      console.error(chalk.red('  --path <file> is required so graph operations persist across CLI runs.'));
+      process.exitCode = 1;
+      return;
+    }
+
     let graphNode;
     try {
       graphNode = require('@ruvector/graph-node');
@@ -1800,18 +1812,6 @@ program
     console.log(chalk.cyan('\n═══════════════════════════════════════════════════════════════'));
     console.log(chalk.cyan('                    RuVector Graph'));
     console.log(chalk.cyan('═══════════════════════════════════════════════════════════════\n'));
-
-    const requestedOperation = options.info || options.query || options.create || options.relate;
-    if (!requestedOperation) {
-      console.error(chalk.red('  Specify one of --info, --query, --create, or --relate.'));
-      process.exitCode = 1;
-      return;
-    }
-    if (!options.path) {
-      console.error(chalk.red('  --path <file> is required so graph operations persist across CLI runs.'));
-      process.exitCode = 1;
-      return;
-    }
 
     try {
       const GraphDatabase = graphNode.GraphDatabase;
