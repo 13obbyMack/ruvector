@@ -390,6 +390,7 @@ jobs:
           output-file-path: crates/ruvector-postgres/benchmark-results.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: false
+          skip-fetch-gh-pages: true
           alert-threshold: '150%'
           comment-on-alert: true
           fail-on-alert: false

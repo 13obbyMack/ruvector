@@ -213,6 +213,7 @@ jobs:
           output-file-path: crates/ruvector-postgres/benchmark-output.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: false
+          skip-fetch-gh-pages: true
 
   # Security audit
   security:
