@@ -205,15 +205,12 @@ jobs:
             -- --output-format bencher | tee benchmark-output.txt
         working-directory: crates/ruvector-postgres
 
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba
+      - name: Upload benchmark result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Rust Benchmark
-          tool: 'cargo'
-          output-file-path: crates/ruvector-postgres/benchmark-output.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: false
-          skip-fetch-gh-pages: true
+          name: postgres-extension-benchmark
+          path: crates/ruvector-postgres/benchmark-output.txt
+          retention-days: 30
 
   # Security audit
   security:

@@ -128,7 +128,7 @@ RUN cargo build --release --bin download-models --features "embeddings"
 # FASTEMBED_CACHE_DIR is the correct env var for fastembed-rs
 ENV FASTEMBED_CACHE_DIR=/opt/ruvector/models
 RUN mkdir -p /opt/ruvector/models && \
-    ./target/release/download-models && \
+    /workspace/target/release/download-models && \
     echo "Model cache size: $(du -sh /opt/ruvector/models)" && \
     ls -la /opt/ruvector/models/
 

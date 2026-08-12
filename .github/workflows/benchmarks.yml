@@ -110,19 +110,6 @@ jobs:
             benchmark_smoke.txt
           retention-days: 30
 
-      - name: Store benchmark result
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba
-        with:
-          name: Rust Benchmarks
-          tool: 'cargo'
-          output-file-path: distance_bench.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
-          alert-threshold: '150%'
-          comment-on-alert: true
-          fail-on-alert: true
-
       - name: Generate benchmark summary
         run: |
           cat > benchmark_summary.md <<EOF
