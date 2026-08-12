@@ -148,12 +148,18 @@ function normalizeMetric(metric: string | undefined): string | undefined {
 class VectorDBWrapper {
   private db: any;
 
-  constructor(options: { dimensions: number; storagePath?: string; distanceMetric?: string; metric?: string; hnswConfig?: any }) {
+  constructor(options: { dimensions?: number; dimension?: number; storagePath?: string; distanceMetric?: string; metric?: string; hnswConfig?: any }) {
     // Accept both `distanceMetric` (canonical) and `metric` (CLI shorthand).
     // Normalize to the PascalCase enum variant the native binding expects.
     const distanceMetric = normalizeMetric(options.distanceMetric ?? (options as any).metric);
+    const dimensions = options.dimensions ?? options.dimension;
+    if (typeof dimensions !== 'number' || !Number.isInteger(dimensions) || dimensions <= 0) {
+      throw new Error('Missing or invalid `dimensions` (the singular `dimension` alias is also accepted)');
+    }
     const nativeOptions: any = {
-      dimensions: options.dimensions,
+      // The native N-API contract is plural even when callers use the public
+      // singular alias. Keeping this mapping here prevents CLI/API drift.
+      dimensions,
       storagePath: options.storagePath,
       // The N-API binding maps an omitted hnswConfig to `None`, which selects
       // FlatIndex and unintentionally overrides ruvector-core's HNSW default.

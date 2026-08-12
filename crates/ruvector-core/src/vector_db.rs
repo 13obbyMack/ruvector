@@ -11,16 +11,86 @@ use crate::types::*;
 use parking_lot::RwLock;
 use std::sync::Arc;
 
-// Import appropriate storage backend based on features
+use crate::storage_memory::MemoryStorage;
+
 #[cfg(feature = "storage")]
-use crate::storage::VectorStorage;
+enum StorageBackend {
+    Persistent(crate::storage::VectorStorage),
+    Memory(MemoryStorage),
+}
 
 #[cfg(not(feature = "storage"))]
-use crate::storage_memory::MemoryStorage as VectorStorage;
+type StorageBackend = MemoryStorage;
+
+#[cfg(feature = "storage")]
+impl StorageBackend {
+    fn insert(&self, entry: &VectorEntry) -> Result<VectorId> {
+        match self {
+            Self::Persistent(storage) => storage.insert(entry),
+            Self::Memory(storage) => storage.insert(entry),
+        }
+    }
+
+    fn insert_batch(&self, entries: &[VectorEntry]) -> Result<Vec<VectorId>> {
+        match self {
+            Self::Persistent(storage) => storage.insert_batch(entries),
+            Self::Memory(storage) => storage.insert_batch(entries),
+        }
+    }
+
+    fn get(&self, id: &str) -> Result<Option<VectorEntry>> {
+        match self {
+            Self::Persistent(storage) => storage.get(id),
+            Self::Memory(storage) => storage.get(id),
+        }
+    }
+
+    fn delete(&self, id: &str) -> Result<bool> {
+        match self {
+            Self::Persistent(storage) => storage.delete(id),
+            Self::Memory(storage) => storage.delete(id),
+        }
+    }
+
+    fn len(&self) -> Result<usize> {
+        match self {
+            Self::Persistent(storage) => storage.len(),
+            Self::Memory(storage) => storage.len(),
+        }
+    }
+
+    fn is_empty(&self) -> Result<bool> {
+        match self {
+            Self::Persistent(storage) => storage.is_empty(),
+            Self::Memory(storage) => storage.is_empty(),
+        }
+    }
+
+    fn all_ids(&self) -> Result<Vec<VectorId>> {
+        match self {
+            Self::Persistent(storage) => storage.all_ids(),
+            Self::Memory(storage) => storage.all_ids(),
+        }
+    }
+
+    fn save_config_value(&self, key: &str, value: &str) -> Result<()> {
+        match self {
+            Self::Persistent(storage) => storage.save_config_value(key, value),
+            Self::Memory(storage) => storage.save_config_value(key, value),
+        }
+    }
+
+    fn load_config_value(&self, key: &str) -> Result<Option<String>> {
+        match self {
+            Self::Persistent(storage) => storage.load_config_value(key),
+            Self::Memory(storage) => storage.load_config_value(key),
+        }
+    }
+}
 
 /// Main vector database
 pub struct VectorDB {
-    storage: Arc<VectorStorage>,
+    storage: Arc<StorageBackend>,
     index: Arc<RwLock<Box<dyn VectorIndex>>>,
     options: DbOptions,
 }
@@ -36,45 +106,54 @@ impl VectorDB {
     pub fn new(mut options: DbOptions) -> Result<Self> {
         #[cfg(feature = "storage")]
         let storage = {
-            // First, try to load existing configuration from the database
-            // We create a temporary storage to check for config
-            let temp_storage = VectorStorage::new(&options.storage_path, options.dimensions)?;
-
-            let stored_config = temp_storage.load_config()?;
-
-            if let Some(config) = stored_config {
-                // Existing database - use stored configuration
-                tracing::info!(
-                    "Loading existing database with {} dimensions",
-                    config.dimensions
-                );
-                options = DbOptions {
-                    // Keep the provided storage path (may have changed)
-                    storage_path: options.storage_path.clone(),
-                    // Use stored configuration for everything else
-                    dimensions: config.dimensions,
-                    distance_metric: config.distance_metric,
-                    hnsw_config: config.hnsw_config,
-                    quantization: config.quantization,
-                };
-                // Recreate storage with correct dimensions
-                Arc::new(VectorStorage::new(
-                    &options.storage_path,
+            if options.storage_path.starts_with("memory://") {
+                Arc::new(StorageBackend::Memory(MemoryStorage::new(
                     options.dimensions,
-                )?)
+                )?))
             } else {
-                // New database - save the configuration
-                tracing::info!(
-                    "Creating new database with {} dimensions",
-                    options.dimensions
-                );
-                temp_storage.save_config(&options)?;
-                Arc::new(temp_storage)
+                // First, try to load existing configuration from the database
+                // We create a temporary storage to check for config
+                let temp_storage =
+                    crate::storage::VectorStorage::new(&options.storage_path, options.dimensions)?;
+
+                let stored_config = temp_storage.load_config()?;
+
+                if let Some(config) = stored_config {
+                    // Existing database - use stored configuration
+                    tracing::info!(
+                        "Loading existing database with {} dimensions",
+                        config.dimensions
+                    );
+                    options = DbOptions {
+                        // Keep the provided storage path (may have changed)
+                        storage_path: options.storage_path.clone(),
+                        // Use stored configuration for everything else
+                        dimensions: config.dimensions,
+                        distance_metric: config.distance_metric,
+                        hnsw_config: config.hnsw_config,
+                        quantization: config.quantization,
+                    };
+                    // Recreate storage with correct dimensions
+                    Arc::new(StorageBackend::Persistent(
+                        crate::storage::VectorStorage::new(
+                            &options.storage_path,
+                            options.dimensions,
+                        )?,
+                    ))
+                } else {
+                    // New database - save the configuration
+                    tracing::info!(
+                        "Creating new database with {} dimensions",
+                        options.dimensions
+                    );
+                    temp_storage.save_config(&options)?;
+                    Arc::new(StorageBackend::Persistent(temp_storage))
+                }
             }
         };
 
         #[cfg(not(feature = "storage"))]
-        let storage = Arc::new(VectorStorage::new(options.dimensions)?);
+        let storage = Arc::new(MemoryStorage::new(options.dimensions)?);
 
         // Choose index based on configuration and available features.
         // Turbo4 quantization (ADR-296) is applied here: with an HNSW config
@@ -399,6 +478,27 @@ impl VectorDB {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "storage")]
+    #[test]
+    fn memory_url_selects_memory_backend_when_storage_is_compiled() {
+        let options = DbOptions {
+            dimensions: 3,
+            distance_metric: DistanceMetric::Euclidean,
+            storage_path: "memory://feature-unification-regression".to_string(),
+            hnsw_config: None,
+            quantization: None,
+        };
+        let db = VectorDB::new(options).unwrap();
+        db.insert(VectorEntry {
+            id: Some("one".to_string()),
+            vector: vec![1.0, 2.0, 3.0],
+            metadata: None,
+        })
+        .unwrap();
+        assert_eq!(db.len().unwrap(), 1);
+        assert!(!std::path::Path::new("memory:").exists());
+    }
     use std::path::Path;
     use tempfile::tempdir;
 

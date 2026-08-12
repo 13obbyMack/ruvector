@@ -47,7 +47,6 @@ pub mod quantization;
 #[cfg(feature = "storage")]
 pub mod storage;
 
-#[cfg(not(feature = "storage"))]
 pub mod storage_memory;
 
 #[cfg(not(feature = "storage"))]

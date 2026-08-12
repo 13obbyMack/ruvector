@@ -75,6 +75,25 @@ test('demo --basic creates ./demo.db and exits 0', () => {
   assert.ok(fs.existsSync(path.join(workDir, 'demo.db.meta.json')), 'dimension sidecar not created');
 });
 
+test('create maps --dimension to the native dimensions option (#807)', () => {
+  const r = run('create ./created.db --dimension 7 --metric cosine', cwd);
+  assert.strictEqual(r.code, 0, `create exited ${r.code}: ${r.out.slice(-300)}`);
+  const meta = JSON.parse(fs.readFileSync(path.join(workDir, 'created.db.meta.json'), 'utf8'));
+  assert.strictEqual(meta.dimension, 7, 'CLI dimension must be preserved in the sidecar');
+  const stats = run('stats ./created.db', cwd);
+  assert.strictEqual(stats.code, 0, `stats exited ${stats.code}: ${stats.out.slice(-300)}`);
+  assert.match(stats.out, /Dimension:\s*\S*7\b/, `expected dimension 7 in:\n${stats.out}`);
+});
+
+test('VectorDB singular dimension alias maps to native dimensions', () => {
+  const { VectorDB } = require('../dist/index.js');
+  const dbPath = path.join(workDir, 'singular-alias.db');
+  assert.doesNotThrow(
+    () => new VectorDB({ dimension: 6, storagePath: dbPath, metric: 'cosine' }),
+    'the public singular alias must be normalized before calling the native binding'
+  );
+});
+
 test('stats opens the demo db with the right dimension and count', () => {
   const r = run('stats ./demo.db', cwd);
   assert.strictEqual(r.code, 0, `stats exited ${r.code}: ${r.out.slice(-200)}`);

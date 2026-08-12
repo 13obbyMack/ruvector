@@ -76,10 +76,11 @@ jobs:
       - name: Install dependencies
         run: |
           # Copy CLI package to temp location to avoid workspace interference
+          workspace="$PWD"
           cp -r npm/packages/cli /tmp/cli
           cd /tmp/cli
           npm install --ignore-scripts
-          cp -r node_modules $GITHUB_WORKSPACE/npm/packages/cli/
+          cp -r node_modules "$workspace/npm/packages/cli/"
 
       - name: Build CLI
         working-directory: npm/packages/cli

@@ -9021,6 +9021,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruvector-cluster-rag"
+version = "2.3.0"
+
+[[package]]
 name = "ruvector-cnn"
 version = "2.3.0"
 dependencies = [
@@ -10096,6 +10100,10 @@ name = "ruvector-mmwave"
 version = "0.0.1"
 
 [[package]]
+name = "ruvector-namespace-merge"
+version = "2.3.0"
+
+[[package]]
 name = "ruvector-nervous-system"
 version = "2.3.0"
 dependencies = [
@@ -10187,6 +10195,13 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "ruvector-query-cache"
+version = "2.3.0"
+dependencies = [
+ "rand 0.8.6",
 ]
 
 [[package]]
@@ -10658,6 +10673,14 @@ dependencies = [
 [[package]]
 name = "ruvector-speculative-ann"
 version = "2.3.0"
+
+[[package]]
+name = "ruvector-streaming-qng"
+version = "2.3.0"
+dependencies = [
+ "rand 0.8.6",
+ "rand_distr 0.4.3",
+]
 
 [[package]]
 name = "ruvector-temporal-coherence"

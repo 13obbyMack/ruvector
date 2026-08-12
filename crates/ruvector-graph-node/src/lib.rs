@@ -14,8 +14,11 @@ use ruvector_core::advanced::hypergraph::{
 };
 use ruvector_core::DistanceMetric;
 use ruvector_graph::cypher::{parse_cypher, Statement};
+use ruvector_graph::edge::Edge as GraphEdge;
+use ruvector_graph::hyperedge::Hyperedge as GraphHyperedge;
 use ruvector_graph::node::NodeBuilder;
 use ruvector_graph::storage::GraphStorage;
+use ruvector_graph::types::PropertyValue;
 use ruvector_graph::GraphDB;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -23,6 +26,22 @@ use std::sync::{Arc, RwLock};
 mod streaming;
 mod transactions;
 mod types;
+
+/// Extract an f32 vector from current and legacy persisted property encodings.
+fn prop_to_f32_vec(property: Option<&PropertyValue>) -> Vec<f32> {
+    match property {
+        Some(PropertyValue::FloatArray(values)) => values.clone(),
+        Some(PropertyValue::Array(items)) | Some(PropertyValue::List(items)) => items
+            .iter()
+            .filter_map(|item| match item {
+                PropertyValue::Float(value) => Some(*value as f32),
+                PropertyValue::Integer(value) => Some(*value as f32),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
 
 pub use streaming::*;
 pub use transactions::*;
@@ -67,7 +86,7 @@ fn register_node(
     properties: Option<HashMap<String, String>>,
 ) -> Result<()> {
     // 1. Adjacency / vector index (kHop, stats, hyperedge search).
-    hg.add_entity(id.clone(), embedding);
+    hg.add_entity(id.clone(), embedding.clone());
 
     // 2. Property graph + label index (Cypher label scan).
     let mut builder = NodeBuilder::new().id(&id);
@@ -81,6 +100,7 @@ fn register_node(
             builder = builder.property(&key, value);
         }
     }
+    builder = builder.property("__embedding", PropertyValue::FloatArray(embedding));
     let graph_node = builder.build();
 
     // Persist to storage if enabled (mirrors create_node behaviour).
@@ -123,14 +143,16 @@ impl GraphDatabase {
             (None, None)
         };
 
-        Ok(Self {
+        let db = Self {
             hypergraph: Arc::new(RwLock::new(CoreHypergraphIndex::new(core_metric))),
             causal_memory: Arc::new(RwLock::new(CoreCausalMemory::new(core_metric))),
             transaction_manager: Arc::new(RwLock::new(transactions::TransactionManager::new())),
             graph_db: Arc::new(RwLock::new(GraphDB::new())),
             storage,
             storage_path,
-        })
+        };
+        db.hydrate_from_storage()?;
+        Ok(db)
     }
 
     /// Open an existing graph database from disk
@@ -146,14 +168,16 @@ impl GraphDatabase {
 
         let metric = DistanceMetric::Cosine;
 
-        Ok(Self {
+        let db = Self {
             hypergraph: Arc::new(RwLock::new(CoreHypergraphIndex::new(metric))),
             causal_memory: Arc::new(RwLock::new(CoreCausalMemory::new(metric))),
             transaction_manager: Arc::new(RwLock::new(transactions::TransactionManager::new())),
             graph_db: Arc::new(RwLock::new(GraphDB::new())),
             storage: Some(Arc::new(RwLock::new(storage))),
             storage_path: Some(path),
-        })
+        };
+        db.hydrate_from_storage()?;
+        Ok(db)
     }
 
     /// Check if persistence is enabled
@@ -173,6 +197,86 @@ impl GraphDatabase {
     #[napi]
     pub fn get_storage_path(&self) -> Option<String> {
         self.storage_path.clone()
+    }
+
+    /// Replay persisted records into the in-memory property and hypergraph indexes.
+    fn hydrate_from_storage(&self) -> Result<()> {
+        let Some(storage_arc) = self.storage.as_ref() else {
+            return Ok(());
+        };
+        let storage = storage_arc.read().expect("Storage RwLock poisoned");
+        let mut hg = self.hypergraph.write().expect("RwLock poisoned");
+        let gdb = self.graph_db.write().expect("RwLock poisoned");
+
+        for id in storage
+            .all_node_ids()
+            .map_err(|e| Error::from_reason(format!("hydrate nodes: {e}")))?
+        {
+            if let Some(node) = storage
+                .get_node(&id)
+                .map_err(|e| Error::from_reason(format!("hydrate node {id}: {e}")))?
+            {
+                let embedding = prop_to_f32_vec(node.properties.get("__embedding"));
+                hg.add_entity(node.id.clone(), embedding);
+                gdb.create_node(node)
+                    .map_err(|e| Error::from_reason(format!("hydrate node insert: {e}")))?;
+            }
+        }
+
+        for id in storage
+            .all_edge_ids()
+            .map_err(|e| Error::from_reason(format!("hydrate edges: {e}")))?
+        {
+            if let Some(edge) = storage
+                .get_edge(&id)
+                .map_err(|e| Error::from_reason(format!("hydrate edge {id}: {e}")))?
+            {
+                let confidence = prop_to_f32_vec(edge.properties.get("__confidence"))
+                    .first()
+                    .copied()
+                    .unwrap_or(1.0);
+                let embedding = prop_to_f32_vec(edge.properties.get("__embedding"));
+                let mut core_edge = CoreHyperedge::new(
+                    vec![edge.from.clone(), edge.to.clone()],
+                    edge.edge_type.clone(),
+                    embedding,
+                    confidence,
+                );
+                core_edge.id = edge.id.clone();
+                // A non-cascaded deletion deliberately leaves the durable edge,
+                // but neither in-memory index accepts an edge with a missing node.
+                if hg.add_hyperedge(core_edge).is_err() {
+                    continue;
+                }
+                gdb.create_edge(edge)
+                    .map_err(|e| Error::from_reason(format!("hydrate edge insert: {e}")))?;
+            }
+        }
+
+        for id in storage
+            .all_hyperedge_ids()
+            .map_err(|e| Error::from_reason(format!("hydrate hyperedges: {e}")))?
+        {
+            if let Some(hyperedge) = storage
+                .get_hyperedge(&id)
+                .map_err(|e| Error::from_reason(format!("hydrate hyperedge {id}: {e}")))?
+            {
+                let embedding = prop_to_f32_vec(hyperedge.properties.get("__embedding"));
+                let mut core_edge = CoreHyperedge::new(
+                    hyperedge.nodes,
+                    hyperedge
+                        .description
+                        .unwrap_or_else(|| hyperedge.edge_type.clone()),
+                    embedding,
+                    hyperedge.confidence,
+                );
+                core_edge.id = hyperedge.id;
+                // A non-cascaded deletion can deliberately leave this dangling.
+                let _ = hg.add_hyperedge(core_edge);
+            }
+        }
+
+        Ok(())
     }
 
     /// Create a node in the graph
@@ -230,17 +334,47 @@ impl GraphDatabase {
     #[napi]
     pub async fn create_edge(&self, edge: JsEdge) -> Result<String> {
         let hypergraph = self.hypergraph.clone();
+        let graph_db = self.graph_db.clone();
+        let storage = self.storage.clone();
+        let from = edge.from.clone();
+        let to = edge.to.clone();
         let nodes = vec![edge.from.clone(), edge.to.clone()];
         let description = edge.description.clone();
         let embedding = edge.embedding.to_vec();
         let confidence = edge.confidence.unwrap_or(1.0) as f32;
 
         tokio::task::spawn_blocking(move || {
-            let core_edge = CoreHyperedge::new(nodes, description, embedding, confidence);
+            let core_edge =
+                CoreHyperedge::new(nodes, description.clone(), embedding.clone(), confidence);
             let edge_id = core_edge.id.clone();
             let mut hg = hypergraph.write().expect("RwLock poisoned");
             hg.add_hyperedge(core_edge)
                 .map_err(|e| Error::from_reason(format!("Failed to create edge: {}", e)))?;
+            drop(hg);
+
+            let properties = HashMap::from([
+                (
+                    "__confidence".to_string(),
+                    PropertyValue::FloatArray(vec![confidence]),
+                ),
+                (
+                    "__embedding".to_string(),
+                    PropertyValue::FloatArray(embedding),
+                ),
+            ]);
+            let graph_edge = GraphEdge::new(edge_id.clone(), from, to, description, properties);
+            if let Some(storage_arc) = storage {
+                storage_arc
+                    .write()
+                    .expect("Storage RwLock poisoned")
+                    .insert_edge(&graph_edge)
+                    .map_err(|e| Error::from_reason(format!("Failed to persist edge: {e}")))?;
+            }
+            graph_db
+                .read()
+                .expect("RwLock poisoned")
+                .create_edge(graph_edge)
+                .map_err(|e| Error::from_reason(format!("Failed to create edge: {e}")))?;
             Ok(edge_id)
         })
         .await
@@ -262,17 +396,43 @@ impl GraphDatabase {
     #[napi]
     pub async fn create_hyperedge(&self, hyperedge: JsHyperedge) -> Result<String> {
         let hypergraph = self.hypergraph.clone();
+        let storage = self.storage.clone();
         let nodes = hyperedge.nodes.clone();
         let description = hyperedge.description.clone();
         let embedding = hyperedge.embedding.to_vec();
         let confidence = hyperedge.confidence.unwrap_or(1.0) as f32;
 
         tokio::task::spawn_blocking(move || {
-            let core_edge = CoreHyperedge::new(nodes, description, embedding, confidence);
+            let core_edge = CoreHyperedge::new(
+                nodes.clone(),
+                description.clone(),
+                embedding.clone(),
+                confidence,
+            );
             let edge_id = core_edge.id.clone();
             let mut hg = hypergraph.write().expect("RwLock poisoned");
             hg.add_hyperedge(core_edge)
                 .map_err(|e| Error::from_reason(format!("Failed to create hyperedge: {}", e)))?;
+            drop(hg);
+
+            if let Some(storage_arc) = storage {
+                let graph_hyperedge = GraphHyperedge {
+                    id: edge_id.clone(),
+                    nodes,
+                    edge_type: "HYPEREDGE".to_string(),
+                    description: Some(description),
+                    properties: HashMap::from([(
+                        "__embedding".to_string(),
+                        PropertyValue::FloatArray(embedding),
+                    )]),
+                    confidence,
+                };
+                storage_arc
+                    .write()
+                    .expect("Storage RwLock poisoned")
+                    .insert_hyperedge(&graph_hyperedge)
+                    .map_err(|e| Error::from_reason(format!("Failed to persist hyperedge: {e}")))?;
+            }
             Ok(edge_id)
         })
         .await
@@ -539,15 +699,45 @@ impl GraphDatabase {
                 node_ids.push(id);
             }
 
-            // Insert edges
+            // Insert edges into all three representations.
             for edge in edges {
                 let nodes = vec![edge.from.clone(), edge.to.clone()];
                 let embedding = edge.embedding.to_vec();
                 let confidence = edge.confidence.unwrap_or(1.0) as f32;
-                let core_edge = CoreHyperedge::new(nodes, edge.description, embedding, confidence);
+                let core_edge = CoreHyperedge::new(
+                    nodes,
+                    edge.description.clone(),
+                    embedding.clone(),
+                    confidence,
+                );
                 let edge_id = core_edge.id.clone();
                 hg.add_hyperedge(core_edge)
                     .map_err(|e| Error::from_reason(format!("Failed to insert edge: {}", e)))?;
+                let graph_edge = GraphEdge::new(
+                    edge_id.clone(),
+                    edge.from,
+                    edge.to,
+                    edge.description,
+                    HashMap::from([
+                        (
+                            "__confidence".to_string(),
+                            PropertyValue::FloatArray(vec![confidence]),
+                        ),
+                        (
+                            "__embedding".to_string(),
+                            PropertyValue::FloatArray(embedding),
+                        ),
+                    ]),
+                );
+                if let Some(storage_arc) = storage.as_ref() {
+                    storage_arc
+                        .write()
+                        .expect("Storage RwLock poisoned")
+                        .insert_edge(&graph_edge)
+                        .map_err(|e| Error::from_reason(format!("Failed to persist edge: {e}")))?;
+                }
+                gdb.create_edge(graph_edge)
+                    .map_err(|e| Error::from_reason(format!("Failed to insert edge: {e}")))?;
                 edge_ids.push(edge_id);
             }
 
@@ -576,6 +766,20 @@ impl GraphDatabase {
         let cascade = opts.and_then(|o| o.cascade).unwrap_or(false);
 
         tokio::task::spawn_blocking(move || {
+            let graph_edge_ids = if cascade {
+                let gdb = graph_db.read().expect("RwLock poisoned");
+                let mut ids: Vec<String> = gdb
+                    .get_outgoing_edges(&id)
+                    .into_iter()
+                    .chain(gdb.get_incoming_edges(&id))
+                    .map(|edge| edge.id)
+                    .collect();
+                ids.sort_unstable();
+                ids.dedup();
+                ids
+            } else {
+                Vec::new()
+            };
             let deleted_edges = {
                 let mut hg = hypergraph.write().expect("RwLock poisoned");
                 hg.remove_entity(&id, cascade) as u32
@@ -588,10 +792,56 @@ impl GraphDatabase {
             };
 
             if deleted_node {
+                if cascade {
+                    let gdb = graph_db.read().expect("RwLock poisoned");
+                    for edge_id in &graph_edge_ids {
+                        gdb.delete_edge(edge_id).map_err(|e| {
+                            Error::from_reason(format!("Cascade graph edge delete failed: {e}"))
+                        })?;
+                    }
+                }
                 if let Some(ref storage_arc) = storage {
                     let sg = storage_arc.write().expect("Storage RwLock poisoned");
                     sg.delete_node(&id)
                         .map_err(|e| Error::from_reason(format!("Storage delete failed: {}", e)))?;
+
+                    // Preserve incident records for `cascade: false`; deleting
+                    // them would silently change semantics after reopening.
+                    if cascade {
+                        for edge_id in sg
+                            .all_edge_ids()
+                            .map_err(|e| Error::from_reason(format!("List edges failed: {e}")))?
+                        {
+                            let is_incident = sg
+                                .get_edge(&edge_id)
+                                .map_err(|e| Error::from_reason(format!("Read edge failed: {e}")))?
+                                .is_some_and(|edge| edge.from == id || edge.to == id);
+                            if is_incident {
+                                sg.delete_edge(&edge_id).map_err(|e| {
+                                    Error::from_reason(format!("Cascade edge delete failed: {e}"))
+                                })?;
+                            }
+                        }
+                        for hyperedge_id in sg.all_hyperedge_ids().map_err(|e| {
+                            Error::from_reason(format!("List hyperedges failed: {e}"))
+                        })? {
+                            let is_incident = sg
+                                .get_hyperedge(&hyperedge_id)
+                                .map_err(|e| {
+                                    Error::from_reason(format!("Read hyperedge failed: {e}"))
+                                })?
+                                .is_some_and(|hyperedge| {
+                                    hyperedge.nodes.iter().any(|node| node == &id)
+                                });
+                            if is_incident {
+                                sg.delete_hyperedge(&hyperedge_id).map_err(|e| {
+                                    Error::from_reason(format!(
+                                        "Cascade hyperedge delete failed: {e}"
+                                    ))
+                                })?;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -615,23 +865,32 @@ impl GraphDatabase {
     pub async fn delete_edge(&self, id: String) -> Result<JsDeleteResult> {
         let graph_db = self.graph_db.clone();
         let storage = self.storage.clone();
+        let hypergraph = self.hypergraph.clone();
 
         tokio::task::spawn_blocking(move || {
-            let deleted = {
+            let deleted_from_hypergraph = hypergraph
+                .write()
+                .expect("RwLock poisoned")
+                .remove_hyperedge(&id);
+            let deleted_from_graph = {
                 let gdb = graph_db.read().expect("RwLock poisoned");
                 gdb.delete_edge(&id)
                     .map_err(|e| Error::from_reason(format!("Failed to delete edge: {}", e)))?
             };
 
-            if deleted {
-                if let Some(ref storage_arc) = storage {
-                    let sg = storage_arc.write().expect("Storage RwLock poisoned");
-                    sg.delete_edge(&id)
-                        .map_err(|e| Error::from_reason(format!("Storage delete failed: {}", e)))?;
-                }
-            }
+            let deleted_from_storage = if let Some(ref storage_arc) = storage {
+                storage_arc
+                    .write()
+                    .expect("Storage RwLock poisoned")
+                    .delete_edge(&id)
+                    .map_err(|e| Error::from_reason(format!("Storage delete failed: {e}")))?
+            } else {
+                false
+            };
 
-            Ok::<JsDeleteResult, Error>(JsDeleteResult { deleted })
+            Ok::<JsDeleteResult, Error>(JsDeleteResult {
+                deleted: deleted_from_hypergraph || deleted_from_graph || deleted_from_storage,
+            })
         })
         .await
         .map_err(|e| Error::from_reason(format!("Task failed: {}", e)))?
@@ -651,26 +910,30 @@ impl GraphDatabase {
         let storage = self.storage.clone();
 
         tokio::task::spawn_blocking(move || {
-            {
-                let mut hg = hypergraph.write().expect("RwLock poisoned");
-                hg.remove_hyperedge(&id);
-            }
+            let deleted_from_hypergraph = hypergraph
+                .write()
+                .expect("RwLock poisoned")
+                .remove_hyperedge(&id);
 
-            let deleted = {
+            let deleted_from_graph = {
                 let gdb = graph_db.read().expect("RwLock poisoned");
                 gdb.delete_hyperedge(&id)
                     .map_err(|e| Error::from_reason(format!("Failed to delete hyperedge: {}", e)))?
             };
 
-            if deleted {
-                if let Some(ref storage_arc) = storage {
-                    let sg = storage_arc.write().expect("Storage RwLock poisoned");
-                    sg.delete_hyperedge(&id)
-                        .map_err(|e| Error::from_reason(format!("Storage delete failed: {}", e)))?;
-                }
-            }
+            let deleted_from_storage = if let Some(ref storage_arc) = storage {
+                storage_arc
+                    .write()
+                    .expect("Storage RwLock poisoned")
+                    .delete_hyperedge(&id)
+                    .map_err(|e| Error::from_reason(format!("Storage delete failed: {e}")))?
+            } else {
+                false
+            };
 
-            Ok::<JsDeleteResult, Error>(JsDeleteResult { deleted })
+            Ok::<JsDeleteResult, Error>(JsDeleteResult {
+                deleted: deleted_from_hypergraph || deleted_from_graph || deleted_from_storage,
+            })
         })
         .await
         .map_err(|e| Error::from_reason(format!("Task failed: {}", e)))?
@@ -732,6 +995,166 @@ pub fn hello() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_storage_path(name: &str) -> String {
+        std::env::temp_dir()
+            .join(format!(
+                "ruvector-graph-node-{name}-{}.redb",
+                uuid::Uuid::new_v4()
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    async fn create_persistent_fixture(path: &str) -> (GraphDatabase, String, String) {
+        let db = GraphDatabase::new(Some(JsGraphOptions {
+            distance_metric: Some(JsDistanceMetric::Cosine),
+            dimensions: Some(2),
+            storage_path: Some(path.to_string()),
+        }))
+        .expect("create persistent database");
+        for id in ["a", "b"] {
+            db.create_node(JsNode {
+                id: id.to_string(),
+                embedding: Float32Array::new(vec![1.0, 0.0]),
+                labels: Some(vec!["Test".to_string()]),
+                properties: None,
+            })
+            .await
+            .expect("persist node");
+        }
+        let edge_id = db
+            .create_edge(JsEdge {
+                from: "a".to_string(),
+                to: "b".to_string(),
+                description: "CONNECTED".to_string(),
+                embedding: Float32Array::new(vec![0.5, 0.5]),
+                confidence: Some(0.8),
+                metadata: None,
+            })
+            .await
+            .expect("persist edge");
+        let hyperedge_id = db
+            .create_hyperedge(JsHyperedge {
+                nodes: vec!["a".to_string(), "b".to_string()],
+                description: "GROUP".to_string(),
+                embedding: Float32Array::new(vec![0.25, 0.75]),
+                confidence: Some(0.9),
+                metadata: None,
+            })
+            .await
+            .expect("persist hyperedge");
+        (db, edge_id, hyperedge_id)
+    }
+
+    #[tokio::test]
+    async fn persisted_graph_hydrates_after_reopen() {
+        let path = temp_storage_path("reopen");
+        let (db, _, _) = create_persistent_fixture(&path).await;
+        assert_eq!(db.stats().await.expect("stats").total_nodes, 2);
+        assert_eq!(db.stats().await.expect("stats").total_edges, 2);
+        drop(db);
+
+        let reopened = GraphDatabase::open(path.clone()).expect("reopen persisted database");
+        let stats = reopened.stats().await.expect("reopened stats");
+        assert_eq!(stats.total_nodes, 2);
+        assert_eq!(stats.total_edges, 2);
+        assert_eq!(
+            reopened
+                .graph_db
+                .read()
+                .expect("graph lock")
+                .get_nodes_by_label("Test")
+                .len(),
+            2
+        );
+        drop(reopened);
+        std::fs::remove_file(path).expect("remove test database");
+    }
+
+    #[tokio::test]
+    async fn non_cascade_retains_durable_relationships_but_cascade_removes_them() {
+        let non_cascade_path = temp_storage_path("non-cascade");
+        let (db, edge_id, hyperedge_id) = create_persistent_fixture(&non_cascade_path).await;
+        let result = db
+            .delete_node(
+                "a".to_string(),
+                Some(JsDeleteNodeOptions {
+                    cascade: Some(false),
+                }),
+            )
+            .await
+            .expect("non-cascade delete");
+        assert!(result.deleted_node);
+        assert_eq!(result.deleted_edges, 0);
+        {
+            let storage = db
+                .storage
+                .as_ref()
+                .expect("persistent storage")
+                .read()
+                .expect("storage lock");
+            assert!(storage.get_edge(&edge_id).expect("read edge").is_some());
+            assert!(storage
+                .get_hyperedge(&hyperedge_id)
+                .expect("read hyperedge")
+                .is_some());
+        }
+        drop(db);
+        // Dangling durable records must not make reopening fail.
+        let reopened =
+            GraphDatabase::open(non_cascade_path.clone()).expect("reopen non-cascaded graph");
+        assert!(
+            reopened
+                .delete_edge(edge_id)
+                .await
+                .expect("delete retained edge")
+                .deleted
+        );
+        assert!(
+            reopened
+                .delete_hyperedge(hyperedge_id)
+                .await
+                .expect("delete retained hyperedge")
+                .deleted
+        );
+        drop(reopened);
+        std::fs::remove_file(non_cascade_path).expect("remove non-cascade database");
+
+        let cascade_path = temp_storage_path("cascade");
+        let (db, edge_id, hyperedge_id) = create_persistent_fixture(&cascade_path).await;
+        let result = db
+            .delete_node(
+                "a".to_string(),
+                Some(JsDeleteNodeOptions {
+                    cascade: Some(true),
+                }),
+            )
+            .await
+            .expect("cascade delete");
+        assert!(result.deleted_node);
+        assert_eq!(result.deleted_edges, 2);
+        {
+            let storage = db
+                .storage
+                .as_ref()
+                .expect("persistent storage")
+                .read()
+                .expect("storage lock");
+            assert!(storage.get_edge(&edge_id).expect("read edge").is_none());
+            assert!(storage
+                .get_hyperedge(&hyperedge_id)
+                .expect("read hyperedge")
+                .is_none());
+        }
+        drop(db);
+        let reopened = GraphDatabase::open(cascade_path.clone()).expect("reopen cascaded graph");
+        let stats = reopened.stats().await.expect("reopened stats");
+        assert_eq!(stats.total_nodes, 1);
+        assert_eq!(stats.total_edges, 0);
+        drop(reopened);
+        std::fs::remove_file(cascade_path).expect("remove cascade database");
+    }
 
     /// Regression test for the `batchInsert` ↔ label-index consistency bug.
     ///
