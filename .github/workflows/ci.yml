@@ -235,6 +235,48 @@ jobs:
               -p photonlayer-wasm
               -p photonlayer-ruvector
             timeout-minutes: 30
+          - name: core-and-rest-examples
+            # Example and application crates used to live in the catch-all
+            # shard, which now reaches the 240-minute job timeout. Keep them
+            # together in a parallel shard so they still receive tests and
+            # doctests without blocking the core library crates.
+            packages: >-
+              -p a2a-swarm
+              -p boundary-discovery
+              -p brain-boundary-discovery
+              -p climate-consciousness
+              -p cmb-boundary-discovery
+              -p cmb-consciousness
+              -p earthquake-boundary-discovery
+              -p ecosystem-consciousness
+              -p frb-boundary-discovery
+              -p gene-consciousness
+              -p gw-consciousness
+              -p health-boundary-discovery
+              -p infrastructure-boundary-discovery
+              -p market-boundary-discovery
+              -p music-boundary-discovery
+              -p pandemic-boundary-discovery
+              -p quantum-consciousness
+              -p real-eeg-analysis
+              -p real-eeg-multi-seizure
+              -p refrag-pipeline-example
+              -p ruvector-benchmarks
+              -p ruvector-cloudrun-gpu
+              -p ruvector-robotics-examples
+              -p rvf-kernel-optimized
+              -p seizure-clinical-report
+              -p seizure-therapeutic-sim
+              -p seti-boundary-discovery
+              -p seti-exotic-signals
+              -p sky-monitor
+              -p sky-monitor-wasm
+              -p subpolynomial-time-mincut-demo
+              -p temporal-attractor-discovery
+              -p train-discoveries
+              -p verified-applications
+              -p void-boundary-discovery
+              -p weather-boundary-discovery
           - name: core-and-rest
             # Everything else: core, delta, server/cluster, etc.
             # Uses --workspace + --exclude to subtract the groups above so we
@@ -254,6 +296,43 @@ jobs:
               --exclude ruvector-hnsw-repair
               --exclude ruvector-coherence-hnsw
               --exclude ruvector-maxsim
+              # Example/application crates run in core-and-rest-examples.
+              --exclude a2a-swarm
+              --exclude boundary-discovery
+              --exclude brain-boundary-discovery
+              --exclude climate-consciousness
+              --exclude cmb-boundary-discovery
+              --exclude cmb-consciousness
+              --exclude earthquake-boundary-discovery
+              --exclude ecosystem-consciousness
+              --exclude frb-boundary-discovery
+              --exclude gene-consciousness
+              --exclude gw-consciousness
+              --exclude health-boundary-discovery
+              --exclude infrastructure-boundary-discovery
+              --exclude market-boundary-discovery
+              --exclude music-boundary-discovery
+              --exclude pandemic-boundary-discovery
+              --exclude quantum-consciousness
+              --exclude real-eeg-analysis
+              --exclude real-eeg-multi-seizure
+              --exclude refrag-pipeline-example
+              --exclude ruvector-benchmarks
+              --exclude ruvector-cloudrun-gpu
+              --exclude ruvector-robotics-examples
+              --exclude rvf-kernel-optimized
+              --exclude seizure-clinical-report
+              --exclude seizure-therapeutic-sim
+              --exclude seti-boundary-discovery
+              --exclude seti-exotic-signals
+              --exclude sky-monitor
+              --exclude sky-monitor-wasm
+              --exclude subpolynomial-time-mincut-demo
+              --exclude temporal-attractor-discovery
+              --exclude train-discoveries
+              --exclude verified-applications
+              --exclude void-boundary-discovery
+              --exclude weather-boundary-discovery
               --exclude ruvector-postgres
               --exclude ruvector-decompiler
               --exclude timesfm
