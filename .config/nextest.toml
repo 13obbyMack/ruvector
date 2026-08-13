@@ -1,0 +1,9 @@
+# cargo-nextest configuration.
+#
+# Without a terminate-after bound, a test that hangs rather than fails runs
+# until the GitHub Actions job timeout — `ruvector-delta-index`'s
+# test_insert_and_search burned 3h52m of a 240-minute budget this way (see
+# issue #825). Report a test as SLOW after each 120s period and kill it after
+# 5 periods (10 minutes), surfacing it as a normal test failure.
+[profile.default]
+slow-timeout = { period = "120s", terminate-after = 5 }
