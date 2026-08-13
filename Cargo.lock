@@ -10301,6 +10301,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruvector-retrieval-receipt"
+version = "0.1.0"
+dependencies = [
+ "ruvector-proof-gate",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "ruvector-robotics"
 version = "0.1.0"
 dependencies = [
