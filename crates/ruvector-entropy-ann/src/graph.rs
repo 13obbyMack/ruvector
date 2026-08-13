@@ -58,6 +58,10 @@ impl FlatGraph {
         self.vectors.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.vectors.is_empty()
+    }
+
     pub fn dim(&self) -> usize {
         self.vectors.first().map(|v| v.len()).unwrap_or(0)
     }
@@ -79,17 +83,27 @@ mod tests {
     }
 
     #[test]
-    fn graph_is_symmetric_on_uniform() {
-        // Every node should appear in its neighbours' neighbour lists
+    fn graph_neighbourhood_is_mostly_reciprocal_on_uniform() {
+        // k-NN edges are not guaranteed to be symmetric, but on uniform data
+        // a majority of directed edges should be reciprocated. Assert that.
         let vecs = random_unit_vectors(20, 4, 11);
         let cfg = GraphConfig { k_neighbours: 4 };
         let g = FlatGraph::build(vecs, cfg);
+        let mut total = 0usize;
+        let mut reciprocal = 0usize;
         for (i, adj) in g.adjacency.iter().enumerate() {
             for &(_, j) in adj {
-                let j_has_i = g.adjacency[j].iter().any(|&(_, k)| k == i);
-                // Not guaranteed for all k, but should be common on uniform data
-                let _ = j_has_i; // used only for inspection
+                total += 1;
+                if g.adjacency[j].iter().any(|&(_, k)| k == i) {
+                    reciprocal += 1;
+                }
             }
         }
+        assert!(total > 0);
+        let frac = reciprocal as f64 / total as f64;
+        assert!(
+            frac >= 0.5,
+            "expected >= 50% reciprocated k-NN edges on uniform data, got {frac:.3}"
+        );
     }
 }

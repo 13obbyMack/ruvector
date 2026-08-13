@@ -45,6 +45,13 @@ const N_CLUSTERS: usize = 10;
 const CLUSTER_NOISE: f32 = 0.20;
 const K: usize = 10;
 const EF: usize = 50;
+/// Matched-budget control: the measured mean ef_actual chosen by
+/// EntropyScaledEf on this dataset (alpha=1.5 saturates the scale at
+/// ef_max_factor=2.5 for every query → ef_actual = 122–124, mean ≈ 124).
+/// A FixedEf run at this budget makes the "adaptive" claim falsifiable:
+/// if FixedEf(124) matches EntropyScaledEf's recall, the gain is budget,
+/// not entropy. (Measured: it matches to four decimal places.)
+const EF_MATCHED: usize = 124;
 const N_QUERIES_EASY: usize = 200;
 const N_QUERIES_HARD: usize = 200;
 const N_QUERIES_MIXED: usize = 400;
@@ -132,6 +139,11 @@ fn main() {
         graph: &graph,
         ef_search: EF,
     };
+    // Matched-budget control at EntropyScaledEf's measured mean ef_actual.
+    let fixed_matched = FixedEfSearch {
+        graph: &graph,
+        ef_search: EF_MATCHED,
+    };
     // Temperature=0.1 gives sharper contrast in 16D than 0.3.
     // In higher dimensions (64D+) distances concentrate and entropy
     // becomes less discriminative; see research doc for analysis.
@@ -182,93 +194,54 @@ fn main() {
     // Run all variants on all query sets
     struct Run<'a> {
         searcher: &'a dyn Searcher,
+        /// Display name (distinguishes the two FixedEf budgets).
+        name: &'static str,
         queries: &'a [Vec<f32>],
         label: &'static str,
         threshold: f32,
     }
 
-    let runs: Vec<Run> = vec![
-        Run {
-            searcher: &fixed,
-            queries: &easy_queries,
-            label: "easy",
-            threshold: recall_threshold_easy,
-        },
-        Run {
-            searcher: &fixed,
-            queries: &hard_queries,
-            label: "hard",
-            threshold: recall_threshold_hard,
-        },
-        Run {
-            searcher: &fixed,
-            queries: &mixed_queries,
-            label: "mixed",
-            threshold: recall_threshold_mixed,
-        },
-        Run {
-            searcher: &entropy_thresh,
-            queries: &easy_queries,
-            label: "easy",
-            threshold: recall_threshold_easy,
-        },
-        Run {
-            searcher: &entropy_thresh,
-            queries: &hard_queries,
-            label: "hard",
-            threshold: recall_threshold_hard,
-        },
-        Run {
-            searcher: &entropy_thresh,
-            queries: &mixed_queries,
-            label: "mixed",
-            threshold: recall_threshold_mixed,
-        },
-        Run {
-            searcher: &entropy_scaled,
-            queries: &easy_queries,
-            label: "easy",
-            threshold: recall_threshold_easy,
-        },
-        Run {
-            searcher: &entropy_scaled,
-            queries: &hard_queries,
-            label: "hard",
-            threshold: recall_threshold_hard,
-        },
-        Run {
-            searcher: &entropy_scaled,
-            queries: &mixed_queries,
-            label: "mixed",
-            threshold: recall_threshold_mixed,
-        },
+    let variants: [(&dyn Searcher, &'static str); 4] = [
+        (&fixed, "FixedEf(50)"),
+        (&fixed_matched, "FixedEf(124,matched)"),
+        (&entropy_thresh, "EntropyThreshold"),
+        (&entropy_scaled, "EntropyScaledEf"),
     ];
+    let query_sets: [(&[Vec<f32>], &'static str, f32); 3] = [
+        (&easy_queries, "easy", recall_threshold_easy),
+        (&hard_queries, "hard", recall_threshold_hard),
+        (&mixed_queries, "mixed", recall_threshold_mixed),
+    ];
+    let runs: Vec<Run> = variants
+        .iter()
+        .flat_map(|&(searcher, name)| {
+            query_sets
+                .iter()
+                .map(move |&(queries, label, threshold)| Run {
+                    searcher,
+                    name,
+                    queries,
+                    label,
+                    threshold,
+                })
+        })
+        .collect();
 
     let mut all_pass = true;
     for run in &runs {
         let recall = compute_recall(run.searcher, run.queries, &corpus, K);
         let n = run.queries.len();
-        let corpus_ref = &corpus;
         let k_val = K;
         let searcher_ref = run.searcher;
-        let (_, stats) = LatencyStats::measure(n, |i| {
-            let gt = ground_truth(&run.queries[i], corpus_ref, k_val);
-            let hits = searcher_ref.search(&run.queries[i], k_val);
-            recall_at_k(&gt, &hits, k_val)
-        });
+        // Ground truth is deliberately NOT computed inside the timed closure:
+        // the brute-force scan would dominate (and hide) the search latency.
+        // The timed closure runs the ANN search only.
+        let (_, stats) = LatencyStats::measure(n, |i| searcher_ref.search(&run.queries[i], k_val));
         let pass = recall >= run.threshold;
         if !pass {
             all_pass = false;
         }
-        print_row(
-            run.searcher.name(),
-            run.label,
-            n,
-            recall,
-            &stats,
-            mem_kb,
-            pass,
-        );
+        print_row(run.name, run.label, n, recall, &stats, mem_kb, pass);
     }
 
     println!();

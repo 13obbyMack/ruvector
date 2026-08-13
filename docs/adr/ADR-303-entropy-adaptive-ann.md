@@ -1,9 +1,9 @@
 # ADR-303: Entropy-Adaptive Beam Search for ANN Graph Traversal
 
 **Date**: 2026-08-13  
-**Status**: Proposed  
-**Deciders**: Nightly research agent  
-**Tags**: ann, hnsw, entropy, beam-search, ruvector-entropy-ann
+**Status**: Closed — negative result (documented; not recommended for production)  
+**Deciders**: Nightly research agent (revised after measured review)  
+**Tags**: ann, hnsw, entropy, beam-search, ruvector-entropy-ann, negative-result
 
 ---
 
@@ -24,8 +24,11 @@ The correct `ef` value is per-query, yet HNSW provides no runtime signal to choo
 
 ## Decision
 
-Implement a **Shannon-entropy gate on the candidate-heap distance distribution** as a live
-beam-width control signal. Two production-viable strategies are defined:
+**Do not adopt entropy-gated beam width in its PoC form.** The PoC implemented a
+Shannon-entropy gate on the candidate-heap distance distribution as a live beam-width control
+signal, in two strategies. Both were measured and neither delivers per-query adaptivity on the
+benchmark data. The crate is merged as a documented negative result and a baseline harness for
+future work.
 
 ### Strategy A — EntropyThresholdBeam (reactive)
 
@@ -38,10 +41,11 @@ H   = -Σ p_i ln(p_i)
 if H < h_stop: stop
 ```
 
-Suitable when per-step entropy computation cost is amortised over many queries (i.e., large *k*
-or heavy neighbour lists).
+**Measured**: the gate never fires. With brute-force entry the heap distribution is near-uniform
+for every query (H ≈ ln(heap_size)), so the variant adds per-step entropy overhead with recall
+identical to FixedEf.
 
-### Strategy B — EntropyScaledEf (predictive, recommended)
+### Strategy B — EntropyScaledEf (predictive)
 
 Run a fixed `probe_depth` expansion steps at `base_ef`. Compute *H* of the probe result set once.
 Scale `ef` for the remainder of the search:
@@ -51,98 +55,98 @@ scale     = clamp(1 + α · H / ln(|results|), ef_min_factor, ef_max_factor)
 ef_actual = base_ef * scale
 ```
 
-Entropy is sampled once per query after the probe phase. Hard queries push *H* near *H_max*,
-increasing *ef*. The default parameterisation (`alpha=1.5, ef_min_factor=0.8, ef_max_factor=2.5,
-probe_depth=5`) was validated in the PoC benchmark.
+**Measured**: because *H* ≈ ln(|results|) for every query, the scale saturates at
+`ef_max_factor` and `ef_actual` = 122–124 for **every** query (base_ef=50, alpha=1.5,
+ef_max_factor=2.5). There is no per-query adaptivity. A plain `FixedEf` baseline at the matched
+budget (ef=124) reproduces EntropyScaledEf's recall to four decimal places on all three query
+sets (easy/hard/mixed). The earlier reported +1.6–3.9 pp recall gain over FixedEf(50) is
+entirely explained by the ~2.5× larger ef budget, not by entropy. EDEN — the cited theoretical
+basis — specifically claims entropy-based branching beats fixed branching *within the same
+budget*, which is exactly the property this PoC does not exhibit.
 
 ---
 
-## Rationale
+## Why the signal fails (measured)
 
-### Why Shannon entropy of heap distances?
+The hypothesis was that heap-distance entropy encodes routing ambiguity:
 
-The heap's distance distribution encodes the geometric ambiguity of the current search position:
+- Uniform distribution (high *H*): candidates equidistant → query at a cluster boundary → expand.
+- Peaked distribution (low *H*): one cluster dominates → converged → stop.
 
-- Uniform distribution (high *H*): candidates are equidistant → the query sits at the boundary
-  of multiple clusters → ambiguous → continue expanding.
-- Peaked distribution (low *H*): one cluster dominates → converged → safe to reduce or stop.
+The measurements refute this on the PoC data:
 
-This is derivable from already-computed distances at O(heap_size) cost, adding no new data
-structures or offline calibration.
+1. **Wrong quantity**: softmin entropy over *already-retrieved* neighbour distances measures the
+   local density of the neighbourhood the search has landed in, not the ambiguity of routing to it.
+2. **Wrong sign**: at every temperature tested, easy/hard separation is *negative* — hard
+   (out-of-distribution) queries produce **lower** entropy than easy ones, because their retrieved
+   neighbourhoods are locally denser relative to *T*. A controller built on this signal would
+   shrink the beam exactly when it should grow it.
+3. **Temperature range**: T=0.1 is effectively infinite temperature on this data (all
+   probabilities near-uniform, H ≈ ln(n) for every query; observed spread ≈ 0.003 nats). The
+   usable range is roughly T ∈ [0.001, 0.01], and even there the separation remains negative.
 
-### Why not Ada-ef (arXiv:2512.06636)?
-
-Ada-ef uses a learned regressor to predict ef from query features. This requires offline training
-data and a deployment pipeline to keep the regressor current as the index evolves. The entropy
-gate is parameter-free with respect to the corpus.
-
-### Why not Distance Adaptive Beam (arXiv:2505.15636)?
-
-DAB uses a scalar distance threshold derived from the ratio of current-to-initial candidate
-distances. This is a single scalar, not a distributional signal. Entropy captures the shape of the
-distribution, which is more informative when multiple clusters are equidistant from the query.
-
-### EDEN connection
-
-EDEN (arXiv:2605.09745, ICML 2026) proved that entropy-based branching reduces beam width in LLM
-decoding without recall loss. Transferring this to ANN graph traversal is the primary novelty.
-The probability space differs (tokens vs. distances), but the mechanism is identical.
-
----
-
-## Consequences
-
-### Positive
-
-- **Recall gain**: EntropyScaledEf achieves +1.6 to +3.9 pp recall@10 vs FixedEf at the same
-  nominal ef budget (PoC benchmark, N=2000 16D clustered vectors).
-- **Zero calibration**: entropy is derived from the search frontier; no training required.
-- **Composable**: the signal can be layered on any HNSW implementation without index changes.
-- **Honest PoC**: 15 passing tests, real benchmark numbers, no mocks.
-
-### Negative / Trade-offs
-
-- **PoC only uses flat single-layer graph**: the entry point is brute-force O(n·dim). In this
-  setup, entropy does not discriminate query types because the heap starts already concentrated at
-  the true nearest node. The reactive variant (EntropyThresholdBeam) therefore adds overhead
-  without benefit. This limitation is a property of the PoC design, not the entropy idea.
-- **Multi-layer HNSW required for production**: upper layers provide approximate entries, which
-  produce mixed-cluster heaps in the early traversal steps — exactly where entropy is useful.
-- **Temperature is a tunable parameter**: T=0.1 works for 16D; higher-dimensional corpora (64D+)
-  may require T ≥ 0.5 due to distance concentration.
+The idea that multi-layer HNSW (approximate entry points) would restore a usable, correctly-signed
+entropy signal is **untested conjecture** — it is a hypothesis for future work, not a conclusion
+supported by any measurement in this PoC.
 
 ---
 
 ## Alternatives Considered
 
-| Alternative | Why rejected |
-|-------------|-------------|
-| Fixed ef (status quo) | Systematically wrong per query type |
-| Scalar distance threshold (DAB) | Loses distributional shape information |
-| Offline-predicted ef (Ada-ef) | Requires training pipeline, drifts with index |
+| Alternative | Notes |
+|-------------|-------|
+| Fixed ef (status quo) | Remains the recommendation; matched-budget FixedEf equals EntropyScaledEf |
+| Scalar distance threshold (DAB, arXiv:2505.15636) | Untested here; scalar signal, but at least directionally validated in its paper |
+| Offline-predicted ef (Ada-ef, arXiv:2512.06636) | Requires training pipeline, drifts with index |
 | Per-step ef adjustment | Too noisy; adds overhead on every step |
+
+---
+
+## Consequences
+
+### What the merge provides
+
+- A self-contained, zero-dependency Rust harness (flat k-NN graph, three search variants,
+  deterministic synthetic datasets, recall/latency benchmark) usable as a baseline for future
+  adaptive-ef experiments.
+- A falsifiable benchmark: the matched-budget `FixedEf(124)` control is a permanent column in the
+  benchmark output, so any future "adaptive" claim must beat it.
+- Documented failure modes of heap-distance entropy (wrong quantity, wrong sign, temperature
+  sensitivity) that future work can avoid.
+
+### Costs / trade-offs measured
+
+- **Latency**: with ground-truth computation correctly excluded from timing, EntropyScaledEf costs
+  ~50 µs/query vs ~33 µs for FixedEf(50) on this dataset — the recall difference is purchasable
+  more honestly by simply raising ef.
+- EntropyThresholdBeam adds ~10–13 µs/query of per-step entropy overhead with zero behavioural
+  difference from FixedEf(50).
+
+### If this is ever revisited
+
+1. Test entropy of *candidate frontier* distances (pre-retrieval), not retrieved results.
+2. Use multi-layer HNSW with approximate entries — and treat the "signal will emerge" claim as the
+   hypothesis under test, since it is currently unvalidated.
+3. Calibrate temperature to the dataset's distance scale (T ∈ [0.001, 0.01] on data like this).
+4. Always report matched-budget FixedEf controls.
 
 ---
 
 ## Implementation Status
 
-**PoC**: `crates/ruvector-entropy-ann` v0.1.0  
+**PoC**: `crates/ruvector-entropy-ann` v0.1.0 — merged as negative result  
 **Tests**: 15 assertions, all pass (`cargo test -p ruvector-entropy-ann`)  
-**Benchmark**: `cargo run --release -p ruvector-entropy-ann --bin benchmark` — all 9 PASS  
+**Benchmark**: `cargo run --release -p ruvector-entropy-ann --bin benchmark` — includes the
+matched-budget FixedEf control  
 
-**Production integration** requires:
-
-1. Multi-layer HNSW in `ruvector` core (existing layer-0 graph).
-2. Plumbing `EntropyScaledEf` params into `SearchParams` / gRPC config.
-3. Temperature auto-calibration from first-N-queries moving average.
-4. SIMD L2² kernel integration.
+No production integration is planned.
 
 ---
 
 ## References
 
 - arXiv:2605.09745 — EDEN: Entropy-Driven Efficient Decoding with Adaptive LLM Beam Search
-  (ICML 2026)
+  (ICML 2026) — note: EDEN's claim is *same-budget* improvement, not reproduced here
 - arXiv:2505.15636 — Distance Adaptive Beam for HNSW (NeurIPS 2025)
 - arXiv:2512.06636 — Ada-ef: Adaptive ef-search for HNSW
 - Vespa HNSW adaptive beam (2024): heuristic candidate-list-size adaptation

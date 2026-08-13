@@ -62,7 +62,7 @@ fn l2sq(a: &[f32], b: &[f32]) -> f32 {
 ///
 /// Cost: O(n × dim) — acceptable for PoC datasets up to ~50 k vectors.
 fn find_entry(graph: &FlatGraph, query: &[f32]) -> usize {
-    if graph.len() == 0 {
+    if graph.is_empty() {
         return 0;
     }
     (0..graph.len())
@@ -187,8 +187,13 @@ impl<'a> Searcher for FixedEfSearch<'a> {
 /// frontier has converged (neighbours are tightly clustered) and early termination
 /// is safe. If H remains high, continue expanding.
 ///
-/// This variant uses the **same ef budget as FixedEf** but may stop earlier for
-/// easy (low-entropy) queries, saving distance computations without recall loss.
+/// This variant uses the **same ef budget as FixedEf** and may stop earlier for
+/// easy (low-entropy) queries.
+///
+/// **Measured PoC outcome:** with brute-force entry on the benchmark data the
+/// heap distribution is near-uniform for every query (H ≈ ln(heap_size)), so
+/// the `h_stop` gate never fires — this variant adds per-step entropy overhead
+/// without any early exit or recall change.
 pub struct EntropyThresholdBeam<'a> {
     pub graph: &'a FlatGraph,
     pub ef_search: usize,
@@ -295,16 +300,22 @@ impl<'a> Searcher for EntropyThresholdBeam<'a> {
 /// scale `ef` for the remainder of the search.
 ///
 /// The intuition mirrors EDEN (arXiv:2605.09745): after `probe_depth` expansion
-/// steps, the heap's entropy reliably predicts whether the query is "easy" or
-/// "hard". We set:
+/// steps, the heap's entropy would predict whether the query is "easy" or
+/// "hard". We set (H_max = ln(|probe results|), matching the code below):
 ///
-///   ef_actual = base_ef * clamp(1 + alpha * H / ln(k), ef_min_factor, ef_max_factor)
+///   ef_actual = base_ef * clamp(1 + alpha * H / ln(|results|), ef_min_factor, ef_max_factor)
 ///
-/// This gives:
+/// The hypothesis:
 /// - Easy queries (H near 0): ef_actual ≈ base_ef * 1.0 (no change needed)
-/// - Hard queries (H near ln(k)): ef_actual = base_ef * ef_max_factor (expand more)
+/// - Hard queries (H near H_max): ef_actual = base_ef * ef_max_factor (expand more)
 ///
 /// The ef scaling happens once per query after the probe phase; no per-step entropy.
+///
+/// **Measured PoC outcome (negative result):** on the benchmark data H ≈ H_max
+/// for every query, so `ef_actual` saturates near `base_ef * ef_max_factor`
+/// (122–124 for every query at base_ef=50, alpha=1.5, ef_max_factor=2.5).
+/// There is no per-query adaptivity: `FixedEfSearch` with the matched budget
+/// (ef=124) reproduces this variant's recall to four decimal places.
 pub struct EntropyScaledEf<'a> {
     pub graph: &'a FlatGraph,
     pub base_ef: usize,
@@ -563,9 +574,11 @@ mod tests {
     }
 
     #[test]
-    fn entropy_threshold_exits_early_on_easy_query() {
-        // In a tightly clustered corpus, a query near a centroid is "easy":
-        // candidates quickly concentrate → entropy drops below h_stop early.
+    fn entropy_threshold_returns_k_hits_on_easy_query() {
+        // NOTE: despite the original hypothesis, the h_stop gate was measured to
+        // never fire on this kind of data (heap entropy stays near ln(heap_size)
+        // for every query). This test only verifies the variant still returns k
+        // well-formed hits; it does NOT demonstrate early exit.
         let corpus = clustered_vectors(300, 16, 3, 0.05, 55); // very tight clusters
         let queries = clustered_vectors(5, 16, 3, 0.01, 56); // queries very near centroids
         let graph = FlatGraph::build(corpus.clone(), GraphConfig { k_neighbours: 12 });
@@ -585,10 +598,11 @@ mod tests {
     }
 
     #[test]
-    fn entropy_scaled_ef_expands_for_hard_queries() {
-        // Hard queries are midway between clusters; entropy stays high.
-        // We can't directly observe ef_actual from outside, but we can verify
-        // recall is reasonable.
+    fn entropy_scaled_ef_recall_on_hard_queries() {
+        // NOTE: this test does NOT observe ef expansion (ef_actual is internal).
+        // Measured behaviour is that ef_actual saturates near
+        // base_ef * ef_max_factor for every query — see ADR-303. This test only
+        // verifies recall stays reasonable on hard queries.
         let corpus = clustered_vectors(400, 16, 8, 0.3, 99); // loose clusters
         let gt_corpus = corpus.clone();
         let graph = FlatGraph::build(corpus, GraphConfig { k_neighbours: 14 });

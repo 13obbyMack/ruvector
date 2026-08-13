@@ -8,11 +8,18 @@
 //! it computes the **Shannon entropy of the candidate-heap distance distribution**
 //! at each traversal step and uses that live entropy signal to control beam width.
 //!
-//! **Entropy semantics:**
+//! **Hypothesised entropy semantics:**
 //! - High H → flat distribution → query sits at the boundary of multiple clusters
 //!   → ambiguous → expand more neighbours
 //! - Low H → peaked distribution → neighbours cluster tightly → converged → stop
 //!   early or reduce branching
+//!
+//! **Measured PoC outcome (negative result):** on the benchmark data the softmin
+//! entropy of already-retrieved neighbour distances tracks local density, not
+//! routing ambiguity, and has the wrong sign (hard queries show *lower* entropy
+//! than easy ones). [`EntropyScaledEf`] saturates to the same `ef_actual` for
+//! every query, so its recall gain over [`FixedEfSearch`] is entirely explained
+//! by a larger ef budget. See ADR-303 and the research README for details.
 //!
 //! ## Variants
 //!
@@ -40,13 +47,21 @@ pub use search::{EntropyScaledEf, EntropyThresholdBeam, FixedEfSearch, Hit, Sear
 // ─── shared types ────────────────────────────────────────────────────────────
 
 /// Recall@k: fraction of true top-k found in approximate results.
+///
+/// The denominator is `min(k, ground_truth.len())` only. A searcher that
+/// returns fewer than `k` results (e.g. via early termination) is penalised,
+/// not rewarded: missing results count as misses.
 pub fn recall_at_k(ground_truth: &[usize], results: &[Hit], k: usize) -> f32 {
-    let k = k.min(ground_truth.len()).min(results.len());
+    let k = k.min(ground_truth.len());
     if k == 0 {
         return 0.0;
     }
     let gt: std::collections::HashSet<usize> = ground_truth[..k].iter().cloned().collect();
-    let found = results[..k].iter().filter(|h| gt.contains(&h.id)).count();
+    let found = results
+        .iter()
+        .take(k)
+        .filter(|h| gt.contains(&h.id))
+        .count();
     found as f32 / k as f32
 }
 
