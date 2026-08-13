@@ -36,10 +36,25 @@ pub fn query_hash(query: &[f32]) -> [u8; 32] {
 }
 
 /// Domain-separated leaf commitment for one result. Binds: the query, the
-/// index state root at query time, the result's rank/id/score, and the
-/// *write* receipt's chain commitment + payload hash. That last binding is
-/// the write->read provenance link: mutate the ingestion history and every
-/// retrieval receipt that ever served that vector becomes unverifiable.
+/// index state root at query time, the result's rank/id/score, and *copies*
+/// of the write receipt's gate variant, chain commitment, and payload hash.
+///
+/// Threat model — stated precisely so it is not over-read:
+///
+/// - The receipt detects **post-issuance mutation** of a receipt/result
+///   pair (in transit or in storage). That is the whole guarantee.
+/// - It does **not** protect against a dishonest query engine: leaves are
+///   engine-chosen and unsigned; nothing binds `score` to an actual cosine
+///   computation or the committed set to the true top-k.
+/// - It does **not** prove write-chain membership: verification recomputes
+///   hashes over the caller-supplied copies of the `WriteReceipt` fields
+///   and never consults the write gate, so mutating the ingestion history
+///   *after* a receipt is issued leaves that receipt verifying. Making the
+///   write→read link real requires an offline membership proof — i.e.
+///   anchoring each leaf to `ruvector_proof_gate::MerkleGate`'s MMR
+///   inclusion proofs. That is the named future-work item, not implemented
+///   here (`HashChainGate::verify_receipt` requires the live gate's full
+///   chain and offers no offline membership proof).
 fn result_leaf(query_hash: &[u8; 32], index_root: &[u8; 32], item: &ResultItem) -> [u8; 32] {
     let mut h = Sha256::new();
     h.update(b"ruvector:retrieval:leaf:");
@@ -48,6 +63,9 @@ fn result_leaf(query_hash: &[u8; 32], index_root: &[u8; 32], item: &ResultItem) 
     h.update(item.vector_id.to_le_bytes());
     h.update(item.rank.to_le_bytes());
     h.update(item.score.to_bits().to_le_bytes());
+    // gate_variant is bound so a NullGate receipt (all-zero commitment and
+    // payload hash) cannot masquerade as a gated one under the same leaf.
+    h.update([item.write_receipt.gate_variant as u8]);
     h.update(item.write_receipt.chain_commitment);
     h.update(item.write_receipt.payload_hash);
     h.finalize().into()
@@ -133,8 +151,13 @@ impl PerResultReceipt {
         prev == self.commitments[idx]
     }
 
+    /// Empty result sets fail closed: with zero leaves the length check and
+    /// the per-item loop would both pass vacuously, making "no evidence"
+    /// indistinguishable from "verified evidence". A caller with a
+    /// legitimately empty result set has nothing to prove and must not
+    /// treat a receipt as attesting to it.
     pub fn verify_full(&self, qh: [u8; 32], index_root: [u8; 32], results: &[ResultItem]) -> bool {
-        if results.len() != self.leaves.len() {
+        if results.is_empty() || results.len() != self.leaves.len() {
             return false;
         }
         (0..results.len()).all(|i| self.verify_item(i, qh, index_root, &results[i]))
@@ -250,8 +273,11 @@ impl MerkleReceipt {
         node == root
     }
 
+    /// Empty result sets fail closed (same rationale as
+    /// [`PerResultReceipt::verify_full`]): a zero-leaf receipt would
+    /// otherwise verify vacuously.
     pub fn verify_full(&self, qh: [u8; 32], index_root: [u8; 32], results: &[ResultItem]) -> bool {
-        if results.len() != self.leaves.len() {
+        if results.is_empty() || results.len() != self.leaves.len() {
             return false;
         }
         results.iter().enumerate().all(|(i, item)| {

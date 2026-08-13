@@ -1,6 +1,6 @@
 # Retrieval Receipts: Witness-Chained Provenance for ANN Query Results
 
-**150-char summary:** Cryptographic receipts for ANN query results binding retrieved vectors to their ingestion write-history — MerkleReceipt gives 2x-smaller audit proofs than a hash chain.
+**150-char summary:** Cryptographic receipts making ANN query results tamper-evident after issuance — MerkleReceipt gives O(log k) audit proofs vs a hash chain's O(k).
 
 **Date:** 2026-08-13
 **Crate:** `crates/ruvector-retrieval-receipt`
@@ -14,9 +14,9 @@
 *writes*: a SHA-256 hash chain or Merkle Mountain Range commits to every
 admitted vector. No public vector database (Milvus, Qdrant, Weaviate,
 Pinecone, LanceDB, FAISS, pgvector, Chroma, Vespa) documents an equivalent
-mechanism for the *read* path — none produce evidence that a specific
-result set was actually what a query returned, verifiable independently of
-the system that ran the query.
+mechanism for the *read* path — none produce evidence that lets a later
+holder of a result set check, independently of the system that ran the
+query, that the set was not mutated after it was returned.
 
 This nightly implements and benchmarks **retrieval receipts**: cryptographic
 commitments over a query's top-k result set that bind each result to the
@@ -30,12 +30,20 @@ measured on real Rust release builds:
 | `MerkleReceipt` | 19,582 ns | 3,839 ns | **160 bytes** | 200/200 |
 
 **Key measured result:** `MerkleReceipt`'s worst-case single-result
-verification proof is **2x smaller** than `PerResultReceipt`'s (160 vs 320
-bytes at k=10) and **2.1x faster to verify** (3,839 ns vs 8,229 ns), while
-both variants detect **100% (200/200)** of injected tampering across four
-distinct tamper kinds. Receipt generation adds **1.6-1.8%** to the
-1.1 ms brute-force search it accompanies — far under the 15% acceptance
-threshold set before the run.
+verification proof is 160 bytes and verifies in 3,839 ns, vs 320 bytes /
+8,229 ns for `PerResultReceipt` at k=10. One baseline caveat applies to
+that comparison: `PerResultReceipt`'s proof size is defined here as the
+genesis-anchored chain replay (`(idx+1) * 32` bytes — leaves `0..=idx`);
+a verifier anchored at the chain head instead would need only the
+`k−idx` suffix, which at the measured worst index is smaller than the
+Merkle path. The durable claim is therefore the asymptotic one — O(log k)
+Merkle proofs vs O(k) chain replay regardless of which result is disputed
+— not the specific 2x constant. Both variants rejected all 200/200
+injected tamper trials; that is expected by construction (a mutated
+preimage changes its SHA-256 hash), so it is a regression check on the
+implementation, not an empirical detection rate. Receipt generation adds
+**1.6-1.8%** to the 1.1 ms brute-force search it accompanies — far under
+the 15% acceptance threshold set before the run.
 
 All numbers are from `cargo run --release -p ruvector-retrieval-receipt
 --bin benchmark -- 5000 128 10 200` on the hardware below. Raw output is
@@ -85,12 +93,15 @@ not merely a vector database. Two integrity primitives already exist:
   *authorized to read* a vector at all.
 
 Neither answers: given a result set an agent actually used to produce an
-answer, can a third party confirm — independently, offline, without
-re-running the query or trusting the query engine — that this was
-genuinely what got retrieved? That is the read-side analogue of write
-provenance, and it is the missing link for agent evidence trails: an audit
-of "why did the agent say X" needs to walk both the ingestion history *and*
-the retrieval event that surfaced it.
+answer, can a third party later confirm — offline, without re-running the
+query — that the result set they hold is the one the engine committed to
+at query time? Note the precise shape of that guarantee: receipts are
+unsigned commitments produced by the engine itself, so they detect
+post-issuance mutation of a receipt/result pair; they do not make a
+dishonest engine honest (see [Threat Model](#threat-model)). That is
+still the missing link for agent evidence trails: an audit of "why did
+the agent say X" needs a tamper-evident record of the retrieval event
+that surfaced it.
 
 This connects five RuVector ecosystem capabilities in one crate:
 
@@ -137,12 +148,30 @@ flowchart LR
 ```
 
 Each result leaf commits to: the query hash, the index state root at query
-time, the result's rank/vector_id/score, and — critically — the underlying
-`WriteReceipt`'s `chain_commitment` and `payload_hash`. This last binding
-is the write-read provenance link: an auditor holding only a retrieval
-receipt can confirm not just "this ID/score was returned" but "this exact
-ingestion event was returned," and tampering with either the write history
-or the read result independently invalidates the receipt.
+time, the result's rank/vector_id/score, and *copies* of the underlying
+`WriteReceipt`'s `gate_variant`, `chain_commitment`, and `payload_hash`.
+Binding those copies makes the write-time evidence part of what the
+receipt commits to: an auditor can confirm "this exact ingestion record
+was cited," and any post-issuance mutation of either the result fields or
+the bound write-receipt copy breaks verification.
+
+### Threat Model
+
+What a retrieval receipt does and does not prove:
+
+- **Does:** detect post-issuance mutation of a receipt/result pair, in
+  transit or in storage. That is the whole guarantee.
+- **Does not:** protect against a dishonest query engine. Leaves are
+  engine-chosen and unsigned; nothing binds a leaf's score to an actual
+  cosine computation, or the committed k-set to the true top-k.
+- **Does not:** prove write-chain membership. Verification recomputes
+  hashes over the caller-supplied copies and never consults the write
+  gate, so mutating the ingestion history *after* a receipt is issued
+  leaves that receipt verifying. `HashChainGate::verify_receipt` requires
+  the live gate's full chain — the hash-chain variant offers no offline
+  membership proof. Anchoring leaves to `MerkleGate`'s MMR inclusion
+  proofs is the named future-work item that would make the write→read
+  link a real membership binding.
 
 ---
 
@@ -158,9 +187,9 @@ or the read result independently invalidates the receipt.
   `b"...leaf:"` vs `b"...node:"` prefixes prevent leaf/internal-node type
   confusion).
 - `src/lib.rs` — `RetrievalReceipt` enum unifying all three variants for
-  benchmarking, plus 12 unit tests covering honest verification, four
-  independent tamper kinds per structured variant, and cross-index replay
-  rejection.
+  benchmarking, plus 14 unit tests covering honest verification, four
+  independent tamper kinds per structured variant, gate-variant binding,
+  empty-result fail-closed behavior, and cross-index root divergence.
 - `src/bin/benchmark.rs` — the benchmark producing the numbers below,
   including the tamper-detection trial harness.
 
@@ -227,10 +256,11 @@ generation overhead < 15% of baseline search: merkle=1.8% per_result=1.6% -> tru
 ACCEPTANCE RESULT: ACCEPT
 ```
 
-`cargo test --release -p ruvector-retrieval-receipt`: **12 passed, 0
+`cargo test --release -p ruvector-retrieval-receipt`: **14 passed, 0
 failed** (deterministic-seed unit tests covering honest verification, four
-tamper kinds independently, cross-index replay rejection, and the
-proof-size sublinearity claim in isolation from the benchmark binary).
+tamper kinds independently, gate-variant binding, empty-result
+fail-closed behavior, cross-index root divergence, and the proof-size
+sublinearity claim in isolation from the benchmark binary).
 
 ## Acceptance Result
 
@@ -238,11 +268,14 @@ proof-size sublinearity claim in isolation from the benchmark binary).
 ACCEPT
 ```
 
-All three clauses of the formalized hypothesis held: (a) 100%
-tamper-detection for both structured variants across 200 trials each, (b)
-`MerkleReceipt`'s worst-case proof (160 bytes) is smaller than
-`PerResultReceipt`'s (320 bytes) at k=10, (c) generation overhead
-(1.6-1.8%) is well under the 15% threshold fixed before this run.
+All three clauses of the formalized hypothesis held: (a) all 200/200
+tamper trials rejected for both structured variants — expected from
+SHA-256 by construction, reported as a regression check rather than an
+empirical detection rate; (b) `MerkleReceipt`'s worst-case proof (160
+bytes) is smaller than `PerResultReceipt`'s (320 bytes) at k=10 under the
+genesis-anchored proof-size definition (see the baseline caveat in the
+abstract); (c) generation overhead (1.6-1.8%) is well under the 15%
+threshold fixed before this run.
 
 ---
 
@@ -254,14 +287,18 @@ tamper-detection for both structured variants across 200 trials each, (b)
 - `MerkleReceipt`: `leaves` (32 bytes each) + `root` (32 bytes) →
   `(k + 1) * 32` bytes total (352 bytes at k=10, matches measured).
 - Worst-case single-item proof: `PerResultReceipt` needs `(idx+1)*32`
-  bytes (320 at idx=9); `MerkleReceipt` needs `32 + ceil(log2 k)*32` bytes
-  (160 at k=10, `ceil(log2 10) = 4` sibling hashes).
-- At k=100 the asymptotic gap widens sharply: `PerResultReceipt` worst-case
-  proof ≈ 3,200 bytes; `MerkleReceipt` ≈ `32 + 7*32` = 256 bytes — a ~12.5x
-  gap instead of 2x. This crate does not re-measure that scale-up; it is a
-  direct consequence of the O(idx) vs O(log k) complexity already confirmed
-  at k=10 and is stated here as arithmetic, not fabricated as a second
-  benchmark run.
+  bytes (320 at idx=9) under the genesis-anchored replay definition used
+  throughout this experiment — a head-anchored verifier would instead need
+  only the suffix from `idx` to the chain head, so this figure is a
+  property of the chosen baseline definition, not of hash chains in
+  general. `MerkleReceipt` needs `32 + ceil(log2 k)*32` bytes (160 at
+  k=10, `ceil(log2 10) = 4` sibling hashes) regardless of anchoring.
+- At k=100 the asymptotic gap widens under the same genesis-anchored
+  definition: `PerResultReceipt` worst-case proof ≈ 3,200 bytes;
+  `MerkleReceipt` ≈ `32 + 7*32` = 256 bytes. This crate does not
+  re-measure that scale-up; it is a direct consequence of the O(idx) vs
+  O(log k) complexity already confirmed at k=10 and is stated here as
+  arithmetic, not fabricated as a second benchmark run.
 
 ## Performance Math
 
@@ -372,7 +409,7 @@ query while preserving disputability for a bounded recent window.
 | 1 | Compliance-regulated agent deployments | "Prove what evidence the agent actually used" | `MerkleReceipt` + `ruvector-proof-gate` | Wrap `ruvector-agent-memory` queries | Audit-passable RAG | Signing story still open (ADR-304) | Now-2027 |
 | 2 | Multi-agent code assistants | Disputed "the agent hallucinated this function" claims | Retrieval receipt as ground truth | MCP `retrieval_verify` tool | Reduced trust-repair cost | Adoption friction (opt-in feature) | Now-2027 |
 | 3 | Enterprise RAG platforms | Silent retrieval-layer bugs swapping results | Tamper-evident result sets | Feature-flagged wrapper | Faster incident diagnosis | False sense of security if misapplied to writes | 2027-2029 |
-| 4 | Legal/medical retrieval systems | Chain-of-custody requirements on cited evidence | Write+read receipt binding | RVF portable bundle | Regulatory eligibility | Merkle padding weakness needs hardening first | 2027-2030 |
+| 4 | Legal/medical retrieval systems | Tamper-evident records of cited evidence | Write+read receipt binding | RVF portable bundle | Regulatory eligibility | Not chain-of-custody today: needs MerkleGate membership proofs + signed roots (neither built), plus Merkle padding hardening | 2027-2030 |
 | 5 | Federated agent memory (edge + cloud sync) | Confirming synced results match origin index state | `index_state_root` binding | RVM coherence domain | Detects sync corruption | Needs signed roots, not yet built | 2028-2032 |
 | 6 | Scientific literature search agents | Reproducible citation trails | Deterministic receipt replay | RVF replay bundle | Reproducibility compliance | Requires persisted receipts (storage cost) | 2027-2030 |
 | 7 | Security incident-response retrieval | "What did the SOC agent actually pull from the threat-intel index" | Full write→read chain | ruFlo audit workflow | Faster post-incident review | Needs retention policy | Now-2028 |
@@ -397,9 +434,10 @@ See ADR-304 "Rejection Criteria" — reproduced here for completeness:
 
 ## Rejection Criteria (Not Yet Triggered)
 
-- Tamper-detection rate drops below 100% for any kind at larger scale
-  (n≥100k, k≥100) — not observed at this scale; must be re-checked, not
-  assumed to hold.
+- Any tamper-kind regression test fails at larger scale (n≥100k, k≥100).
+  Detection follows from SHA-256 collision resistance — 200/200 is a
+  regression check, not an empirical rate — so a failure would indicate
+  an implementation bug, which is disqualifying.
 - `MerkleReceipt`'s proof-size advantage disappears or inverts at larger
   k — should not happen asymptotically but is unverified beyond k=10.
 - Receipt overhead exceeds 15% once measured against a real HNSW/ANN
@@ -411,6 +449,11 @@ See ADR-304 "Rejection Criteria" — reproduced here for completeness:
 
 - Only exact brute-force retrieval was measured; approximate-index
   composition is unverified.
+- Receipts commit to *copies* of `WriteReceipt` fields, not to write-chain
+  membership: a mutated ingestion history does not invalidate
+  already-issued receipts, and a dishonest query engine is out of scope
+  entirely — see [Threat Model](#threat-model). MerkleGate MMR membership
+  binding is the named future-work item.
 - No signing of roots/heads — receipts are commitments only, matching
   `ruvector-proof-gate`'s current scope, not a complete non-repudiation
   system on their own.

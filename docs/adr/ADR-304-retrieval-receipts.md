@@ -18,7 +18,10 @@ agentic RAG: **given a result set an agent used to produce an answer, can a
 third party — an auditor, a compliance reviewer, or another agent —
 independently confirm that a specific vector was genuinely part of that
 result set, against a specific index state, without re-running the query
-and without trusting whoever ran it?**
+and without trusting whoever ran it?** (What this ADR actually delivers
+is narrower than that ideal — unsigned commitments that detect
+post-issuance mutation, with the engine still trusted at issuance time;
+see Threat Model.)
 
 This is the same problem write-receipts solve for ingestion, applied to
 retrieval. Its absence matters because:
@@ -76,11 +79,19 @@ Add `crates/ruvector-retrieval-receipt`, a small crate that:
    `ruvector_proof_gate::HashChainGate`, so every stored vector carries an
    actual `WriteReceipt`.
 2. Defines `ResultItem { vector_id, rank, score, write_receipt }` — the
-   unit a retrieval receipt commits to. Binding the *write* receipt's
-   `chain_commitment` and `payload_hash` into each result leaf is the core
-   design choice: it links read-time evidence to write-time evidence in
-   one hash, so tampering with either the ingestion history or the result
-   set invalidates the receipt.
+   unit a retrieval receipt commits to. Each result leaf binds *copies* of
+   the write receipt's `gate_variant`, `chain_commitment`, and
+   `payload_hash`. This makes the write-time evidence part of what the
+   receipt commits to, so a receipt/result pair cannot be mutated after
+   issuance without detection — but it is a commitment to copies, not a
+   membership proof. Verification never consults the write gate, so it
+   does **not** prove the bound `WriteReceipt` belongs to any live write
+   chain, and mutating the ingestion history *after* issuance leaves
+   already-issued receipts verifying. (`HashChainGate::verify_receipt`
+   requires the live gate's full chain; `ruvector-proof-gate`'s hash-chain
+   variant offers no offline membership proof.) Anchoring each leaf to
+   `MerkleGate`'s MMR inclusion proofs is the named future-work item that
+   would turn the write→read link into a real membership binding.
 3. Implements three variants behind `ReceiptVariant`:
    - `None` — establishes the search-only cost floor.
    - `PerResult` — sequential SHA-256 chain over the k result leaves,
@@ -90,6 +101,18 @@ Add `crates/ruvector-retrieval-receipt`, a small crate that:
      RFC-6962-style domain-separated leaf/internal-node hashing (distinct
      `b"...leaf:"` / `b"...node:"` prefixes) and O(log k) inclusion proofs.
 
+## Threat Model
+
+Stated plainly so the guarantee is not over-read: a retrieval receipt
+detects **post-issuance mutation** of a receipt/result pair — in transit
+or in storage. It does **not** protect against a dishonest query engine
+(leaves are engine-chosen and unsigned; nothing binds a leaf's score to an
+actual cosine computation, or the committed k-set to the true top-k), and
+it does **not** prove write-chain membership (see Decision §2). "Offline
+verification" therefore means: a holder of the receipt can check, without
+talking to the engine, that the results they hold are the ones the engine
+committed to — not that the engine computed them honestly.
+
 ## Evidence
 
 Measured via `cargo run --release -p ruvector-retrieval-receipt --bin
@@ -98,25 +121,35 @@ variant — 50 per tamper kind × 4 kinds). See the nightly research README
 for the full output table and raw numbers; do not restate rounded figures
 here as a substitute for the actual run.
 
-Unit-level correctness (12 tests in `src/lib.rs`) independently confirms,
+Unit-level correctness (14 tests in `src/lib.rs`) independently confirms,
 per variant:
 - Honest result sets always verify (`per_result_receipt_verifies_honest_results`,
   `merkle_receipt_verifies_honest_results`).
-- Score mutation, reordering, and cross-query vector-ID substitution are
-  each individually detected.
+- Score mutation, reordering, cross-query vector-ID substitution, and
+  gate-variant substitution are each individually detected. (Detection of
+  a mutated preimage is expected from SHA-256 by construction; these are
+  regression checks on the implementation, not an empirical detection
+  rate.)
+- Empty result sets fail closed for every variant
+  (`empty_result_set_fails_closed_for_all_variants`).
 - `MerkleReceipt`'s worst-case proof is smaller than `PerResultReceipt`'s
   at k=10 (`merkle_proof_bytes_are_sublinear_vs_per_result_at_k10`).
-- Re-ingesting the same logical dataset under a different seed produces a
-  different `index_state_root`, so receipts cannot be replayed across
-  index instances undetected.
+- Re-ingesting under a different seed produces a different
+  `index_state_root` (`index_state_root_changes_receipts_across_reingestion`).
+  Note that test compares roots only — it does not construct a receipt —
+  so cross-index replay rejection follows from the leaf's binding to
+  `index_root` (exercised by the honest/tamper tests), rather than being
+  directly exercised end-to-end by that test.
 
 ## Consequences
 
 **Positive:**
-- Closes the write→read provenance gap: an agent's RAG evidence trail can
-  now be replayed end to end (ingestion receipt → retrieval receipt) using
-  only existing `ruvector-proof-gate` primitives, no new cryptographic
-  machinery.
+- Makes a query's committed result set tamper-evident after issuance: an
+  agent's RAG evidence record (ingestion receipt copy + retrieval receipt)
+  can be checked for post-hoc mutation using only existing
+  `ruvector-proof-gate` hash primitives, no new cryptographic machinery.
+  This is integrity of the *record* of retrieval, not proof of honest
+  retrieval and not write-chain membership — see Threat Model.
 - `MerkleReceipt` gives a compact (O(log k)), portable proof for a single
   disputed result — useful when only one cited memory needs to be
   challenged, not the whole answer.
@@ -167,10 +200,14 @@ per variant:
 2. If promoted: integrate as an optional wrapper around
    `ruvector-agent-memory` query paths, gated behind a Cargo feature so the
    default build pays zero cost.
-3. Wire `index_state_root`/`chain_head` signing through the existing
+3. Bind each result leaf to a `MerkleGate` MMR inclusion proof so a
+   receipt proves write-chain *membership* offline instead of merely
+   committing to copies of `WriteReceipt` fields — the prerequisite for
+   any chain-of-custody-grade claim.
+4. Wire `index_state_root`/`chain_head` signing through the existing
    witness-signing story once `ruvector-proof-gate` gains one (currently
    neither crate signs; both are commitment-only).
-4. MCP surface: a narrow `retrieval_verify` read-only tool that accepts a
+5. MCP surface: a narrow `retrieval_verify` read-only tool that accepts a
    receipt + one result item and returns a boolean, never exposing raw
    index internals.
 
@@ -238,7 +275,11 @@ no other crate depends on it.
 
 This direction should be rejected for production promotion if any of the
 following hold on re-measurement at larger scale (n≥100k, k≥100):
-- Tamper-detection rate drops below 100% for any tamper kind.
+- Any tamper-kind regression test fails. Detection of a mutated preimage
+  follows from SHA-256 collision resistance — the 200/200 trial result is
+  a correctness regression check, not an empirical detection rate — so a
+  failure here would indicate an implementation bug, which is
+  disqualifying.
 - `MerkleReceipt`'s proof-size advantage disappears or inverts at larger k
   (it should not, asymptotically, but must be re-confirmed rather than
   assumed).

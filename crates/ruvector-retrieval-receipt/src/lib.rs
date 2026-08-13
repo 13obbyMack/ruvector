@@ -1,18 +1,29 @@
 //! Witness-chained provenance receipts for ANN retrieval results.
 //!
 //! `ruvector-proof-gate` answers "what was written, and can I prove it
-//! hasn't been tampered with?" for the *write* path. This crate answers
-//! the symmetric question for the *read* path: "what did this query
-//! actually return, against which index state, and can an auditor
-//! independently confirm that — without re-running the query or trusting
-//! whoever ran it?"
+//! hasn't been tampered with?" for the *write* path. This crate addresses
+//! the read path: it commits a query's result set to a receipt so that a
+//! receipt/result pair, once issued, cannot be silently mutated in transit
+//! or in storage without verification failing.
 //!
-//! Every result item is bound into its receipt together with the
-//! `WriteReceipt` produced when that vector was ingested, so a retrieval
-//! receipt is not just "these IDs and scores were returned" but "these IDs,
-//! scores, and their entire write-provenance chain were returned" — closing
-//! the loop between ingestion integrity and retrieval integrity that a RAG
-//! auditor needs to replay an agent's evidence trail.
+//! # Threat model — read this before relying on the receipts
+//!
+//! Receipts are **unsigned commitments produced by the query engine
+//! itself**. What they do and do not guarantee:
+//!
+//! - They **detect post-issuance mutation** of a receipt/result pair. That
+//!   is the guarantee: an auditor holding the receipt can tell whether the
+//!   result set they were handed is the one the engine committed to.
+//! - They do **not** protect against a dishonest query engine. Leaves are
+//!   engine-chosen; nothing binds a leaf's `score` to an actual cosine
+//!   computation, or the committed k-set to the true top-k.
+//! - They do **not** prove write-chain membership. Each leaf commits to
+//!   *copies* of the `WriteReceipt`'s fields; verification never consults
+//!   the write gate, so mutating the ingestion history after a receipt is
+//!   issued leaves that receipt verifying. Binding each result to an
+//!   offline membership proof via `ruvector_proof_gate::MerkleGate`'s MMR
+//!   is the named future-work item that would make the write→read link
+//!   real.
 //!
 //! # Variants
 //!
@@ -104,6 +115,9 @@ impl RetrievalReceipt {
         }
     }
 
+    /// Verify a complete result set against the receipt. Empty result sets
+    /// fail closed for every variant: "no evidence" must never be
+    /// reportable as "verified evidence".
     pub fn verify_full(&self, qh: [u8; 32], index_root: [u8; 32], results: &[ResultItem]) -> bool {
         match self {
             RetrievalReceipt::None => false,
@@ -249,5 +263,37 @@ mod tests {
         let index_a = RetrievalIndex::ingest(50, 8, 1);
         let index_b = RetrievalIndex::ingest(50, 8, 2);
         assert_ne!(index_a.index_state_root(), index_b.index_state_root());
+    }
+
+    #[test]
+    fn empty_result_set_fails_closed_for_all_variants() {
+        let (_, _, _, qh, root) = setup(50, 8, 3);
+        let empty: Vec<ResultItem> = Vec::new();
+        for variant in [
+            ReceiptVariant::None,
+            ReceiptVariant::PerResult,
+            ReceiptVariant::Merkle,
+        ] {
+            let receipt = RetrievalReceipt::build(variant, qh, root, &empty);
+            assert!(
+                !receipt.verify_full(qh, root, &empty),
+                "{variant:?}: an empty result set must not verify vacuously"
+            );
+        }
+    }
+
+    #[test]
+    fn gate_variant_is_bound_into_the_leaf() {
+        use ruvector_proof_gate::GateVariant;
+        let (_, _, results, qh, root) = setup(100, 16, 4);
+        for variant in [ReceiptVariant::PerResult, ReceiptVariant::Merkle] {
+            let receipt = RetrievalReceipt::build(variant, qh, root, &results);
+            let mut tampered = results.clone();
+            // Same (copied) commitment/payload hashes, but claim they came
+            // from a NullGate: must not verify — otherwise an ungated
+            // all-zero receipt would be indistinguishable from a gated one.
+            tampered[0].write_receipt.gate_variant = GateVariant::Null;
+            assert!(!receipt.verify_item(0, qh, root, &tampered[0]));
+        }
     }
 }

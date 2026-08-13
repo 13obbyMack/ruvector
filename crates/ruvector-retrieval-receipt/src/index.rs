@@ -6,10 +6,12 @@ pub struct ResultItem {
     pub vector_id: u64,
     pub rank: u32,
     pub score: f32,
-    /// The write receipt produced when this vector was ingested. Binding it
-    /// into the retrieval receipt lets an auditor walk from a query result
-    /// back to the exact ingestion event, closing the write->read provenance
-    /// loop that ruvector-proof-gate alone (write-only) cannot provide.
+    /// The write receipt produced when this vector was ingested. The
+    /// retrieval receipt binds *copies* of this receipt's fields, making
+    /// the cited ingestion record part of what the retrieval receipt
+    /// commits to. This is a tamper-evident record of "which write receipt
+    /// was cited", not a proof of write-chain membership — see the threat
+    /// model in `receipt::result_leaf` and the crate docs.
     pub write_receipt: WriteReceipt,
 }
 
@@ -124,7 +126,9 @@ impl RetrievalIndex {
             .enumerate()
             .map(|(i, v)| (i, Self::cosine(query, v)))
             .collect();
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        // total_cmp: NaN-safe total order (a NaN-scored candidate sorts
+        // last instead of panicking a public API on adversarial input).
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
         scored
             .into_iter()
             .take(k)

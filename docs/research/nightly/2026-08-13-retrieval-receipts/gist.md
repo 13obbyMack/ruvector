@@ -37,12 +37,21 @@ top-10 query's result set in a cryptographic receipt should:
 The core primitive is a `ResultItem`: `{vector_id, rank, score,
 write_receipt}`. The `write_receipt` field is the design's load-bearing
 decision — it's the actual `WriteReceipt` `ruvector-proof-gate` produced
-when that vector was ingested, not a re-derived stand-in. Binding it into
-every retrieval receipt means tampering with either the *ingestion*
-history or the *retrieval* result independently breaks verification. This
-is the write→read provenance link: an auditor holding only a retrieval
-receipt can trace a result back through the exact write event that put it
-in the index.
+when that vector was ingested, not a re-derived stand-in. Each result
+leaf binds *copies* of that receipt's `gate_variant`, `chain_commitment`,
+and `payload_hash`, so a receipt/result pair cannot be mutated after
+issuance without verification failing.
+
+The threat model must be stated plainly: receipts are unsigned
+commitments produced by the query engine itself. They detect
+**post-issuance mutation** of a receipt/result pair (in transit or in
+storage). They do **not** protect against a dishonest query engine
+(nothing binds a score to an actual cosine computation, or the committed
+set to the true top-k), and they do **not** prove write-chain membership
+— verification never consults the write gate, so mutating the ingestion
+history after issuance leaves existing receipts verifying. Anchoring
+leaves to `MerkleGate`'s MMR inclusion proofs is the named future-work
+item that would make the write→read link a real membership binding.
 
 Two structured receipt variants wrap a query's k-result set:
 
@@ -77,9 +86,10 @@ couldn't cleanly attribute a regression to either cause.
   reproducibility without an RNG dependency).
 - `receipt.rs` — `PerResultReceipt` and `MerkleReceipt`, including Merkle
   tree construction, inclusion-proof generation, and verification.
-- `lib.rs` — a unifying `RetrievalReceipt` enum plus 12 unit tests: honest
+- `lib.rs` — a unifying `RetrievalReceipt` enum plus 14 unit tests: honest
   verification for both variants, four independently tested tamper kinds
-  (score mutation, reordering, cross-query ID substitution), and a direct
+  (score mutation, reordering, cross-query ID substitution, gate-variant
+  substitution), empty-result fail-closed behavior, and a direct
   assertion that Merkle proof bytes are smaller than per-result proof
   bytes at k=10.
 - `bin/benchmark.rs` — the measurement harness below.
@@ -110,18 +120,29 @@ generation overhead < 15% of baseline search: merkle=1.8% per_result=1.6% -> tru
 ACCEPTANCE RESULT: ACCEPT
 ```
 
-`cargo test --release -p ruvector-retrieval-receipt`: 12/12 passing.
+`cargo test --release -p ruvector-retrieval-receipt`: 14/14 passing.
+The 200/200 tamper-rejection result is expected from SHA-256 by
+construction (a mutated preimage changes its hash) — it is a regression
+check on the implementation, not an empirical detection rate.
 
-MerkleReceipt's advantage compounds with k: at k=10 the proof-size gap is
-2x (160 vs 320 bytes); the same O(log k) vs O(idx) arithmetic implies a
-~12.5x gap at k=100 (256 vs ~3,200 bytes worst case) — stated here as
-arithmetic extrapolation, not as a re-run benchmark result, and flagged
-explicitly in the ADR's rejection criteria as needing direct
+One caveat on the proof-size comparison: `PerResultReceipt`'s proof is
+defined as the genesis-anchored chain replay (`(idx+1)*32` bytes); a
+head-anchored verifier would need only the `k−idx` suffix, so the "160 vs
+320 bytes" gap at the worst index is a property of that baseline
+definition. The durable claim is the asymptotic one — O(log k) Merkle
+proofs vs O(k) chain replay regardless of which result is disputed. Under
+the same definition the gap at k=100 works out to 256 vs ~3,200 bytes
+worst case — stated as arithmetic extrapolation, not a re-run benchmark
+result, and flagged in the ADR's rejection criteria as needing direct
 re-measurement before being treated as a production claim.
 
 ## Limitations
 
 - Brute-force only; composition with a real ANN index is unmeasured.
+- Receipts commit to *copies* of `WriteReceipt` fields, not to write-chain
+  membership: a mutated ingestion history does not invalidate
+  already-issued receipts, and a dishonest query engine is out of scope.
+  MerkleGate MMR membership binding is the named future-work item.
 - No signature scheme over receipt roots — this crate produces
   commitments, matching `ruvector-proof-gate`'s current scope, not a
   complete non-repudiation system by itself.
