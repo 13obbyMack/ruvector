@@ -172,7 +172,7 @@ jobs:
               -p mcp-brain
               -p ruvector-decompiler
           - name: core-and-rest-wasm
-            # Iter 232 — split out the 29 *-wasm crates from core-and-rest
+            # Iter 232 — split out the *-wasm crates from core-and-rest
             # because the catch-all shard had grown to 115 crates and was
             # consistently missing the 180min cap (iter-228 + iter-230 +
             # iter-231 all cancelled at the timeout boundary). The wasm
@@ -193,6 +193,7 @@ jobs:
               -p ruvector-exotic-wasm
               -p ruvector-fpga-transformer-wasm
               -p ruvector-gnn-wasm
+              -p ruvector-graph-condense-wasm
               -p ruvector-graph-transformer-wasm
               -p ruvector-graph-wasm
               -p ruvector-learning-wasm
@@ -277,6 +278,38 @@ jobs:
               -p verified-applications
               -p void-boundary-discovery
               -p weather-boundary-discovery
+          - name: core-platform
+            # Services, distributed infrastructure, and native Node bindings
+            # form a coherent dependency cluster. Keep them out of the
+            # catch-all so its remaining core libraries compile within the
+            # job timeout even on a cold cache.
+            packages: >-
+              -p mcp-brain-server
+              -p mcp-gate
+              -p ruvector-cli
+              -p ruvector-cluster
+              -p ruvector-cluster-rag
+              -p ruvector-delta-consensus
+              -p ruvector-delta-core
+              -p ruvector-delta-graph
+              -p ruvector-delta-index
+              -p ruvector-namespace-merge
+              -p ruvector-raft
+              -p ruvector-replication
+              -p ruvector-router-cli
+              -p ruvector-router-core
+              -p ruvector-router-ffi
+              -p ruvector-server
+              -p ruvector-snapshot
+              -p ruvector-attention-node
+              -p ruvector-diskann-node
+              -p ruvector-gnn-node
+              -p ruvector-graph-node
+              -p ruvector-graph-transformer-node
+              -p ruvector-mincut-node
+              -p ruvector-node
+              -p ruvector-solver-node
+              -p ruvector-tiny-dancer-node
           - name: core-and-rest
             # Everything else: core, delta, server/cluster, etc.
             # Uses --workspace + --exclude to subtract the groups above so we
@@ -333,6 +366,33 @@ jobs:
               --exclude verified-applications
               --exclude void-boundary-discovery
               --exclude weather-boundary-discovery
+              # Service/distributed crates and Node bindings run in core-platform.
+              --exclude mcp-brain-server
+              --exclude mcp-gate
+              --exclude ruvector-cli
+              --exclude ruvector-cluster
+              --exclude ruvector-cluster-rag
+              --exclude ruvector-delta-consensus
+              --exclude ruvector-delta-core
+              --exclude ruvector-delta-graph
+              --exclude ruvector-delta-index
+              --exclude ruvector-namespace-merge
+              --exclude ruvector-raft
+              --exclude ruvector-replication
+              --exclude ruvector-router-cli
+              --exclude ruvector-router-core
+              --exclude ruvector-router-ffi
+              --exclude ruvector-server
+              --exclude ruvector-snapshot
+              --exclude ruvector-attention-node
+              --exclude ruvector-diskann-node
+              --exclude ruvector-gnn-node
+              --exclude ruvector-graph-node
+              --exclude ruvector-graph-transformer-node
+              --exclude ruvector-mincut-node
+              --exclude ruvector-node
+              --exclude ruvector-solver-node
+              --exclude ruvector-tiny-dancer-node
               --exclude ruvector-postgres
               --exclude ruvector-decompiler
               --exclude timesfm
@@ -397,7 +457,7 @@ jobs:
               --exclude ruvector-cnn-wasm
               --exclude ruvector-consciousness-wasm
               --exclude ruvector-dag-wasm
-              --exclude ruvector-decompiler
+              --exclude ruvector-decompiler-wasm
               --exclude timesfm-wasm
               --exclude ruvector-delta-wasm
               --exclude ruvector-domain-expansion-wasm
@@ -405,6 +465,7 @@ jobs:
               --exclude ruvector-exotic-wasm
               --exclude ruvector-fpga-transformer-wasm
               --exclude ruvector-gnn-wasm
+              --exclude ruvector-graph-condense-wasm
               --exclude ruvector-graph-transformer-wasm
               --exclude ruvector-graph-wasm
               --exclude ruvector-learning-wasm
