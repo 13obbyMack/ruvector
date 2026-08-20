@@ -35,6 +35,25 @@
  * the dishonest path deliberate. Comments are stripped before matching so
  * that PROSE about training (e.g. darwin_guard.rs's train/eval-contamination
  * doc comments) does not false-positive — only code and string literals count.
+ * The stripper is STRING-AWARE (PR #869 security audit, MEDIUM finding): it
+ * is a per-language character scan that tracks quote state, so a `//` inside
+ * a string literal — "https://hf.co/repo/model.safetensors" — is content, not
+ * a comment, and denied tokens in URLs are caught. Residual stripper edges
+ * (all in the false-POSITIVE direction, never hiding a token): a JS regex
+ * literal containing `//` may over-strip the rest of its line; a Rust char
+ * literal containing '"' or a raw string r#"…"# may leave a comment
+ * unstripped. Template literals are tracked including ${} nesting.
+ *
+ * Accepted residuals (on record from the PR #869 audit, not closed here):
+ *   - `fixtures/` and `node_modules/` under a surface stay unscanned by
+ *     convention (committed `dist/` IS scanned — it is what executes).
+ *   - shaperLoop.ts's capability gate fires on a SELF-DECLARED
+ *     capabilityDelta until WP11 wires independent delta extraction from
+ *     genome content (evaluation is still not promotion — human + vetoes own
+ *     that).
+ *   - FrozenModelRef.sha256 is record-only in this slice: witness-stamped as
+ *     the claimed hash, but the day-0/day-30 re-hash that ENFORCES the freeze
+ *     is WP12's operational harness.
  *
  * No dependencies beyond node >= 18.
  */
@@ -68,9 +87,13 @@ const MUTATION_SURFACES = [
 ];
 
 /** Source extensions worth scanning inside a surface. */
-const SCAN_EXT = /\.(ts|mts|cts|js|mjs|cjs|rs)$/;
-/** Directories that are never part of a surface's own source. */
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'target', '.git', 'pkg', 'fixtures']);
+const SCAN_EXT = /\.(ts|mts|cts|js|mjs|cjs|rs|py|sh)$/;
+/**
+ * Directories that are never part of a surface's own source. `dist` is
+ * deliberately NOT here (PR #869 audit): committed build output is what
+ * actually executes, so it is scanned like source.
+ */
+const SKIP_DIRS = new Set(['node_modules', 'target', '.git', 'pkg', 'fixtures']);
 
 /**
  * Deny-list. Each entry: a regex applied to comment-stripped source, why it is
@@ -140,15 +163,85 @@ function warn(msg) {
 }
 
 /**
- * Strip line (`//`) and block comments so prose about training never
- * false-positives; only code and string literals are matched. Removing text
- * can only relax the gate for commented-out code — which is not an import —
- * and denied tokens inside string literals are still caught.
+ * Strip comments so prose about training never false-positives; only code
+ * and string literals are matched. STRING-AWARE (PR #869 audit): a
+ * character scan tracks quote state per language, so `//` inside a string —
+ * the URL form of a model-file or fine-tune reference — is content, never a
+ * comment. Comment text is replaced with spaces (newlines kept).
+ *
+ * Per-language rules:
+ *   - js-like (.ts/.mts/.cts/.js/.mjs/.cjs): `//` + `/* *​/` comments;
+ *     `'`, `"`, and template-literal strings, with `${}` re-entry tracked
+ *     (nested braces counted) and backslash escapes honored.
+ *   - rust (.rs): `//` + NESTED `/* *​/` comments; `"` strings only — `'` is
+ *     deliberately not a string delimiter (lifetimes like `&'a str` would
+ *     desynchronize the scan; char literals cannot hide a multi-char token).
+ *   - python (.py): `#` comments; `'`/`"` and triple-quoted strings.
+ *   - shell (.sh): `#` comments (only at line start or after whitespace, so
+ *     `$#`/`${#x}` survive); `'` (no escapes) and `"` strings.
  */
-function stripComments(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/\/\/[^\n]*/g, ' ');
+function stripComments(source, filename) {
+  const lang = filename.endsWith('.rs') ? 'rs'
+    : filename.endsWith('.py') ? 'py'
+    : filename.endsWith('.sh') ? 'sh'
+    : 'js';
+  const slashComments = lang === 'js' || lang === 'rs';
+  const hashComments = lang === 'py' || lang === 'sh';
+  const out = [];
+  // For js template literals: one entry per open `${`, counting nested braces.
+  const templateBraces = [];
+  let mode = 'code'; // 'code' | 'line' | 'block' | 'string'
+  let blockDepth = 0;
+  let quote = ''; // ' " ` or ''' """ while mode === 'string'
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    if (mode === 'line') {
+      if (ch === '\n') { out.push('\n'); mode = 'code'; } else out.push(' ');
+      i += 1; continue;
+    }
+    if (mode === 'block') {
+      if (lang === 'rs' && source.startsWith('/*', i)) { blockDepth += 1; out.push('  '); i += 2; continue; }
+      if (source.startsWith('*/', i)) {
+        blockDepth -= 1; out.push('  '); i += 2;
+        if (blockDepth === 0) mode = 'code';
+        continue;
+      }
+      out.push(ch === '\n' ? '\n' : ' '); i += 1; continue;
+    }
+    if (mode === 'string') {
+      const noEscapes = quote.length === 3 || (lang === 'sh' && quote === "'");
+      if (!noEscapes && ch === '\\') { out.push(source.slice(i, i + 2)); i += 2; continue; }
+      if (quote === '`' && source.startsWith('${', i)) {
+        templateBraces.push(0); mode = 'code'; out.push('${'); i += 2; continue;
+      }
+      if (quote.length === 3 ? source.startsWith(quote, i) : ch === quote) {
+        out.push(quote); mode = 'code'; i += quote.length; continue;
+      }
+      out.push(ch); i += 1; continue;
+    }
+    // mode === 'code'
+    if (templateBraces.length > 0 && (ch === '{' || ch === '}')) {
+      const top = templateBraces.length - 1;
+      if (ch === '{') templateBraces[top] += 1;
+      else if (templateBraces[top] === 0) { templateBraces.pop(); mode = 'string'; quote = '`'; }
+      else templateBraces[top] -= 1;
+      out.push(ch); i += 1; continue;
+    }
+    if (slashComments && source.startsWith('//', i)) { mode = 'line'; out.push('  '); i += 2; continue; }
+    if (slashComments && source.startsWith('/*', i)) { mode = 'block'; blockDepth = 1; out.push('  '); i += 2; continue; }
+    if (hashComments && ch === '#' && (lang === 'py' || i === 0 || /\s/.test(source[i - 1]))) {
+      mode = 'line'; out.push(' '); i += 1; continue;
+    }
+    if (lang === 'py' && (source.startsWith('"""', i) || source.startsWith("'''", i))) {
+      quote = source.slice(i, i + 3); mode = 'string'; out.push(quote); i += 3; continue;
+    }
+    if (ch === '"' || (ch === "'" && lang !== 'rs') || (ch === '`' && lang === 'js')) {
+      quote = ch; mode = 'string'; out.push(ch); i += 1; continue;
+    }
+    out.push(ch); i += 1;
+  }
+  return out.join('');
 }
 
 /**
@@ -239,7 +332,7 @@ function scanFile(abs, repoRoot) {
     warn(`cannot read ${rel}: ${err.message}`);
     return [];
   }
-  const code = stripComments(source);
+  const code = stripComments(source, abs);
   const hits = [];
   for (const entry of DENY) {
     const m = code.match(entry.re);
@@ -301,8 +394,12 @@ function check(repoRoot = REPO_ROOT) {
  * fixture), and assert:
  *   1. a clean tree passes;
  *   2. training-import / MCP-tool / model-file violations each fail with the
- *      right deny-list id;
- *   3. comment-only mentions of denied tokens do NOT fail;
+ *      right deny-list id — including URL-form references
+ *      ("https://…/model.safetensors", "file://…/x.gguf", "http://…/finetune",
+ *      the PR #869 MEDIUM), the single-slash "ruvllm/training" import form,
+ *      .py/.sh helpers, and files under a committed dist/;
+ *   3. comment-only mentions of denied tokens do NOT fail (plain comments and
+ *      comments containing URLs alike);
  *   4. symlinks (including one pointing at an out-of-tree file full of
  *      violations) are skipped with a warning, never followed, no stack trace;
  *   5. a deleted mutation surface fails loudly (missing-surface hardening).
@@ -343,6 +440,11 @@ function selfTest() {
     // --- 3 + 4. comment-only mentions and symlinks are safe ---
     writeFileSync(join(harnessSrc, 'commented.ts'),
       '// mentions fine_tune only in a comment\n/* fineTune save_checkpoint */\nexport const x = 1;\n');
+    // Comment containing a URL with a denied token: still a comment, still safe.
+    writeFileSync(join(harnessSrc, 'comment-url.ts'),
+      '// background reading: http://internal/finetune docs\nexport const y = 2;\n');
+    writeFileSync(join(mragent, 'clean.sh'),
+      '#!/bin/sh\n# fine_tune mentioned only in this comment\necho ok\n');
     writeFileSync(join(root, 'outside-violations.rs'),
       'use ruvllm::training::RealTrainer; // finetune everything\n');
     symlinkSync(join(root, 'outside-violations.rs'), join(harnessSrc, 'linked.rs'));
@@ -360,6 +462,23 @@ function selfTest() {
       'await call("ruvllm_microlora_adapt", {});\n');
     writeFileSync(join(harnessSrc, 'bad-model.ts'),
       'const weights = "models/llama.gguf";\n');
+    // PR #869 MEDIUM: URL-form references — `//` inside a string is content.
+    writeFileSync(join(harnessSrc, 'bad-url-hf.ts'),
+      'const w = "https://hf.co/repo/model.safetensors";\n');
+    writeFileSync(join(harnessSrc, 'bad-url-gguf.ts'),
+      'loadWeights("file://models/x.gguf");\n');
+    writeFileSync(join(harnessSrc, 'bad-url-finetune.ts'),
+      'const u = "http://internal/finetune";\n');
+    // Single-slash module path must keep flagging (auditor's regression case).
+    writeFileSync(join(harnessSrc, 'bad-import-slash.ts'),
+      'import { t } from "ruvllm/training";\n');
+    // New coverage: .py / .sh helpers and committed dist/ output are scanned.
+    writeFileSync(join(mragent, 'bad.py'),
+      'trainer.save_checkpoint("out")  # totally routine\n');
+    writeFileSync(join(mragent, 'bad.sh'),
+      '#!/bin/sh\npython finetune.py --epochs 3\n');
+    mkdirSync(join(harnessSrc, 'dist'), { recursive: true });
+    writeFileSync(join(harnessSrc, 'dist', 'bad-dist.mjs'), 'save_weights(model);\n');
     const dirty = run();
     ok(dirty.code === 1, 'violations fail the gate (exit 1)');
     ok(dirty.stderr.includes('bad-train.rs') && dirty.stderr.includes('ruvllm-training-module'),
@@ -368,7 +487,25 @@ function selfTest() {
       'MCP weight-mutation tool call is flagged');
     ok(dirty.stderr.includes('bad-model.ts') && dirty.stderr.includes('model-file-reference'),
       'model weight-file reference is flagged');
+    ok(dirty.stderr.includes('bad-url-hf.ts') && dirty.stderr.includes('model-file-reference'),
+      'https URL to .safetensors is flagged (string-aware stripper)');
+    ok(dirty.stderr.includes('bad-url-gguf.ts'),
+      'file:// URL to .gguf is flagged (string-aware stripper)');
+    ok(dirty.stderr.includes('bad-url-finetune.ts') && dirty.stderr.includes('generic-finetune'),
+      'http URL to /finetune is flagged (string-aware stripper)');
+    ok(dirty.stderr.includes('bad-import-slash.ts'),
+      'single-slash ruvllm/training import still flags');
+    ok(dirty.stderr.includes('bad.py') && dirty.stderr.includes('weight-writing'),
+      '.py helper invoking a weight writer is flagged');
+    ok(dirty.stderr.includes('bad.sh') && dirty.stderr.includes('generic-finetune'),
+      '.sh helper invoking finetune is flagged');
+    ok(dirty.stderr.includes('dist/bad-dist.mjs'),
+      'committed dist/ output is scanned and flagged');
     ok(!dirty.stderr.includes('commented.ts'), 'comment-only file is NOT flagged');
+    ok(!dirty.stderr.includes('comment-url.ts'),
+      'denied token in a genuine comment URL is NOT flagged');
+    ok(!dirty.stderr.includes('clean.sh'),
+      '.sh with denied token only in a comment is NOT flagged');
     ok(!dirty.stderr.includes('linked.rs: ['), 'symlinked violations are NOT followed/flagged');
     ok(!dirty.stderr.includes('darwin_guard.rs'),
       'train/eval-contamination guard prose does NOT false-positive');

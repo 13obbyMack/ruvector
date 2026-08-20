@@ -27,6 +27,19 @@
  * test/shaperLoop.test.ts asserts both. A capability-expanding candidate is
  * additionally routed through the ADR-315 constitutional gate (stubbed in
  * genome.ts, WP11 integration point) and is BLOCKED by default.
+ *
+ * ACCEPTED RESIDUALS (PR #869 security audit, on record — not closed here):
+ *   - The capability gate fires on the proposer's SELF-DECLARED
+ *     `capabilityDelta`. A mutation that adds a tool via its skill body while
+ *     declaring no delta would skip the gate and reach evaluation — but not
+ *     promotion: the human + veto/flywheel path still own that. Independent
+ *     extraction of the capability delta from genome content is exactly the
+ *     WP11 wiring named in genome.ts.
+ *   - The model-hash binding is RECORD-ONLY in this slice: sha256 is
+ *     validated as 64-hex and witness-stamped into the report (tamper-evident
+ *     about which hash was claimed), but nothing here recomputes it from real
+ *     weights. The day-0/day-30 re-hash that ENFORCES the freeze is WP12's
+ *     30-day acceptance harness.
  */
 import { runRuvectorGepa, policyFromGenome, type RuvectorGepaOptions } from "./darwin.js";
 import {
