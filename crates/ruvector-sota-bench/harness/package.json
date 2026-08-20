@@ -24,6 +24,7 @@
     "@metaharness/weight-eft": "^0.1.1",
     "@metaharness/workspace-lens": "^0.1.2",
     "@metaharness/workspace-probe": "^0.1.1",
+    "dream-machine": "0.1.1",
     "metaharness": "^0.4.7"
   },
   "devDependencies": {
