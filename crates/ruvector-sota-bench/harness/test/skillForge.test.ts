@@ -5,6 +5,7 @@ import {
   SKILLFORGE_CITATION,
   assertCoveredTarget,
   buildSkillProposal,
+  corroboratesRepair,
   distillSkill,
   entityKey,
   isEntityStale,
@@ -124,6 +125,59 @@ test("DISTILL: a FAILED trajectory yields NO skill", () => {
       assert.equal(result.skipped.length, 1);
       assert.equal(result.skipped[0]!.reason, "repair_failed");
     });
+});
+
+test("CORROBORATION: self-declared success alone earns no skill — resolvedTests must intersect breaksTests", async () => {
+  const issue = synthesizeIssue(COVERED_FN, DATE);
+  assert.ok(issue.breaksTests.length > 0);
+
+  // succeeded:true but NO resolved test → hollow claim → NO skill.
+  const empty: RepairTrajectory = { issueId: issue.id, steps: [], succeeded: true, resolvedTests: [] };
+  assert.equal(corroboratesRepair(issue, empty), false);
+  assert.equal(distillSkill(issue, empty, DATE), null);
+
+  // succeeded:true but resolvedTests UNRELATED to what the issue broke → NO skill.
+  const unrelated: RepairTrajectory = {
+    issueId: issue.id,
+    steps: [],
+    succeeded: true,
+    resolvedTests: ["test/somewhere-else.test.ts::unrelated"],
+  };
+  assert.equal(corroboratesRepair(issue, unrelated), false);
+  assert.equal(distillSkill(issue, unrelated, DATE), null);
+
+  // succeeded:true AND resolvedTests cover the broken tests → skill distilled.
+  const covering: RepairTrajectory = {
+    issueId: issue.id,
+    steps: [{ action: "repair", detail: "restore" }],
+    succeeded: true,
+    resolvedTests: [...issue.breaksTests],
+  };
+  assert.equal(corroboratesRepair(issue, covering), true);
+  assert.ok(distillSkill(issue, covering, DATE));
+
+  // End to end: an uncorroborated "success" is recorded as skipped, not proposed.
+  const hollowSolver = (i: SyntheticIssue): RepairTrajectory =>
+    ({ issueId: i.id, steps: [], succeeded: true, resolvedTests: [] });
+  const result = await runSkillForge({ targets: [COVERED_FN], parent: PARENT_SKILLS, solve: hollowSolver, date: DATE });
+  assert.equal(result.proposals.length, 0);
+  assert.equal(result.skipped.length, 1);
+  assert.equal(result.skipped[0]!.reason, "repair_uncorroborated");
+});
+
+test("entityKey is injective: separator-bearing components cannot collide", () => {
+  const a = entityKey({ kind: "function", path: "auth", symbol: "ts#login", contentSha256: "a".repeat(64) });
+  const b = entityKey({ kind: "function", path: "auth#ts", symbol: "login", contentSha256: "a".repeat(64) });
+  assert.notEqual(a, b);
+  // A `:`-bearing component likewise cannot forge the fn:/mod:/adr: prefix boundary.
+  const c = entityKey({ kind: "module", path: "a:b", contentSha256: "a".repeat(64) });
+  const d = entityKey({ kind: "module", path: "a", contentSha256: "a".repeat(64) });
+  assert.notEqual(c, d);
+  // Plain paths (no separators) are unchanged — retrieval keys stay readable.
+  assert.equal(
+    entityKey({ kind: "function", path: "src/genome.ts", symbol: "f", contentSha256: "a".repeat(64) }),
+    "fn:src/genome.ts#f",
+  );
 });
 
 test("CONSTITUTIONAL BOUNDARY: a distilled skill is a PROPOSAL, no promotion reachable", async () => {
