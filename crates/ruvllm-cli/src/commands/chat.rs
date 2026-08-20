@@ -49,9 +49,11 @@ pub async fn run(
     draft_model: Option<&str>,
     speculative_lookahead: usize,
 ) -> Result<()> {
-    let model_id = resolve_model_id(model);
     let quant = QuantPreset::from_str(quantization)
         .ok_or_else(|| anyhow::anyhow!("Invalid quantization format: {}", quantization))?;
+    // Resolve to the repo that hosts the weights for this quantization
+    // (GGUF twin for safetensors-only aliases) — must match `download`'s cache key.
+    let model_id = crate::models::resolve_weights_repo(model, quant);
 
     // Print header
     print_header(&model_id, system_prompt, max_tokens, temperature);
@@ -80,7 +82,11 @@ pub async fn run(
             "{}",
             "Loading draft model for speculative decoding...".yellow()
         );
-        let draft = load_model(&resolve_model_id(draft_id), quant, cache_dir)?;
+        let draft = load_model(
+            &crate::models::resolve_weights_repo(draft_id, quant),
+            quant,
+            cache_dir,
+        )?;
 
         if let Some(info) = draft.model_info() {
             println!(

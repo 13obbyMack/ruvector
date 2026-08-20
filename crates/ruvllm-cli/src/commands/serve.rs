@@ -51,9 +51,11 @@ pub async fn run(
     quantization: &str,
     cache_dir: &str,
 ) -> Result<()> {
-    let model_id = resolve_model_id(model);
     let quant = QuantPreset::from_str(quantization)
         .ok_or_else(|| anyhow::anyhow!("Invalid quantization format: {}", quantization))?;
+    // Resolve to the repo that hosts the weights for this quantization
+    // (GGUF twin for safetensors-only aliases) — must match `download`'s cache key.
+    let model_id = crate::models::resolve_weights_repo(model, quant);
 
     println!();
     println!("{}", style("RuvLLM Inference Server").bold().cyan());

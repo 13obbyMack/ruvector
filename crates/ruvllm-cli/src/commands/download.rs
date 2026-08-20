@@ -12,7 +12,7 @@ use hf_hub::{Repo, RepoType};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::{Path, PathBuf};
 
-use crate::models::{get_model, resolve_model_id, QuantPreset};
+use crate::models::{get_model, resolve_model_id, resolve_weights_repo, QuantPreset};
 
 /// Run the download command
 pub async fn run(
@@ -22,9 +22,13 @@ pub async fn run(
     revision: Option<&str>,
     cache_dir: &str,
 ) -> Result<()> {
-    let model_id = resolve_model_id(model);
     let quant = QuantPreset::from_str(quantization)
         .ok_or_else(|| anyhow::anyhow!("Invalid quantization format: {}", quantization))?;
+
+    // Route quantized (GGUF) requests to the repo that actually hosts GGUF
+    // weights (registry `gguf_repo` twin for safetensors-only aliases).
+    let base_id = resolve_model_id(model);
+    let model_id = resolve_weights_repo(model, quant);
 
     println!();
     println!(
@@ -33,6 +37,13 @@ pub async fn run(
         model_id,
         quant
     );
+    if model_id != base_id {
+        println!(
+            "  {} {} hosts safetensors only; using GGUF twin repo",
+            "Note:".dimmed(),
+            base_id
+        );
+    }
     println!();
 
     // Get model info if available
@@ -62,8 +73,12 @@ pub async fn run(
         api.repo(Repo::new(model_id.clone(), RepoType::Model))
     };
 
-    // Determine files to download
-    let files_to_download = get_files_to_download(&model_id, quant);
+    // List the repo's actual files and expand the quant pattern against them
+    // (previously an unexpanded glob like "*Q4_K_M.gguf" was sent literally -> 404).
+    let remote_files = list_repo_files(&repo, &model_id, revision)
+        .await
+        .with_context(|| format!("Failed to list files for {model_id} on HuggingFace"))?;
+    let files_to_download = get_files_to_download(&model_id, quant, &remote_files)?;
 
     // Create cache directory
     let model_cache_dir = PathBuf::from(cache_dir).join("models").join(&model_id);
@@ -74,6 +89,11 @@ pub async fn run(
     // Download each file
     for file_name in &files_to_download {
         let target_path = model_cache_dir.join(file_name);
+        if let Some(parent) = target_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .context("Failed to create cache subdirectory")?;
+        }
 
         // Check if file exists
         if target_path.exists() && !force {
@@ -189,28 +209,176 @@ fn download_via_curl(model_id: &str, revision: Option<&str>, file_name: &str) ->
     Ok(out)
 }
 
-/// Get list of files to download for a model and quantization
-fn get_files_to_download(model_id: &str, quant: QuantPreset) -> Vec<String> {
-    let mut files = vec![
-        "tokenizer.json".to_string(),
-        "tokenizer_config.json".to_string(),
-        "config.json".to_string(),
-    ];
+/// List a repo's files via the hf-hub API, falling back to a `curl` of the
+/// HF tree endpoint (`GET /api/models/<id>/tree/<rev>`) — the same fallback
+/// idiom as `download_via_curl`, honoring `HF_TOKEN`.
+async fn list_repo_files(
+    repo: &hf_hub::api::tokio::ApiRepo,
+    model_id: &str,
+    revision: Option<&str>,
+) -> Result<Vec<String>> {
+    match repo.info().await {
+        Ok(info) => Ok(info.siblings.into_iter().map(|s| s.rfilename).collect()),
+        Err(e) => list_files_via_curl(model_id, revision)
+            .with_context(|| format!("hf-hub file listing also failed: {e}")),
+    }
+}
 
-    // Add model weights based on quantization
-    if model_id.contains("GGUF") || quant != QuantPreset::None {
-        // Look for GGUF files
-        files.push(format!("*{}", quant.gguf_suffix()));
-    } else {
-        // SafeTensors format
+/// Fallback file listing via `curl` against the HF tree API.
+fn list_files_via_curl(model_id: &str, revision: Option<&str>) -> Result<Vec<String>> {
+    let rev = revision.unwrap_or("main");
+    let url = format!("https://huggingface.co/api/models/{model_id}/tree/{rev}?recursive=true");
+    let mut args = vec!["-L".to_string(), "--fail".to_string(), "-sS".to_string()];
+    if let Ok(token) = std::env::var("HF_TOKEN") {
+        args.push("-H".to_string());
+        args.push(format!("Authorization: Bearer {token}"));
+    }
+    args.push(url.clone());
+    let output = std::process::Command::new("curl")
+        .args(&args)
+        .output()
+        .with_context(|| format!("curl not available to list {url}"))?;
+    if !output.status.success() {
+        anyhow::bail!("curl file listing failed ({}) for {url}", output.status);
+    }
+    parse_tree_file_paths(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Parse file paths out of the HF tree API JSON (`[{"type":"file","path":...},...]`).
+fn parse_tree_file_paths(json: &str) -> Result<Vec<String>> {
+    let entries: serde_json::Value =
+        serde_json::from_str(json).context("Invalid JSON from HF tree API")?;
+    let entries = entries
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("HF tree API did not return an array"))?;
+    Ok(entries
+        .iter()
+        .filter(|e| e.get("type").and_then(|t| t.as_str()) == Some("file"))
+        .filter_map(|e| e.get("path").and_then(|p| p.as_str()).map(String::from))
+        .collect())
+}
+
+/// Get list of files to download for a model and quantization, resolved
+/// against the repo's actual file listing.
+fn get_files_to_download(
+    model_id: &str,
+    quant: QuantPreset,
+    remote_files: &[String],
+) -> Result<Vec<String>> {
+    // Aux files: only the ones the repo actually has (GGUF repos typically
+    // ship none — tokenizer/config are embedded in the GGUF itself).
+    let mut files: Vec<String> = [
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "config.json",
+        "special_tokens_map.json",
+        "generation_config.json",
+    ]
+    .iter()
+    .filter(|f| remote_files.iter().any(|r| r == *f))
+    .map(|f| f.to_string())
+    .collect();
+
+    // Model weights
+    if model_id.to_ascii_uppercase().contains("GGUF") || quant != QuantPreset::None {
+        files.extend(select_gguf_files(model_id, quant, remote_files)?);
+    } else if remote_files.iter().any(|f| f == "model.safetensors") {
         files.push("model.safetensors".to_string());
+    } else {
+        // Sharded safetensors (model-00001-of-000NN.safetensors)
+        let mut shards: Vec<String> = remote_files
+            .iter()
+            .filter(|f| f.starts_with("model-") && f.ends_with(".safetensors"))
+            .cloned()
+            .collect();
+        if shards.is_empty() {
+            anyhow::bail!(
+                "No safetensors weights found in {model_id}.\nAvailable files:\n  {}",
+                remote_files.join("\n  ")
+            );
+        }
+        shards.sort();
+        files.extend(shards);
     }
 
-    // Add special tokens and chat template if available
-    files.push("special_tokens_map.json".to_string());
-    files.push("generation_config.json".to_string());
+    Ok(files)
+}
 
-    files
+/// Select the GGUF weight file(s) matching `quant` from the repo listing.
+///
+/// Handles both single-file (`...-Q4_K_M.gguf`) and multi-part
+/// (`...-q4_k_m-00001-of-00003.gguf`) layouts — multi-part is the norm for
+/// larger models (e.g. Qwen2.5-14B), so all parts are downloaded in order.
+/// Fails with the repo's actual GGUF inventory (or full file list) when
+/// nothing matches, instead of 404ing on a glob.
+fn select_gguf_files(
+    model_id: &str,
+    quant: QuantPreset,
+    remote_files: &[String],
+) -> Result<Vec<String>> {
+    let mut matches: Vec<String> = remote_files
+        .iter()
+        .filter(|f| {
+            quant
+                .gguf_tags()
+                .iter()
+                .any(|tag| matches_gguf_quant(f, tag))
+        })
+        .cloned()
+        .collect();
+
+    if matches.is_empty() {
+        let ggufs: Vec<&String> = remote_files
+            .iter()
+            .filter(|f| f.to_ascii_lowercase().ends_with(".gguf"))
+            .collect();
+        if ggufs.is_empty() {
+            anyhow::bail!(
+                "No GGUF files found in {model_id} (requested quantization: {quant}).\n\
+                 This repo appears to host non-GGUF weights only. Available files:\n  {}\n\
+                 Hint: pass a GGUF repo, or use --quantization none for safetensors.",
+                remote_files.join("\n  ")
+            );
+        }
+        anyhow::bail!(
+            "No GGUF file matching quantization {quant} in {model_id}.\n\
+             Available GGUF files:\n  {}",
+            ggufs
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        );
+    }
+
+    // Zero-padded part numbers sort lexically (…-00001-of-00003 first).
+    matches.sort();
+    Ok(matches)
+}
+
+/// True if `file` is a GGUF weight file for the given lowercase quant tag,
+/// either single-file (`<name>-<tag>.gguf`) or a multi-part shard
+/// (`<name>-<tag>-NNNNN-of-NNNNN.gguf`). Matching is case-insensitive.
+fn matches_gguf_quant(file: &str, tag: &str) -> bool {
+    let f = file.to_ascii_lowercase();
+    let Some(stem) = f.strip_suffix(".gguf") else {
+        return false;
+    };
+    // Single-file: ends with the tag (allow "-tag", ".tag", or bare tag)
+    if stem == tag || stem.ends_with(&format!("-{tag}")) || stem.ends_with(&format!(".{tag}")) {
+        return true;
+    }
+    // Multi-part: ...-<tag>-NNNNN-of-NNNNN
+    if let Some(idx) = stem.rfind(&format!("-{tag}-")) {
+        let rest = &stem[idx + tag.len() + 2..];
+        if let Some((part, total)) = rest.split_once("-of-") {
+            return !part.is_empty()
+                && !total.is_empty()
+                && part.chars().all(|c| c.is_ascii_digit())
+                && total.chars().all(|c| c.is_ascii_digit());
+        }
+    }
+    false
 }
 
 /// Check if a model is already downloaded
@@ -243,10 +411,151 @@ pub fn get_model_path(model: &str, cache_dir: &str) -> PathBuf {
 mod tests {
     use super::*;
 
+    /// HF tree API fixture: Qwen-style GGUF repo (lowercase, multi-part).
+    const QWEN_TREE_JSON: &str = r#"[
+        {"type":"file","oid":"a","size":100,"path":".gitattributes"},
+        {"type":"file","oid":"b","size":100,"path":"README.md"},
+        {"type":"directory","oid":"c","path":"assets"},
+        {"type":"file","oid":"d","size":1,"path":"qwen2.5-14b-instruct-q4_k_m-00002-of-00003.gguf"},
+        {"type":"file","oid":"e","size":1,"path":"qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf"},
+        {"type":"file","oid":"f","size":1,"path":"qwen2.5-14b-instruct-q4_k_m-00003-of-00003.gguf"},
+        {"type":"file","oid":"g","size":1,"path":"qwen2.5-14b-instruct-q8_0-00001-of-00004.gguf"},
+        {"type":"file","oid":"h","size":1,"path":"qwen2.5-14b-instruct-fp16-00001-of-00008.gguf"}
+    ]"#;
+
+    fn qwen_files() -> Vec<String> {
+        parse_tree_file_paths(QWEN_TREE_JSON).unwrap()
+    }
+
     #[test]
-    fn test_files_to_download() {
-        let files = get_files_to_download("test/model", QuantPreset::Q4K);
+    fn test_parse_tree_file_paths_skips_directories() {
+        let files = qwen_files();
+        assert_eq!(files.len(), 7);
+        assert!(!files.iter().any(|f| f == "assets"));
+        assert!(files.contains(&"README.md".to_string()));
+    }
+
+    #[test]
+    fn test_parse_tree_rejects_bad_json() {
+        assert!(parse_tree_file_paths("not json").is_err());
+        assert!(parse_tree_file_paths(r#"{"error":"Repo not found"}"#).is_err());
+    }
+
+    #[test]
+    fn test_glob_expansion_multi_part_sorted() {
+        // The old code pushed the literal "*Q4_K_M.gguf" -> 404. The matcher
+        // must instead select the real (multi-part, lowercase) filenames.
+        let files = select_gguf_files(
+            "Qwen/Qwen2.5-14B-Instruct-GGUF",
+            QuantPreset::Q4K,
+            &qwen_files(),
+        )
+        .unwrap();
+        assert_eq!(
+            files,
+            vec![
+                "qwen2.5-14b-instruct-q4_k_m-00001-of-00003.gguf",
+                "qwen2.5-14b-instruct-q4_k_m-00002-of-00003.gguf",
+                "qwen2.5-14b-instruct-q4_k_m-00003-of-00003.gguf",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_glob_expansion_single_file_uppercase() {
+        // bartowski-style single-file uppercase naming
+        let files = vec![
+            "README.md".to_string(),
+            "microsoft_Phi-4-mini-instruct-Q4_K_M.gguf".to_string(),
+            "microsoft_Phi-4-mini-instruct-Q8_0.gguf".to_string(),
+        ];
+        let selected = select_gguf_files(
+            "bartowski/microsoft_Phi-4-mini-instruct-GGUF",
+            QuantPreset::Q4K,
+            &files,
+        )
+        .unwrap();
+        assert_eq!(selected, vec!["microsoft_Phi-4-mini-instruct-Q4_K_M.gguf"]);
+    }
+
+    #[test]
+    fn test_f16_matches_fp16_spelling() {
+        let selected = select_gguf_files(
+            "Qwen/Qwen2.5-14B-Instruct-GGUF",
+            QuantPreset::F16,
+            &qwen_files(),
+        )
+        .unwrap();
+        assert_eq!(
+            selected,
+            vec!["qwen2.5-14b-instruct-fp16-00001-of-00008.gguf"]
+        );
+    }
+
+    #[test]
+    fn test_no_gguf_in_repo_fails_with_available_files() {
+        // Safetensors-only repo (the phi/microsoft case) must fail early with
+        // an actionable listing, not a 404 on a glob.
+        let files = vec![
+            "config.json".to_string(),
+            "model-00001-of-00002.safetensors".to_string(),
+            "model-00002-of-00002.safetensors".to_string(),
+        ];
+        let err = select_gguf_files("microsoft/Phi-4-mini-instruct", QuantPreset::Q4K, &files)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("No GGUF files found"));
+        assert!(err.contains("model-00001-of-00002.safetensors"));
+        assert!(err.contains("--quantization none"));
+    }
+
+    #[test]
+    fn test_missing_quant_lists_available_ggufs() {
+        let files = vec!["m-q8_0.gguf".to_string()];
+        let err = select_gguf_files("x/y-GGUF", QuantPreset::Q4K, &files)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Q4_K_M"));
+        assert!(err.contains("m-q8_0.gguf"));
+    }
+
+    #[test]
+    fn test_matches_gguf_quant_shapes() {
+        assert!(matches_gguf_quant("model-Q4_K_M.gguf", "q4_k_m"));
+        assert!(matches_gguf_quant("model.q4_k_m.gguf", "q4_k_m"));
+        assert!(matches_gguf_quant("m-q4_k_m-00001-of-00003.gguf", "q4_k_m"));
+        // No false positives on other quants or non-gguf files
+        assert!(!matches_gguf_quant("model-Q4_K_S.gguf", "q4_k_m"));
+        assert!(!matches_gguf_quant("model-q4_k_m.safetensors", "q4_k_m"));
+        assert!(!matches_gguf_quant("m-q4_k_m-partial-of-x.gguf", "q4_k_m"));
+    }
+
+    #[test]
+    fn test_files_to_download_filters_aux_by_listing() {
+        // GGUF repos ship no tokenizer.json/config.json — must not request them.
+        let files = get_files_to_download(
+            "Qwen/Qwen2.5-14B-Instruct-GGUF",
+            QuantPreset::Q4K,
+            &qwen_files(),
+        )
+        .unwrap();
+        assert!(!files.contains(&"tokenizer.json".to_string()));
+        assert!(
+            files.iter().all(|f| !f.contains('*')),
+            "no unexpanded globs"
+        );
+        assert_eq!(files.iter().filter(|f| f.ends_with(".gguf")).count(), 3);
+    }
+
+    #[test]
+    fn test_files_to_download_safetensors_path() {
+        let remote = vec![
+            "tokenizer.json".to_string(),
+            "config.json".to_string(),
+            "model.safetensors".to_string(),
+        ];
+        let files = get_files_to_download("test/model", QuantPreset::None, &remote).unwrap();
         assert!(files.contains(&"tokenizer.json".to_string()));
-        assert!(files.iter().any(|f| f.contains("Q4_K_M")));
+        assert!(files.contains(&"model.safetensors".to_string()));
     }
 }
