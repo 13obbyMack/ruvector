@@ -8788,6 +8788,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruvector-agent-memory"
+version = "0.1.0"
+dependencies = [
+ "rand 0.8.6",
+]
+
+[[package]]
 name = "ruvector-attention"
 version = "2.3.0"
 dependencies = [
@@ -8923,6 +8930,14 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "ruvector-bet4-ivf-bench"
+version = "0.1.0"
+dependencies = [
+ "rand 0.8.6",
+ "ruvector-rairs",
 ]
 
 [[package]]
@@ -10718,6 +10733,13 @@ dependencies = [
 [[package]]
 name = "ruvector-temporal-tensor"
 version = "2.3.0"
+
+[[package]]
+name = "ruvector-temporal-tensor-wasm"
+version = "2.3.0"
+dependencies = [
+ "ruvector-temporal-tensor",
+]
 
 [[package]]
 name = "ruvector-timesfm"
