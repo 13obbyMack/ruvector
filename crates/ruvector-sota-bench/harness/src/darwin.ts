@@ -76,7 +76,7 @@ function reflectParameter(prompt: string): string {
   return `${target}:value=${next}`;
 }
 
-function policyFromGenome(genome: Genome): Record<string, string> {
+export function policyFromGenome(genome: Genome): Record<string, string> {
   return Object.fromEntries(Object.entries(genome.components).map(([name, encoded]) => {
     const prefix = `${name}:value=`;
     if (!encoded.startsWith(prefix)) throw new Error(`invalid Darwin component encoding for ${name}`);
