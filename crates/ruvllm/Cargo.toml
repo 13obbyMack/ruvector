@@ -139,6 +139,13 @@ quantize = []
 # existing builds.
 kv-migration = []
 
+# Governed pipeline-shard placement planner: assigns pipeline-stage shards to
+# heterogeneous fleet nodes subject to residency/trust/hardware/capacity hard
+# constraints, optimizing latency/cost within the feasible set
+# (arXiv:2608.19147, PIR WP20, ruvector ADR-323 — extends ADR-314). Default-OFF
+# so it cannot affect existing builds, mirroring the `kv-migration` gate.
+shard-placement = []
+
 # P5 Optimization: Optional routing metrics collection
 # Disable for production to avoid Instant::now() syscall overhead (~0.04-0.08µs)
 routing-metrics = []
