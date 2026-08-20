@@ -87,6 +87,9 @@ members = [
     # in members nor exclude, so `cargo test -p ruvector-agent-memory`
     # could not run at all.
     "crates/ruvector-agent-memory",
+    # StagedWorkspace (arXiv:2608.18050) content-hash state binding
+    # (ADR-318, PIR WP16 ruvnet/RuVector#863).
+    "crates/ruvector-staged-workspace",
     "crates/ruvector-retrieval-receipt",
     "crates/ruvector-gnn-rerank",
     "crates/ruvector-gnn-node",
