@@ -16,6 +16,12 @@ path = "src/main.rs"
 [dependencies]
 rand = "0.8"
 serde = { workspace = true }
+# ADR-320 (PIR WP18): reuse the repo's SHA-256 (content addressing) and
+# RFC 8032 Ed25519 (per-observation signatures) for AtomicObservation — no new
+# hash or signature scheme (ADR-320 Security Gates). `ed25519` feature pulls in
+# ed25519-dalek + rand_core; the always-compiled `sha256` module needs no
+# feature.
+rvf-types = { version = "0.2", path = "../rvf/rvf-types", features = ["ed25519"] }
 # Existing ADR-194/047 proof-gated write machinery; adapts to the ledger's
 # ProofGate trait behind the `proof-gate` feature (see src/ledger.rs).
 ruvector-proof-gate = { path = "../ruvector-proof-gate", optional = true }

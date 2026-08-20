@@ -24,6 +24,15 @@
 //! five executable memory operations over accepted/pending/rejected states,
 //! with witness-record emission (ADR-134 schema) and proof-gated acceptance.
 //!
+//! The `observation` and `fusion` modules add the cross-source causal fusion
+//! layer (ADR-320, PIR WP18): source-tagged [`AtomicObservation`]s fuse into a
+//! [`CausalEpisodicGraph`] with provenance preserved back to each atomic
+//! source. Informed by MemFuse (arXiv:2608.18704, `Darwin-Agent/Mi-Memory`) and
+//! explicitly distinct from the unrelated `memfuse/memfuse` OSS project. It
+//! reuses this crate's WP4 ledger for governed admission and `rvf-types`'
+//! SHA-256/Ed25519 for content addressing and per-observation signatures — no
+//! new hash or signature scheme is introduced.
+//!
 //! - Park et al. 2023, "Generative Agents" (arXiv:2304.03442)
 //! - Zhong et al. 2023, "MemoryBank" (arXiv:2305.10250)
 //! - Xu 2026, "Self-Aware Vector Embeddings for RAG" (arXiv:2604.20598)
@@ -31,15 +40,21 @@
 //! - Survey 2026, "From Storage to Experience" (arXiv:2605.06716)
 
 pub mod compaction;
+pub mod fusion;
 pub mod ledger;
 pub mod memory;
+pub mod observation;
 pub mod ops;
 pub mod scoring;
 
 pub use compaction::{CoherencePolicy, CoherenceWeights, CompactionPolicy, LfuPolicy, LruPolicy};
+pub use fusion::{CausalEpisodicGraph, ClusterId, FusedCluster, FusionError, NodeRef};
 #[cfg(feature = "proof-gate")]
 pub use ledger::WriteGateAdapter;
 pub use ledger::{replay_history, AlwaysAdmitGate, LedgerEntry, ProofGate, TransactionalLedger};
+pub use observation::{
+    AtomicObservation, ObservationError, ObservationId, ObservationSource, SourceKind, Tenant,
+};
 pub use memory::{MemoryEntry, MemoryStore, SearchResult};
 pub use ops::{
     AcceptanceReceipt, EvidenceGrade, LedgerError, LedgerState, LedgerWitnessRecord, MemoryOp,
