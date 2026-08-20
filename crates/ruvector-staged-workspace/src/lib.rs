@@ -44,6 +44,7 @@
 //! an internal OfficeQA-equivalent task set — a future benchmark deliverable,
 //! not part of this slice.
 
+pub mod adapter;
 pub mod anchor;
 pub mod artifact;
 pub mod view;
@@ -55,4 +56,6 @@ pub use anchor::{
 };
 pub use artifact::{ArtifactRef, ContentHash};
 pub use view::{StagedView, ViewKind};
-pub use workspace::{ViewConflict, WorkspaceError, WorkspaceState};
+pub use workspace::{
+    LineageSnapshot, ViewConflict, WorkspaceError, WorkspaceSnapshot, WorkspaceState,
+};

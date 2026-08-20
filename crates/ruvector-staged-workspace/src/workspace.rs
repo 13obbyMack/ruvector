@@ -1,8 +1,10 @@
 //! Workspace state: artifact lineages, view staging, and the fail-closed
 //! staleness gate (ADR-318 §Decision 3).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
 
 use crate::anchor::{AnchorReceipt, EvidenceGrade, TransitionAnchor, WorkspaceTransitionRecord};
 use crate::artifact::{ArtifactRef, ContentHash};
@@ -205,24 +207,32 @@ impl<A: TransitionAnchor> WorkspaceState<A> {
     /// equal the artifact's live head hash (and the revision ids must
     /// agree). Any mismatch is a hard rejection (ADR-318 §Decision 3).
     pub fn validate(&self, view: &StagedView) -> Result<(), WorkspaceError> {
-        let id = &view.artifact.artifact_id;
+        self.validate_ref(&view.artifact)
+    }
+
+    /// Validate a bare [`ArtifactRef`] against the live head — the same
+    /// fail-closed check as [`validate`](Self::validate), for callers (like
+    /// the subprocess adapter or an external binder) that carry a version
+    /// reference without a full [`StagedView`].
+    pub fn validate_ref(&self, bound: &ArtifactRef) -> Result<(), WorkspaceError> {
+        let id = &bound.artifact_id;
         let head = self
             .lineages
             .get(id)
             .map(|l| &l.head)
             .ok_or_else(|| WorkspaceError::UnknownArtifact(id.clone()))?;
-        let hash_ok = view.artifact.content_hash == head.content_hash;
-        let rev_ok = view.artifact.revision_id == head.revision_id;
+        let hash_ok = bound.content_hash == head.content_hash;
+        let rev_ok = bound.revision_id == head.revision_id;
         match (hash_ok, rev_ok) {
             (true, true) => Ok(()),
             (false, _) => Err(WorkspaceError::StaleView(Box::new(ViewConflict {
                 artifact_id: id.clone(),
-                bound: view.artifact.clone(),
+                bound: bound.clone(),
                 head: head.clone(),
             }))),
             (true, false) => Err(WorkspaceError::BindingMismatch(Box::new(ViewConflict {
                 artifact_id: id.clone(),
-                bound: view.artifact.clone(),
+                bound: bound.clone(),
                 head: head.clone(),
             }))),
         }
@@ -255,6 +265,95 @@ impl<A: TransitionAnchor> WorkspaceState<A> {
     pub fn history(&self, artifact_id: &str) -> Option<&[ContentHash]> {
         self.lineages.get(artifact_id).map(|l| l.history.as_slice())
     }
+
+    /// SHA-256 over all current lineage heads, in sorted `artifact_id`
+    /// order (each pair encoded as u64-LE id length, id bytes, 32 hash
+    /// bytes). One hash summarizing the whole workspace's bound state —
+    /// the single `contentHash` WP15's acceptance-test binder consumes.
+    pub fn workspace_hash(&self) -> ContentHash {
+        let mut ids: Vec<&String> = self.lineages.keys().collect();
+        ids.sort();
+        let mut bytes = Vec::new();
+        for id in ids {
+            let head = &self.lineages[id].head;
+            bytes.extend_from_slice(&(id.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(id.as_bytes());
+            bytes.extend_from_slice(&head.content_hash.0);
+        }
+        ContentHash::of(&bytes)
+    }
+
+    /// Serializable snapshot of the full workspace state (lineages,
+    /// transition log with receipts, counters), for persistence across
+    /// adapter invocations. Restore with
+    /// [`from_snapshot`](Self::from_snapshot).
+    pub fn snapshot(&self) -> WorkspaceSnapshot {
+        WorkspaceSnapshot {
+            lineages: self
+                .lineages
+                .iter()
+                .map(|(id, l)| {
+                    (
+                        id.clone(),
+                        LineageSnapshot {
+                            head: l.head.clone(),
+                            history: l.history.clone(),
+                        },
+                    )
+                })
+                .collect(),
+            transitions: self.transitions.clone(),
+            next_sequence: self.next_sequence,
+            next_view_id: self.next_view_id,
+        }
+    }
+
+    /// Rebuild a workspace from a [`snapshot`](Self::snapshot), anchoring
+    /// future transitions through `anchor`.
+    pub fn from_snapshot(anchor: A, snapshot: WorkspaceSnapshot) -> Self {
+        Self {
+            anchor,
+            lineages: snapshot
+                .lineages
+                .into_iter()
+                .map(|(id, l)| {
+                    (
+                        id,
+                        ArtifactLineage {
+                            head: l.head,
+                            history: l.history,
+                        },
+                    )
+                })
+                .collect(),
+            transitions: snapshot.transitions,
+            next_sequence: snapshot.next_sequence,
+            next_view_id: snapshot.next_view_id,
+        }
+    }
+}
+
+/// Serializable form of one artifact lineage (see [`WorkspaceSnapshot`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LineageSnapshot {
+    /// The lineage's live head.
+    pub head: ArtifactRef,
+    /// Every committed hash, oldest first; last equals `head.content_hash`.
+    pub history: Vec<ContentHash>,
+}
+
+/// Serializable snapshot of a [`WorkspaceState`] (uses a `BTreeMap` so the
+/// serialized form is deterministic).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceSnapshot {
+    /// All artifact lineages by id.
+    pub lineages: BTreeMap<String, LineageSnapshot>,
+    /// The (record, receipt) audit log, oldest first.
+    pub transitions: Vec<(WorkspaceTransitionRecord, AnchorReceipt)>,
+    /// Next transition sequence number.
+    pub next_sequence: u64,
+    /// Next staged-view id.
+    pub next_view_id: u64,
 }
 
 fn now_ns() -> u64 {

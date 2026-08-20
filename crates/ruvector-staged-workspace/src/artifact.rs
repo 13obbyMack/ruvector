@@ -19,6 +19,22 @@ impl ContentHash {
         Self(rvf_types::sha256::sha256(content))
     }
 
+    /// Parse a 64-char hex rendering back into a hash (case-insensitive).
+    /// Returns `None` for any other length or non-hex characters.
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        let bytes = hex.as_bytes();
+        if bytes.len() != 64 {
+            return None;
+        }
+        let mut out = [0u8; 32];
+        for (i, chunk) in bytes.chunks_exact(2).enumerate() {
+            let hi = (chunk[0] as char).to_digit(16)?;
+            let lo = (chunk[1] as char).to_digit(16)?;
+            out[i] = ((hi << 4) | lo) as u8;
+        }
+        Some(Self(out))
+    }
+
     /// Lowercase hex rendering (64 chars).
     pub fn to_hex(&self) -> String {
         let mut s = String::with_capacity(64);
