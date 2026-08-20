@@ -1,9 +1,13 @@
 //! Integration tests for the TARL (Transaction-Aware Reliable Ledgers)
 //! transactional memory ledger (ADR-307, PIR WP4, arXiv:2608.03699).
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
 use ruvector_agent_memory::{
-    replay_history, AcceptanceReceipt, AlwaysAdmitGate, LedgerError, LedgerState, MemoryOp,
-    MemoryWitnessLog, ProofGate, TransactionalLedger, TransitionKind,
+    replay_history, AcceptanceReceipt, AlwaysAdmitGate, LedgerError, LedgerState,
+    LedgerWitnessRecord, MemoryOp, MemoryWitnessLog, ProofGate, TransactionalLedger,
+    TransitionKind, WitnessSink,
 };
 
 /// Gate that denies everything — models the proof gate refusing a poisoned
@@ -267,21 +271,88 @@ fn witness_record_emitted_per_transition() {
         assert_eq!(r.sequence, i as u64);
     }
     // ...and an injected tamper is detected.
-    let mut tampered = MemoryWitnessLog {
-        records: log.records.clone(),
-    };
+    let mut tampered = log.clone();
     tampered.records[3].payload ^= 1;
     assert!(
         !tampered.verify_chain(),
         "tampered witness chain must fail verification"
     );
-    let mut truncated = MemoryWitnessLog {
-        records: log.records.clone(),
-    };
+    let mut truncated = log.clone();
     truncated.records.remove(2);
     assert!(
         !truncated.verify_chain(),
         "deleted witness record must break the chain"
+    );
+}
+
+#[test]
+fn tail_truncation_detected_by_head_commitment() {
+    let mut ledger = witnessed_ledger();
+    let a = ledger.add("fact", &[], "a", "obs").unwrap();
+    ledger.accept(a, "a", "ok").unwrap();
+    let b = ledger.add("derived", &[a], "a", "derived").unwrap();
+    ledger.accept(b, "a", "ok").unwrap();
+    ledger
+        .reject_unreliable(a, "auditor", "bad source")
+        .unwrap(); // rejection + 1 demotion — the records a roll-back would target
+
+    let log = ledger.witness_sink();
+    assert!(log.verify_chain());
+    let (count, head) = log.head_commitment();
+    assert_eq!(count, log.records.len() as u64);
+    assert_eq!(head, log.records.last().unwrap().chain_hash());
+
+    // Rolling back the newest record (erasing the demotion) must be
+    // detected, even though the remaining prefix is a perfectly linked
+    // chain on its own.
+    let mut rolled_back = log.clone();
+    rolled_back.records.pop();
+    assert!(
+        !rolled_back.verify_chain(),
+        "tail truncation must break verification via the head commitment"
+    );
+
+    // Rolling back the whole reject operation (both records) too.
+    let mut rolled_back2 = log.clone();
+    rolled_back2.records.pop();
+    rolled_back2.records.pop();
+    assert!(!rolled_back2.verify_chain());
+}
+
+#[test]
+fn aux_tamper_on_newest_record_detected() {
+    let mut ledger = witnessed_ledger();
+    let a = ledger.add("fact", &[], "a", "obs").unwrap();
+    // The newest record is an Accept, whose `aux` carries the proof-gate
+    // commitment prefix — the field excluded from the 48-byte record_hash
+    // preimage.
+    ledger.accept(a, "a", "ok").unwrap();
+
+    let log = ledger.witness_sink();
+    assert!(log.verify_chain());
+    let mut tampered = log.clone();
+    tampered.records.last_mut().unwrap().aux ^= 0xDEAD_BEEF;
+    assert!(
+        !tampered.verify_chain(),
+        "aux tamper on the newest record must be caught by the head commitment"
+    );
+}
+
+#[test]
+fn evidence_grade_flags_divergence_detected() {
+    let mut ledger = witnessed_ledger();
+    ledger.add("fact", &[], "a", "obs").unwrap();
+
+    let log = ledger.witness_sink();
+    assert!(log.verify_chain());
+    // Upgrade the serde-visible grade without touching the hashed flags
+    // bits: a consumer reading the named enum would see a forged stronger
+    // grade. verify_chain must cross-check the two.
+    let mut forged = log.clone();
+    forged.records[0].evidence_grade = ruvector_agent_memory::EvidenceGrade::SignatureVerified;
+    assert!(
+        !forged.verify_chain(),
+        "evidence_grade diverging from flags bits 12-15 must fail verification"
     );
 }
 
@@ -305,6 +376,112 @@ fn witness_record_serializes_with_stable_shape() {
     let back: ruvector_agent_memory::LedgerWitnessRecord =
         serde_json::from_value(accept_json).unwrap();
     assert_eq!(back, records[1]);
+}
+
+// ── Witness-sink failure: no witness, no mutation ────────────────────────────
+
+/// Sink with a record budget that refuses any batch it cannot durably
+/// retain in full, honoring the `emit_batch` atomicity contract (on `Err`,
+/// nothing from the batch is retained). Shared handles let the test adjust
+/// the budget and inspect the persisted log while the ledger owns the sink.
+#[derive(Clone, Default)]
+struct FailingSink {
+    log: Rc<RefCell<MemoryWitnessLog>>,
+    budget: Rc<Cell<usize>>,
+}
+
+impl WitnessSink for FailingSink {
+    fn emit_batch(&mut self, records: &[LedgerWitnessRecord]) -> Result<(), LedgerError> {
+        if records.len() > self.budget.get() {
+            return Err(LedgerError::WitnessRejected(format!(
+                "sink out of budget: batch of {} exceeds remaining {}",
+                records.len(),
+                self.budget.get()
+            )));
+        }
+        self.budget.set(self.budget.get() - records.len());
+        self.log.borrow_mut().emit_batch(records)
+    }
+}
+
+#[test]
+fn failing_sink_single_op_no_witness_no_mutation() {
+    let sink = FailingSink::default(); // budget 0: refuse everything
+    let log = sink.log.clone();
+    let mut ledger = TransactionalLedger::new(sink, AlwaysAdmitGate::default());
+
+    let err = ledger.add("fact", &[], "a", "obs").unwrap_err();
+    assert!(matches!(err, LedgerError::WitnessRejected(_)));
+
+    // (a) no state mutation, (b) no history append, (c) no orphan record.
+    assert_eq!(ledger.len(), 0);
+    assert!(ledger.history().is_empty());
+    assert!(log.borrow().records.is_empty());
+    assert!(log.borrow().verify_chain());
+}
+
+#[test]
+fn failing_sink_mid_cascade_leaves_ledger_and_chain_consistent() {
+    let sink = FailingSink::default();
+    let log = sink.log.clone();
+    let budget = sink.budget.clone();
+    let mut ledger = TransactionalLedger::new(sink, AlwaysAdmitGate::default());
+
+    // base <- d1, base <- d2; all accepted. 6 single-record batches.
+    budget.set(6);
+    let base = ledger.add("base fact", &[], "a", "obs").unwrap();
+    ledger.accept(base, "a", "ok").unwrap();
+    let d1 = ledger.add("inference 1", &[base], "a", "derived").unwrap();
+    ledger.accept(d1, "a", "ok").unwrap();
+    let d2 = ledger.add("inference 2", &[base], "a", "derived").unwrap();
+    ledger.accept(d2, "a", "ok").unwrap();
+    assert_eq!(budget.get(), 0);
+    let history_before = ledger.history().len();
+    let states_before = ledger.states();
+    let persisted_before = log.borrow().records.len();
+    let head_before = log.borrow().head_commitment();
+
+    // The rejection stages a 3-record batch (rejection + 2 dependent
+    // demotions). Budget 2 models the sink's medium failing at record 3 of
+    // the cascade; the atomic contract means the sink refuses the whole
+    // batch rather than leaking records 1-2.
+    budget.set(2);
+    let err = ledger
+        .reject_unreliable(base, "auditor", "poisoned source")
+        .unwrap_err();
+    assert!(matches!(err, LedgerError::WitnessRejected(_)));
+
+    // Mutation NOT applied — the whole cascade, not just the failing tail.
+    assert_eq!(ledger.states(), states_before);
+    assert_eq!(ledger.state_of(base), Some(LedgerState::Accepted));
+    assert_eq!(ledger.state_of(d1), Some(LedgerState::Accepted));
+    assert_eq!(ledger.state_of(d2), Some(LedgerState::Accepted));
+    // No history append.
+    assert_eq!(ledger.history().len(), history_before);
+    // No orphan record visible; chain still verifies at the same head.
+    assert_eq!(log.borrow().records.len(), persisted_before);
+    assert_eq!(log.borrow().head_commitment(), head_before);
+    assert!(log.borrow().verify_chain());
+
+    // Recovery: with the sink healthy again the same operation commits
+    // cleanly — no sequence reuse, no chain fork.
+    budget.set(usize::MAX);
+    ledger
+        .reject_unreliable(base, "auditor", "poisoned source")
+        .unwrap();
+    assert_eq!(ledger.state_of(base), Some(LedgerState::Rejected));
+    assert_eq!(ledger.state_of(d1), Some(LedgerState::Pending));
+    assert_eq!(ledger.state_of(d2), Some(LedgerState::Pending));
+    let log_ref = log.borrow();
+    assert_eq!(log_ref.records.len(), persisted_before + 3);
+    for (i, r) in log_ref.records.iter().enumerate() {
+        assert_eq!(r.sequence, i as u64, "sequences stay dense, none reused");
+    }
+    assert!(log_ref.verify_chain(), "persisted chain never forks");
+    drop(log_ref);
+
+    // And the retained history still replays to the exact final state.
+    assert_eq!(replay_history(ledger.history()), ledger.states());
 }
 
 // ── History replay ───────────────────────────────────────────────────────────

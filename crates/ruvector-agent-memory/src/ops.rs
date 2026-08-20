@@ -8,6 +8,20 @@
 //! (`docs/adr/ADR-134-witness-schema-log-format.md`); this slice defines the
 //! serde-serializable record and a `WitnessSink` hook rather than depending
 //! on the rvm crates directly (cross-repo anchoring is WP8).
+//!
+//! ## Tamper-evidence scope (read before relying on `verify_chain`)
+//!
+//! The witness chain uses keyless FNV-1a (ADR-134 §3 chooses it for speed,
+//! explicitly not for cryptographic strength). The chain is therefore
+//! tamper-EVIDENT against *accidental corruption and naive edits only*: an
+//! adversary with write access to the log can recompute every `record_hash`
+//! and relink every `prev_hash` in one O(n) pass, and FNV-1a's invertible
+//! round function makes even an anchored head second-preimage-able in ~2^32
+//! work. Real tamper evidence against a log-writing adversary requires
+//! ADR-134's `WitnessSigner` escape hatch (§9, HMAC/Ed25519). Wiring a
+//! `WitnessSigner` through `WitnessSink` is an explicit follow-up gate that
+//! MUST land before WP8 cross-repo anchoring makes this log load-bearing
+//! for acceptance decisions.
 
 use serde::{Deserialize, Serialize};
 
@@ -266,8 +280,10 @@ pub struct LedgerWitnessRecord {
     pub prev_hash: u64,
     pub record_hash: u64,
     pub aux: u64,
-    /// ADR-322C evidence-grade annotation; its code is also bound into the
-    /// hashed `flags` bits so it cannot drift from the signed layout.
+    /// ADR-322C evidence-grade annotation. Its code is also bound into the
+    /// hashed `flags` bits 12-15, and [`MemoryWitnessLog::verify_chain`]
+    /// cross-checks the two so a persisted record cannot advertise a
+    /// stronger grade than its hash preimage records.
     pub evidence_grade: EvidenceGrade,
 }
 
@@ -317,8 +333,29 @@ impl LedgerWitnessRecord {
 /// Hook invoked for every ledger state transition, BEFORE the transition is
 /// committed (ADR-134 "no witness, no mutation"): if the sink returns an
 /// error, the ledger applies nothing.
+///
+/// # Atomicity contract
+///
+/// [`WitnessSink::emit_batch`] is all-or-nothing: on `Ok(())` every record
+/// of the batch is durably retained; on `Err` the sink must retain NONE of
+/// them. A sink whose medium can fail partway through (disk append, remote
+/// log) must stage the batch internally (temp-file + atomic rename, single
+/// transactional append, or compensating truncation of the partial prefix)
+/// before reporting success. The ledger relies on this contract to keep its
+/// chain cursors (`last_witness_hash` / `witness_seq`) and the persisted
+/// log in lockstep — a sink that leaks a partial prefix on failure would
+/// reintroduce orphan records, sequence reuse, and a permanent chain fork.
 pub trait WitnessSink {
-    fn emit(&mut self, record: &LedgerWitnessRecord) -> Result<(), LedgerError>;
+    /// Durably retain the whole batch atomically (see the trait-level
+    /// atomicity contract). Batches are chained in order: `records[0]`'s
+    /// `prev_hash` continues the sink's existing chain head.
+    fn emit_batch(&mut self, records: &[LedgerWitnessRecord]) -> Result<(), LedgerError>;
+
+    /// Convenience wrapper for a single record; delegates to
+    /// [`WitnessSink::emit_batch`].
+    fn emit(&mut self, record: &LedgerWitnessRecord) -> Result<(), LedgerError> {
+        self.emit_batch(std::slice::from_ref(record))
+    }
 }
 
 /// Default no-op sink: accepts every record and stores nothing.
@@ -326,38 +363,81 @@ pub trait WitnessSink {
 pub struct NoopWitnessSink;
 
 impl WitnessSink for NoopWitnessSink {
-    fn emit(&mut self, _record: &LedgerWitnessRecord) -> Result<(), LedgerError> {
+    fn emit_batch(&mut self, _records: &[LedgerWitnessRecord]) -> Result<(), LedgerError> {
         Ok(())
     }
 }
 
 /// In-memory witness log that retains every emitted record and can verify
 /// the hash chain independently of the writing ledger.
-#[derive(Debug, Default)]
+///
+/// Alongside the records themselves the log maintains a *head commitment*
+/// — the record count and the full-64-byte chain hash of the newest record
+/// — updated atomically with every committed batch. [`Self::verify_chain`]
+/// checks the walked chain terminates exactly at that commitment, which is
+/// what makes tail truncation (rollback of the newest records) and
+/// tampering with the newest record's `aux` field detectable. Export the
+/// commitment via [`Self::head_commitment`] to anchor it out-of-band.
+#[derive(Debug, Default, Clone)]
 pub struct MemoryWitnessLog {
     pub records: Vec<LedgerWitnessRecord>,
+    /// Number of records covered by the head commitment.
+    pub committed_count: u64,
+    /// Full-64-byte chain hash of the newest committed record (0 at genesis).
+    /// Because [`LedgerWitnessRecord::chain_hash`] covers all 64 bytes, this
+    /// commitment authenticates the last record's `aux` and `record_hash`
+    /// fields, which the 48-byte ADR-134 `record_hash` preimage excludes.
+    pub committed_head: u64,
 }
 
 impl MemoryWitnessLog {
+    /// The head commitment as `(record_count, head_chain_hash)`. Anchor this
+    /// pair out-of-band (or compare against a replica) to detect wholesale
+    /// log replacement, which in-band verification cannot.
+    pub fn head_commitment(&self) -> (u64, u64) {
+        (self.committed_count, self.committed_head)
+    }
+
     /// Walk the chain: each record's `record_hash` must re-derive from its
-    /// own bytes and each `prev_hash` must equal the previous record's full
-    /// chain hash (genesis `prev_hash` = 0). Detects tampering, reordering,
-    /// and deletion, using only the persisted records.
+    /// own bytes, each `prev_hash` must equal the previous record's full
+    /// chain hash (genesis `prev_hash` = 0), each record's serde
+    /// `evidence_grade` must match the grade code bound into its hashed
+    /// `flags` bits 12-15, and the walk must terminate exactly at the head
+    /// commitment (count and chain hash).
+    ///
+    /// Detects *accidental corruption and naive edits*: bit flips,
+    /// reordering, middle deletion, tail truncation, and edits to any field
+    /// of any record (including the newest record's `aux`, covered by the
+    /// head commitment). It is NOT proof against an adversary who can write
+    /// the log: the chain is keyless FNV-1a, so such an adversary can
+    /// relink it in one O(n) pass — see the module-level tamper-evidence
+    /// note and the ADR-134 `WitnessSigner` follow-up.
     pub fn verify_chain(&self) -> bool {
         let mut prev = 0u64;
         for r in &self.records {
-            if r.prev_hash != prev || r.record_hash != r.compute_record_hash() {
+            let grade_in_flags = (r.flags >> 12) & 0xF;
+            if r.prev_hash != prev
+                || r.record_hash != r.compute_record_hash()
+                || grade_in_flags != u16::from(r.evidence_grade.code())
+            {
                 return false;
             }
             prev = r.chain_hash();
         }
-        true
+        self.records.len() as u64 == self.committed_count && prev == self.committed_head
     }
 }
 
 impl WitnessSink for MemoryWitnessLog {
-    fn emit(&mut self, record: &LedgerWitnessRecord) -> Result<(), LedgerError> {
-        self.records.push(*record);
+    fn emit_batch(&mut self, records: &[LedgerWitnessRecord]) -> Result<(), LedgerError> {
+        // Infallible in-memory append: the whole batch lands, then the head
+        // commitment is advanced — trivially satisfying the atomicity
+        // contract.
+        self.records.extend_from_slice(records);
+        self.committed_count = self.records.len() as u64;
+        if let Some(last) = self.records.last() {
+            self.committed_head = last.chain_hash();
+        }
         Ok(())
     }
 }

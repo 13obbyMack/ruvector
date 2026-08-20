@@ -4,10 +4,17 @@
 //! [`TransactionalLedger`] applies the five TARL operations as explicit
 //! state transitions over accepted / pending / rejected entries, retaining
 //! full provenance history. Every transition follows a stage -> witness ->
-//! commit discipline: witness records (ADR-134 schema) are emitted to the
-//! [`WitnessSink`] BEFORE any state is applied, and a sink failure aborts
-//! the whole operation with no observable partial application ("no witness,
-//! no mutation"). Acceptance transitions (`Pending -> Accepted`) must
+//! commit discipline: ALL witness records for an operation (ADR-134 schema)
+//! are emitted to the [`WitnessSink`] as one atomic batch BEFORE any state
+//! is applied, and a sink failure aborts the whole operation with no
+//! observable partial application on either side — no ledger mutation, no
+//! history append, and (per the [`WitnessSink::emit_batch`] contract) no
+//! partial batch left in the sink ("no witness, no mutation" — and for a
+//! failed batch, "no mutation, no witness" too). Note the witness chain is
+//! keyless FNV-1a: tamper-evident against accidental corruption only, not
+//! against a log-writing adversary — see the tamper-evidence note in
+//! [`crate::ops`] and the ADR-134 `WitnessSigner` follow-up gate that must
+//! land before WP8 anchoring. Acceptance transitions (`Pending -> Accepted`) must
 //! additionally be admitted by a [`ProofGate`] — the same proof-gated write
 //! machinery ruvector uses elsewhere (ADR-194-proof-gated-writes / ADR-047),
 //! adapted behind a trait because this crate had no prior gate wiring; the
@@ -450,6 +457,19 @@ impl<S: WitnessSink, G: ProofGate> TransactionalLedger<S, G> {
         let content = entry.content.clone();
         // Gate first: a denied acceptance mutates nothing and witnesses
         // nothing (the denial surfaces as an error to the caller).
+        //
+        // Known asymmetry (granted-then-unwitnessed): the gate must be
+        // consulted BEFORE staging because the witness record binds the
+        // gate's receipt (`aux` carries the commitment prefix,
+        // `capability_hash` its digest). If the witness sink then refuses
+        // the batch, the gate has already advanced its own chain/sequence
+        // (`WriteGate::admit` mutates on admission and offers no rollback),
+        // while nothing is witnessed or applied. Gate sequence numbers can
+        // therefore run AHEAD of the ledger's committed `Accept` records;
+        // during reconciliation, gate admissions with no corresponding
+        // `Accept` witness/history record are expected benign gaps, not
+        // evidence of a bypass (a bypass would be the opposite: an `Accept`
+        // record with no gate admission).
         let receipt = self.gate.admit(entry_id, content.as_bytes())?;
         let aux = u64::from_le_bytes(receipt.commitment[..8].try_into().unwrap());
         let staged = self.stage(
@@ -622,9 +642,12 @@ impl<S: WitnessSink, G: ProofGate> TransactionalLedger<S, G> {
         }
     }
 
-    /// Chain + emit every staged witness record, then apply all effects.
-    /// If any emission fails, NO state is applied — the ledger observes
-    /// either the whole operation or none of it.
+    /// Chain + emit every staged witness record as ONE atomic batch, then
+    /// apply all effects. If the batch is refused, NO record is durably
+    /// retained (the [`WitnessSink::emit_batch`] atomicity contract) and NO
+    /// state is applied — sink and ledger observe either the whole
+    /// operation or none of it, so a failed batch can neither orphan
+    /// records, reuse sequence numbers, nor fork the persisted chain.
     fn emit_and_apply(&mut self, mut staged: Vec<Staged>) -> Result<(), LedgerError> {
         // Chain the witness records off the current head.
         let mut prev = self.last_witness_hash;
@@ -633,10 +656,10 @@ impl<S: WitnessSink, G: ProofGate> TransactionalLedger<S, G> {
             s.witness.record_hash = s.witness.compute_record_hash();
             prev = s.witness.chain_hash();
         }
-        // Witness first: no witness, no mutation.
-        for s in &staged {
-            self.sink.emit(&s.witness)?;
-        }
+        // Witness first: no witness, no mutation. The whole batch commits
+        // atomically or not at all; chain cursors advance only after that.
+        let witnesses: Vec<LedgerWitnessRecord> = staged.iter().map(|s| s.witness).collect();
+        self.sink.emit_batch(&witnesses)?;
         // Commit.
         self.last_witness_hash = prev;
         self.witness_seq += staged.len() as u64;
