@@ -88,11 +88,19 @@ pub async fn run(
 
     // Download each file
     for file_name in &files_to_download {
+        // Defense-in-depth: `file_name` originates from the repo's own file
+        // listing (HF tree API / siblings) and is attacker-controlled for a
+        // malicious repo — reject traversal before joining into the cache.
+        validate_remote_file_name(file_name)
+            .with_context(|| format!("Unsafe file path in {model_id} listing"))?;
         let target_path = model_cache_dir.join(file_name);
         if let Some(parent) = target_path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
                 .context("Failed to create cache subdirectory")?;
+            ensure_under_cache_dir(&model_cache_dir, parent).with_context(|| {
+                format!("Refusing to write {file_name} outside the model cache directory")
+            })?;
         }
 
         // Check if file exists
@@ -194,17 +202,16 @@ fn download_via_curl(model_id: &str, revision: Option<&str>, file_name: &str) ->
         "-o".to_string(),
         out.to_string_lossy().to_string(),
     ];
-    if let Ok(token) = std::env::var("HF_TOKEN") {
-        args.push("-H".to_string());
-        args.push(format!("Authorization: Bearer {token}"));
+    let auth_config = hf_token_curl_config();
+    if auth_config.is_some() {
+        args.push("--config".to_string());
+        args.push("-".to_string());
     }
     args.push(url.clone());
-    let status = std::process::Command::new("curl")
-        .args(&args)
-        .status()
+    let output = run_curl(&args, auth_config.as_deref())
         .with_context(|| format!("curl not available to fetch {url}"))?;
-    if !status.success() {
-        anyhow::bail!("curl fallback failed ({status}) for {url}");
+    if !output.status.success() {
+        anyhow::bail!("curl fallback failed ({}) for {url}", output.status);
     }
     Ok(out)
 }
@@ -229,19 +236,109 @@ fn list_files_via_curl(model_id: &str, revision: Option<&str>) -> Result<Vec<Str
     let rev = revision.unwrap_or("main");
     let url = format!("https://huggingface.co/api/models/{model_id}/tree/{rev}?recursive=true");
     let mut args = vec!["-L".to_string(), "--fail".to_string(), "-sS".to_string()];
-    if let Ok(token) = std::env::var("HF_TOKEN") {
-        args.push("-H".to_string());
-        args.push(format!("Authorization: Bearer {token}"));
+    let auth_config = hf_token_curl_config();
+    if auth_config.is_some() {
+        args.push("--config".to_string());
+        args.push("-".to_string());
     }
     args.push(url.clone());
-    let output = std::process::Command::new("curl")
-        .args(&args)
-        .output()
+    let output = run_curl(&args, auth_config.as_deref())
         .with_context(|| format!("curl not available to list {url}"))?;
     if !output.status.success() {
         anyhow::bail!("curl file listing failed ({}) for {url}", output.status);
     }
     parse_tree_file_paths(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Build the curl-config fragment carrying the `HF_TOKEN` Authorization
+/// header, or `None` when the token is unset. Passing the header through a
+/// config read from stdin (`--config -`) keeps the token off curl's argv,
+/// which is world-readable via `ps`/`/proc/<pid>/cmdline` (CWE-214).
+fn hf_token_curl_config() -> Option<String> {
+    std::env::var("HF_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty())
+        .map(|t| curl_auth_config(&t))
+}
+
+/// Render an Authorization header as a curl config line, escaping the
+/// characters curl's double-quoted config strings treat specially so a
+/// hostile/odd token value cannot inject additional config directives.
+fn curl_auth_config(token: &str) -> String {
+    let escaped = token
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
+    format!("header = \"Authorization: Bearer {escaped}\"\n")
+}
+
+/// Run `curl` with `args`, feeding `stdin_config` (a curl config carrying the
+/// auth header) on stdin when present. Stderr is inherited so `-sS` errors
+/// stay visible; stdout is captured for callers that parse it.
+fn run_curl(args: &[String], stdin_config: Option<&str>) -> Result<std::process::Output> {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    let mut cmd = Command::new("curl");
+    cmd.args(args)
+        .stdin(if stdin_config.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    let mut child = cmd.spawn().context("failed to spawn curl")?;
+    if let Some(config) = stdin_config {
+        child
+            .stdin
+            .take()
+            .expect("stdin is piped when a config is supplied")
+            .write_all(config.as_bytes())
+            .context("failed to write curl config to stdin")?;
+        // stdin handle dropped here -> EOF for `--config -`
+    }
+    child.wait_with_output().context("failed to wait for curl")
+}
+
+/// Defense-in-depth guard for file names taken from a repo's own listing
+/// (HF tree API `path` / `siblings[].rfilename`): reject empty names and any
+/// component that is not a plain path segment (absolute paths, `..`, `.`,
+/// Windows prefixes) before the name is joined into the cache directory.
+fn validate_remote_file_name(file_name: &str) -> Result<()> {
+    use std::path::Component;
+
+    if file_name.is_empty() {
+        anyhow::bail!("empty file name in repo listing");
+    }
+    if Path::new(file_name)
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_)))
+    {
+        anyhow::bail!("suspicious file path in repo listing: {file_name:?}");
+    }
+    Ok(())
+}
+
+/// Verify that `target_parent` (already created) canonicalizes to a location
+/// under the canonicalized model cache dir — catches anything the component
+/// check missed (e.g. symlinked subdirectories escaping the cache).
+fn ensure_under_cache_dir(cache_root: &Path, target_parent: &Path) -> Result<()> {
+    let root = cache_root
+        .canonicalize()
+        .context("failed to canonicalize model cache directory")?;
+    let parent = target_parent
+        .canonicalize()
+        .context("failed to canonicalize download target directory")?;
+    if !parent.starts_with(&root) {
+        anyhow::bail!(
+            "download target {} escapes model cache directory {}",
+            parent.display(),
+            root.display()
+        );
+    }
+    Ok(())
 }
 
 /// Parse file paths out of the HF tree API JSON (`[{"type":"file","path":...},...]`).
@@ -545,6 +642,75 @@ mod tests {
             "no unexpanded globs"
         );
         assert_eq!(files.iter().filter(|f| f.ends_with(".gguf")).count(), 3);
+    }
+
+    #[test]
+    fn test_validate_remote_file_name_rejects_hostile_names() {
+        for hostile in [
+            "../x",
+            "/abs",
+            "a/../../x",
+            "",
+            "..",
+            "./x/../y",
+            "/etc/passwd",
+        ] {
+            assert!(
+                validate_remote_file_name(hostile).is_err(),
+                "should reject {hostile:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_validate_remote_file_name_accepts_normal_names() {
+        for ok in [
+            "model-Q4_K_M.gguf",
+            "tokenizer.json",
+            "subdir/model-00001-of-00003.gguf",
+            "a/b/c.txt",
+        ] {
+            assert!(
+                validate_remote_file_name(ok).is_ok(),
+                "should accept {ok:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ensure_under_cache_dir_containment() {
+        let base = std::env::temp_dir().join(format!("ruvllm-guard-test-{}", std::process::id()));
+        let root = base.join("cache");
+        let inside = root.join("sub");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+
+        assert!(ensure_under_cache_dir(&root, &inside).is_ok());
+        assert!(ensure_under_cache_dir(&root, &root).is_ok());
+        assert!(ensure_under_cache_dir(&root, &outside).is_err());
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn test_curl_auth_config_keeps_token_in_header_line() {
+        let cfg = curl_auth_config("hf_abc123");
+        assert_eq!(cfg, "header = \"Authorization: Bearer hf_abc123\"\n");
+    }
+
+    #[test]
+    fn test_curl_auth_config_escapes_special_characters() {
+        // Quotes, backslashes, and newlines must not break out of the quoted
+        // config string (which would allow injecting extra curl directives).
+        let cfg = curl_auth_config("a\"b\\c\nd\re");
+        assert_eq!(
+            cfg,
+            "header = \"Authorization: Bearer a\\\"b\\\\c\\nd\\re\"\n"
+        );
+        // Exactly one config line regardless of token content.
+        assert_eq!(cfg.matches('\n').count(), 1);
+        assert!(cfg.ends_with('\n'));
     }
 
     #[test]
