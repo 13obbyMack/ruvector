@@ -151,6 +151,8 @@ pub mod ruvector_integration;
 pub mod serving;
 pub mod session;
 pub mod session_index;
+#[cfg(feature = "shard-placement")]
+pub mod shard_placement;
 pub mod sona;
 pub mod speculative;
 pub mod tokenizer;
