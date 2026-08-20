@@ -217,11 +217,16 @@ program's promotion-gating ADRs (ADR-306, ADR-312):
   (`Ed25519(domainPrefix || 0x00 || canonicalBytes)`), UUIDv7 run IDs,
   independent statistical recomputation via deterministic paired bootstrap.
 
-Separately, **ruflo ADR-381** defines a sequential-promotion-evidence scheme
-(anytime-valid e-process, `α_k = α_total · 6/(π²k²)` so `Σα_k` is bounded
-across arbitrarily many adaptively-chosen candidates; measured 0.6%
-family-wise false-promotion rate over 1,000 simulated nulls) — the concrete
-prior art for any PIR ADR that claims statistical promotion gating.
+Separately, **ruflo PR #2956** implements the sequential-promotion-evidence
+mechanism (anytime-valid e-process, `α_k = α_total · 6/(π²k²)`; 0.6%
+measured family-wise false-promotion rate over 1,000 simulated nulls, the
+bound holding **per epoch**), and **ruflo ADR-381** (**Proposed**,
+2026-08-10) governs stream identity and budget-exhaustion recovery over it.
+Together they are the concrete prior art for any PIR ADR claiming
+statistical promotion gating. See §8d for the full correction — an earlier
+version of this paragraph attributed the mechanism to ADR-381 directly,
+omitted its Proposed status, and dropped the per-epoch qualifier; that
+version is superseded by this one and by §8d, not by both disagreeing.
 
 ruflo has already suffered the exact ADR-number collision this program is
 trying to avoid: a dream-cycle research PR independently proposed
@@ -306,13 +311,22 @@ close it.
 
 ADR-306 (and this addendum's own §6, before this correction) restated
 dream-machine ADR-0001's "Prior instances" citation of "metaharness ADR-251
-(MetaHarness Nightly Dream Cycle)" as fact. Direct inspection of
-`ruvnet/metaharness` (HEAD `5453c8c`) finds **230 ADR files topping out at
-`ADR-250-sota-proof-ladder.md`** — no ADR-251. The Nightly Dream Cycle
-material instead lives in `docs/dream-cycle/` (`2026-08-13-gist.md`,
-`2026-08-14-gist.md`, `LEDGER.md`), not as an ADR. ADR-306 now cites
-`docs/dream-cycle/` and states the bad citation's provenance (inherited from
-dream-machine ADR-0001) rather than repeating it as independently verified.
+(MetaHarness Nightly Dream Cycle)" as fact. **The dangling citation
+originates in `dream-machine` ADR-0001 line 9 itself** — *"Prior instances:
+`ruvnet/metaharness` ADR-251 (MetaHarness Nightly Dream Cycle)…"* — and was
+relayed verbatim from that source by the research pass that first surfaced
+it, without checking that it resolved. It is not a fabrication introduced by
+this program on either the research or ADR-authoring side; it is a citation
+inside a real, Accepted upstream ADR that itself needed resolving before
+being repeated. Direct inspection of `ruvnet/metaharness` (HEAD `5453c8c`)
+finds **230 ADR files topping out at `ADR-250-sota-proof-ladder.md`** — no
+ADR-251. The Nightly Dream Cycle material instead lives in
+`docs/dream-cycle/` (`2026-08-13-gist.md`, `2026-08-14-gist.md`,
+`LEDGER.md`), not as an ADR. ADR-306 now cites `docs/dream-cycle/` and
+states this provenance rather than repeating the citation as independently
+verified. **Future readers**: the correct fix is ADR-306's current text —
+do not "fix" it back to "metaharness ADR-251" on the assumption that an ADR
+citation inside another Accepted ADR must already be resolved.
 
 ### 8c. "ruvector ADR-150 (optionalDependencies policy)" is a misattribution
 
