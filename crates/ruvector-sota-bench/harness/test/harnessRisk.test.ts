@@ -239,6 +239,28 @@ test("upstream row parsing and phase normalization", () => {
   assert.throws(() => parseHarnessRiskRow({ title: "no id" }), /missing case_id/);
 });
 
+test("parseHarnessRiskRow confines case_id to a safe filename charset (path-traversal defense)", () => {
+  const row = (case_id: unknown) => ({
+    case_id,
+    title: "t",
+    phase: "setup_configuration",
+    user_messages: ["do the task"],
+  });
+  // Traversal and path-separator ids are rejected at the boundary — none of
+  // these may reach the per-case state-file path in rvfWorkspaceBinder.
+  for (const bad of ["../../../tmp/evil", "..", ".", "a/b", "a\\b", "", "  ", "x\0y", "évil"]) {
+    assert.throws(
+      () => parseHarnessRiskRow(row(bad)),
+      /unsafe case_id|missing case_id/,
+      `expected "${bad}" to be rejected`,
+    );
+  }
+  // A legitimate id using the allowed dot / dash / underscore charset parses.
+  for (const good of ["setup_001", "action_016", "case.v2-final_A1", "memory_fp001"]) {
+    assert.equal(parseHarnessRiskRow(row(good)).caseId, good);
+  }
+});
+
 test("runtime loader pages through the dataset and refuses a partial baseline", async () => {
   const row = (index: number) => ({
     case_id: `daily_${index}`,
