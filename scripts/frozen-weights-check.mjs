@@ -35,14 +35,20 @@
  * the dishonest path deliberate. Comments are stripped before matching so
  * that PROSE about training (e.g. darwin_guard.rs's train/eval-contamination
  * doc comments) does not false-positive — only code and string literals count.
- * The stripper is STRING-AWARE (PR #869 security audit, MEDIUM finding): it
- * is a per-language character scan that tracks quote state, so a `//` inside
- * a string literal — "https://hf.co/repo/model.safetensors" — is content, not
- * a comment, and denied tokens in URLs are caught. Residual stripper edges
- * (all in the false-POSITIVE direction, never hiding a token): a JS regex
- * literal containing `//` may over-strip the rest of its line; a Rust char
- * literal containing '"' or a raw string r#"…"# may leave a comment
- * unstripped. Template literals are tracked including ${} nesting.
+ * Comment handling is BIAS-INVERTED for soundness (PR #869 audit chain,
+ * MEDIUM finding + 3 progressively-narrower false-negatives): rather than
+ * strip-everything-that-looks-like-a-comment (which repeatedly mis-judged JS
+ * regex-vs-division context and dropped real tokens), the stripper blanks out
+ * ONLY spans it is conservatively CERTAIN are comments, and the deny-list is
+ * matched against everything else. A denied token is therefore reported
+ * unless it provably sits in a genuine comment; any ambiguity — regex-,
+ * string-, or statement-position-adjacent — resolves to FLAG. The failure
+ * mode is over-flagging (safe), never under-flagging (dangerous). The sound
+ * rule needs NO JS regex/division classification: a `//` is a comment only
+ * when no code `/` precedes it on the line. String contents (incl. URL forms
+ * like "https://hf.co/repo/model.safetensors") are always preserved and
+ * matched. See stripComments() for the full per-language contract and the
+ * over-flag-only residual-edge note.
  *
  * Accepted residuals (on record from the PR #869 audit, not closed here):
  *   - `fixtures/` and `node_modules/` under a surface stay unscanned by
@@ -163,22 +169,47 @@ function warn(msg) {
 }
 
 /**
- * Strip comments so prose about training never false-positives; only code
- * and string literals are matched. STRING-AWARE (PR #869 audit): a
- * character scan tracks quote state per language, so `//` inside a string —
- * the URL form of a model-file or fine-tune reference — is content, never a
- * comment. Comment text is replaced with spaces (newlines kept).
+ * Blank out ONLY provably-genuine comments, then match the deny-list against
+ * what remains. This is a deliberate BIAS INVERSION (PR #869 3rd re-verify):
+ * the gate's job is to never MISS a denied token, so a token is suppressed
+ * only when the scanner is CONSERVATIVELY CERTAIN it sits in a real comment;
+ * any ambiguity resolves to KEEP (→ the token is matched → flagged). The
+ * failure mode is therefore over-flagging (a denied token in a legit comment
+ * gets flagged — annoying, safe), never under-flagging (a token in code gets
+ * missed — dangerous). Comment text is replaced with spaces (newlines kept);
+ * strings, regex literals, division, and any uncertain span are preserved.
  *
- * Per-language rules:
- *   - js-like (.ts/.mts/.cts/.js/.mjs/.cjs): `//` + `/* *​/` comments;
- *     `'`, `"`, and template-literal strings, with `${}` re-entry tracked
- *     (nested braces counted) and backslash escapes honored.
- *   - rust (.rs): `//` + NESTED `/* *​/` comments; `"` strings only — `'` is
- *     deliberately not a string delimiter (lifetimes like `&'a str` would
- *     desynchronize the scan; char literals cannot hide a multi-char token).
+ * The earlier "classify every `/` as regex-vs-division" approach was unsound
+ * for a shell gate — it needed a full JS lexer (control-flow-header paren
+ * matching) and leaked a progressively-narrower false-negative each round.
+ * The sound rule below needs NO regex/division classification at all:
+ *
+ *   A `//` line comment is stripped only when NO `/` has appeared in code on
+ *   the current line before it. Rationale: a JS regex literal must open with
+ *   a `/`, and division is a `/` too — so if any code `/` precedes the `//`,
+ *   that `//` could be regex-interior (e.g. `/[a//]/`) or division-adjacent,
+ *   and we conservatively DO NOT treat it as a comment. With zero preceding
+ *   code `/`, a `//` cannot be inside a regex (nothing opened one) and is a
+ *   genuine line comment. Provably sound: suppression happens only for real
+ *   comments, so no denied token in code/string/regex is ever dropped.
+ *
+ * Per-language specifics:
+ *   - js-like (.ts/.mts/.cts/.js/.mjs/.cjs): strings (`'` `"`, template
+ *     literals with `${}` re-entry + escapes); `/* *​/` block comments
+ *     (`/*` outside a string is unambiguous — a regex cannot begin with `*`);
+ *     `//` line comments gated by the "no prior code `/`" rule above.
+ *   - rust (.rs): strings (`"` only — `'` is a lifetime/char sigil, not a
+ *     string delimiter); NESTED `/* *​/`; `//` is ALWAYS a comment (Rust has
+ *     no regex literal and no `//` operator), so it is stripped unconditionally.
  *   - python (.py): `#` comments; `'`/`"` and triple-quoted strings.
  *   - shell (.sh): `#` comments (only at line start or after whitespace, so
  *     `$#`/`${#x}` survive); `'` (no escapes) and `"` strings.
+ *
+ * Remaining edges are ALL over-flag (safe): a denied token inside a JS regex
+ * literal is preserved and flagged; a denied token in a real comment that
+ * shares its line with an earlier code `/` is flagged; a Rust char literal
+ * containing `"` or a raw string `r#"…"#` may desync into string-content
+ * (preserved → flagged). None hide a token.
  */
 function stripComments(source, filename) {
   const lang = filename.endsWith('.rs') ? 'rs'
@@ -193,25 +224,37 @@ function stripComments(source, filename) {
   let mode = 'code'; // 'code' | 'line' | 'block' | 'string'
   let blockDepth = 0;
   let quote = ''; // ' " ` or ''' """ while mode === 'string'
+  // js only: has a `/` appeared in code on the current line? If so a later
+  // `//` cannot be conservatively proven a comment (regex-interior/division),
+  // so it is NOT stripped. Reset at every newline, in any mode.
+  let sawCodeSlashThisLine = false;
   let i = 0;
   while (i < source.length) {
     const ch = source[i];
-    if (mode === 'line') {
-      if (ch === '\n') { out.push('\n'); mode = 'code'; } else out.push(' ');
+    if (ch === '\n' && mode !== 'block') {
+      // Line/code newline: reset the per-line slash flag; a line comment ends.
+      out.push('\n');
+      if (mode === 'line') mode = 'code';
+      sawCodeSlashThisLine = false;
       i += 1; continue;
     }
+    if (mode === 'line') { out.push(' '); i += 1; continue; }
     if (mode === 'block') {
+      if (ch === '\n') { out.push('\n'); sawCodeSlashThisLine = false; i += 1; continue; }
       if (lang === 'rs' && source.startsWith('/*', i)) { blockDepth += 1; out.push('  '); i += 2; continue; }
       if (source.startsWith('*/', i)) {
         blockDepth -= 1; out.push('  '); i += 2;
         if (blockDepth === 0) mode = 'code';
         continue;
       }
-      out.push(ch === '\n' ? '\n' : ' '); i += 1; continue;
+      out.push(' '); i += 1; continue;
     }
     if (mode === 'string') {
       const noEscapes = quote.length === 3 || (lang === 'sh' && quote === "'");
-      if (!noEscapes && ch === '\\') { out.push(source.slice(i, i + 2)); i += 2; continue; }
+      if (!noEscapes && ch === '\\' && i + 1 < source.length) {
+        if (source[i + 1] === '\n') { out.push('\\\n'); sawCodeSlashThisLine = false; i += 2; continue; }
+        out.push(source.slice(i, i + 2)); i += 2; continue;
+      }
       if (quote === '`' && source.startsWith('${', i)) {
         templateBraces.push(0); mode = 'code'; out.push('${'); i += 2; continue;
       }
@@ -228,8 +271,16 @@ function stripComments(source, filename) {
       else templateBraces[top] -= 1;
       out.push(ch); i += 1; continue;
     }
-    if (slashComments && source.startsWith('//', i)) { mode = 'line'; out.push('  '); i += 2; continue; }
+    // `/*` outside a string is unambiguously a block comment (js/rust).
     if (slashComments && source.startsWith('/*', i)) { mode = 'block'; blockDepth = 1; out.push('  '); i += 2; continue; }
+    // `//` line comment — stripped only when conservatively certain:
+    //   rust: always a comment; js: only if no code `/` preceded it this line.
+    if (slashComments && source.startsWith('//', i)) {
+      if (lang === 'rs' || !sawCodeSlashThisLine) { mode = 'line'; out.push('  '); i += 2; continue; }
+      // JS, prior code `/` on this line → cannot prove comment. Keep as code
+      // (over-flag safe); the two slashes are still code slashes.
+      out.push('//'); sawCodeSlashThisLine = true; i += 2; continue;
+    }
     if (hashComments && ch === '#' && (lang === 'py' || i === 0 || /\s/.test(source[i - 1]))) {
       mode = 'line'; out.push(' '); i += 1; continue;
     }
@@ -239,6 +290,9 @@ function stripComments(source, filename) {
     if (ch === '"' || (ch === "'" && lang !== 'rs') || (ch === '`' && lang === 'js')) {
       quote = ch; mode = 'string'; out.push(ch); i += 1; continue;
     }
+    // A bare `/` in JS code (division or regex-open) marks the line: any
+    // later `//` on it is no longer provably a comment.
+    if (lang === 'js' && ch === '/') sawCodeSlashThisLine = true;
     out.push(ch); i += 1;
   }
   return out.join('');
@@ -396,10 +450,14 @@ function check(repoRoot = REPO_ROOT) {
  *   2. training-import / MCP-tool / model-file violations each fail with the
  *      right deny-list id — including URL-form references
  *      ("https://…/model.safetensors", "file://…/x.gguf", "http://…/finetune",
- *      the PR #869 MEDIUM), the single-slash "ruvllm/training" import form,
- *      .py/.sh helpers, and files under a committed dist/;
- *   3. comment-only mentions of denied tokens do NOT fail (plain comments and
- *      comments containing URLs alike);
+ *      the PR #869 MEDIUM), regex literals whose internal `//` must not eat a
+ *      trailing denied token (PR #869 re-verify PoCs: char-class, escaped,
+ *      guard, and control-flow-header `)` forms), the single-slash
+ *      "ruvllm/training" import form, .py/.sh helpers, files under a committed
+ *      dist/, AND the accepted over-flags (a denied token in a real comment
+ *      that shares a line with a code `/` is flagged — safe direction);
+ *   3. comment-only mentions of denied tokens do NOT fail when the comment is
+ *      PROVABLY one — a plain/URL comment with no prior code `/` on its line;
  *   4. symlinks (including one pointing at an out-of-tree file full of
  *      violations) are skipped with a warning, never followed, no stack trace;
  *   5. a deleted mutation surface fails loudly (missing-surface hardening).
@@ -443,6 +501,10 @@ function selfTest() {
     // Comment containing a URL with a denied token: still a comment, still safe.
     writeFileSync(join(harnessSrc, 'comment-url.ts'),
       '// background reading: http://internal/finetune docs\nexport const y = 2;\n');
+    // A comment with NO prior code `/` on its line is provably a comment —
+    // its denied token is soundly suppressed (the negative case that matters).
+    writeFileSync(join(harnessSrc, 'plain-comment.ts'),
+      'export const z = 1; // plain note about models/x.gguf here\n');
     writeFileSync(join(mragent, 'clean.sh'),
       '#!/bin/sh\n# fine_tune mentioned only in this comment\necho ok\n');
     writeFileSync(join(root, 'outside-violations.rs'),
@@ -472,6 +534,20 @@ function selfTest() {
     // Single-slash module path must keep flagging (auditor's regression case).
     writeFileSync(join(harnessSrc, 'bad-import-slash.ts'),
       'import { t } from "ruvllm/training";\n');
+    // PR #869 re-verify: a `//` inside a JS regex must NOT eat the trailing
+    // denied token on the same line. Both PoCs are live JS.
+    writeFileSync(join(harnessSrc, 'bad-regex-class.ts'),
+      'const re = /[a//]/; const w = "evil-model.gguf"; export {re, w};\n');
+    writeFileSync(join(harnessSrc, 'bad-regex-escaped.ts'),
+      'const re = /https:\\/\\//; loadWeights("m.safetensors"); export {re};\n');
+    // Ordinary-code form: regex guard then a real model load on the same line.
+    writeFileSync(join(harnessSrc, 'bad-regex-guard.ts'),
+      'if (/https?:\\/\\//.test(u)) loadModel("x.gguf");\n');
+    // PR #869 3rd re-verify: a regex after a control-flow-header `)` — the
+    // exact case the value/operator heuristic mis-classified as division. The
+    // sound rule needs no such classification; the string still flags.
+    writeFileSync(join(harnessSrc, 'bad-regex-ctrlflow.ts'),
+      'if (cond) /[//]x/.test(s); loadWeights("evil.gguf");\n');
     // New coverage: .py / .sh helpers and committed dist/ output are scanned.
     writeFileSync(join(mragent, 'bad.py'),
       'trainer.save_checkpoint("out")  # totally routine\n');
@@ -479,6 +555,13 @@ function selfTest() {
       '#!/bin/sh\npython finetune.py --epochs 3\n');
     mkdirSync(join(harnessSrc, 'dist'), { recursive: true });
     writeFileSync(join(harnessSrc, 'dist', 'bad-dist.mjs'), 'save_weights(model);\n');
+    // Accepted OVER-FLAG (bias inversion): a denied token in a real trailing
+    // comment that shares its line with an earlier code `/` (division / regex)
+    // IS flagged — annoying but safe. The gate never guesses regex-vs-division.
+    writeFileSync(join(harnessSrc, 'division-comment.ts'),
+      'const q = a / b / c; // note: models/x.gguf\nexport {q};\n');
+    writeFileSync(join(harnessSrc, 'regex-comment.ts'),
+      'const re = /ab+c/; // mentions model.safetensors in prose\nexport {re};\n');
     const dirty = run();
     ok(dirty.code === 1, 'violations fail the gate (exit 1)');
     ok(dirty.stderr.includes('bad-train.rs') && dirty.stderr.includes('ruvllm-training-module'),
@@ -495,6 +578,14 @@ function selfTest() {
       'http URL to /finetune is flagged (string-aware stripper)');
     ok(dirty.stderr.includes('bad-import-slash.ts'),
       'single-slash ruvllm/training import still flags');
+    ok(dirty.stderr.includes('bad-regex-class.ts') && dirty.stderr.includes('model-file-reference'),
+      'regex with // in a char class does NOT eat the trailing .gguf (PoC a)');
+    ok(dirty.stderr.includes('bad-regex-escaped.ts'),
+      'regex with escaped // does NOT eat the trailing .safetensors (PoC b)');
+    ok(dirty.stderr.includes('bad-regex-guard.ts'),
+      'regex guard then loadModel(".gguf") on one line is flagged (ordinary code)');
+    ok(dirty.stderr.includes('bad-regex-ctrlflow.ts') && dirty.stderr.includes('model-file-reference'),
+      'regex after a control-flow `)` then loadWeights(".gguf") is flagged (3rd PoC)');
     ok(dirty.stderr.includes('bad.py') && dirty.stderr.includes('weight-writing'),
       '.py helper invoking a weight writer is flagged');
     ok(dirty.stderr.includes('bad.sh') && dirty.stderr.includes('generic-finetune'),
@@ -506,6 +597,12 @@ function selfTest() {
       'denied token in a genuine comment URL is NOT flagged');
     ok(!dirty.stderr.includes('clean.sh'),
       '.sh with denied token only in a comment is NOT flagged');
+    ok(!dirty.stderr.includes('plain-comment.ts'),
+      'comment with no prior code slash: token soundly suppressed (not flagged)');
+    ok(dirty.stderr.includes('division-comment.ts'),
+      'ACCEPTED over-flag: comment token after a code `/` on the line IS flagged (safe)');
+    ok(dirty.stderr.includes('regex-comment.ts'),
+      'ACCEPTED over-flag: comment token after a regex on the line IS flagged (safe)');
     ok(!dirty.stderr.includes('linked.rs: ['), 'symlinked violations are NOT followed/flagged');
     ok(!dirty.stderr.includes('darwin_guard.rs'),
       'train/eval-contamination guard prose does NOT false-positive');

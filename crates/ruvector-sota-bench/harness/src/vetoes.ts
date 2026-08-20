@@ -13,6 +13,25 @@ export interface VetoContext {
 
 export type PromotionVetoProvider = (context: VetoContext) => Promise<string[]> | string[];
 
+/**
+ * Compose veto providers conjunctively: the union of every provider's
+ * reasons, deduplicated and sorted. Lets additive gates (e.g. the
+ * dream-machine evaluation stage and the HarnessRisk (arXiv:2608.17597)
+ * lifecycle-security gate, ADR-317) run side by side — any one provider can
+ * block promotion; none can rescue it.
+ */
+export function composeVetoProviders(
+  ...providers: readonly PromotionVetoProvider[]
+): PromotionVetoProvider {
+  return async (context) => {
+    const reasons: string[] = [];
+    for (const provider of providers) {
+      reasons.push(...(await provider(context)));
+    }
+    return [...new Set(reasons)].sort();
+  };
+}
+
 export interface CapabilityEvidence {
   workspaceReceipts?: readonly WorkspaceLensReceipt[];
   trajectories?: readonly DarwinTrajectory[];
