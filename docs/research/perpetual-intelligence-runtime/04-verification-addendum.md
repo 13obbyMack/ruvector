@@ -257,11 +257,14 @@ promotion — the machine never merges; a human does."* It **composes**
 names `ruvnet/ruflo`'s and `ruvnet/metaharness`'s nightly dream-cycle
 routines as prior instances it **subsumes** — specifically metaharness
 ADR-251 ("MetaHarness Nightly Dream Cycle") and the Ruflo Nightly Dream Cycle
-v3.
+v3 **(the "metaharness ADR-251" half of that claim does not resolve — see
+§8b; reported here as dream-machine ADR-0001's own assertion, not as
+independently verified)**.
 
 **Net effect**: the "Dream Machine" mechanism now exists in **four** places
 — `ruvnet/dream-machine` (the generalized, already-shipped engine),
-`ruvnet/ruflo`'s nightly dream cycle, `ruvnet/metaharness` ADR-251, and
+`ruvnet/ruflo`'s nightly dream cycle, `ruvnet/metaharness`'s `docs/dream-cycle/`
+(not an ADR — see §8b for why the "ADR-251" identifier is wrong), and
 `ruvector`'s own `scripts/research-gate/` + ADR-282. ADR-306 in this program
 is revised to cite `ruvnet/dream-machine` ADR-0001 as the consolidating
 design ruvector's `research-gate` should align with, not as a name this
