@@ -73,6 +73,38 @@ export function assertSafeCaseId(caseId: string): void {
   }
 }
 
+/**
+ * Reject a loaded case set in which two distinct case_ids collide once
+ * lowercased (PIR WP15 case-insensitive-FS follow-up, #862).
+ *
+ * Each case_id becomes a `${caseId}.state.json` filename in
+ * rvfWorkspaceBinder.bindWorkspace. assertSafeCaseId confines the charset (no
+ * traversal) but still admits case-only-distinct ids like "setup_1" and
+ * "Setup_1". On a case-INSENSITIVE filesystem (macOS/Windows dev machines; not
+ * Linux CI) those two ids resolve to the SAME state file, so one case's commit
+ * silently overwrites the other's — cross-contaminating workspace state and
+ * letting a case forge or mask the integrity signal the acceptance test reads.
+ *
+ * Detect the collision at load time (the boundary), so the readable, debuggable
+ * per-case filenames are kept intact. Ids that stay distinct when lowercased
+ * (e.g. "setup_1" / "setup_2") are fine.
+ */
+export function assertNoCaseIdCollisions(cases: readonly { caseId: string }[]): void {
+  const seenByStateFile = new Map<string, string>();
+  for (const { caseId } of cases) {
+    const stateFile = `${caseId.toLowerCase()}.state.json`;
+    const prior = seenByStateFile.get(stateFile);
+    if (prior !== undefined) {
+      throw new Error(
+        `case_id collision: ${JSON.stringify(prior)} and ${JSON.stringify(caseId)} both resolve ` +
+          `to the same state file ${JSON.stringify(stateFile)} on a case-insensitive filesystem ` +
+          "(macOS/Windows) — rename one so all case_ids are distinct ignoring case",
+      );
+    }
+    seenByStateFile.set(stateFile, caseId);
+  }
+}
+
 /** Resolve a phase from the row's phase column, falling back to the case-id prefix. */
 export function normalizePhase(raw: unknown, caseId: string): LifecyclePhase {
   if (typeof raw === "string" && PHASE_SET.has(raw)) return raw as LifecyclePhase;
@@ -177,6 +209,9 @@ export async function fetchHarnessRiskCases(
         "refusing a partial baseline (pass requireFullCaseSet:false to override)",
     );
   }
+  // Two case-only-distinct ids would share one .state.json on a case-insensitive
+  // FS and cross-contaminate workspace state — reject the whole set at load.
+  assertNoCaseIdCollisions(cases);
   return cases;
 }
 

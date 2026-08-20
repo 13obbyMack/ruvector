@@ -28,6 +28,27 @@ use super::policy::{GovernancePolicy, NodeViolation};
 use super::{FleetNode, ModelShard, NodeId, ShardId};
 use std::collections::BTreeMap;
 
+/// Maximum shards a single placement request may contain (PIR WP20 defensive
+/// input bound, ruvector ADR-323, #867).
+///
+/// The branch-and-bound [`search`] recurses to depth = shard count, so an
+/// unbounded shard count is an unbounded native call stack. Every pipeline this
+/// planner governs is a handful of stages (the source paper's largest is a
+/// four-node/70B pipeline); 64 sits far above any real pipeline while capping
+/// the recursion depth. A request above this cap is rejected up front with
+/// [`PlacementRejection::InputTooLarge`] rather than risking stack exhaustion.
+pub const MAX_SHARDS: usize = 64;
+
+/// Maximum fleet nodes a single placement request may contain (PIR WP20
+/// defensive input bound, ruvector ADR-323, #867).
+///
+/// The search fans out over each shard's eligible nodes, so node count bounds
+/// the per-level search breadth (and, with [`MAX_SHARDS`], the combinatorial
+/// worst case). Governed fleets are handfuls of nodes; 256 is far above any
+/// real fleet while keeping the search breadth bounded. A request above this
+/// cap is rejected up front with [`PlacementRejection::InputTooLarge`].
+pub const MAX_NODES: usize = 256;
+
 /// Relative weighting of latency versus cost in the placement objective.
 /// Lower objective is better. Both default to `1.0`.
 #[derive(Debug, Clone, Copy)]
@@ -92,6 +113,21 @@ pub enum PlacementRejection {
         /// Per-node reasons (empty only when the fleet itself is empty).
         violations: Vec<NodeViolation>,
     },
+    /// The request exceeds a documented input-size cap ([`MAX_SHARDS`] /
+    /// [`MAX_NODES`]) and is rejected *before* the branch-and-bound search runs.
+    /// The search recurses to depth = shard count and fans out over eligible
+    /// nodes per shard, so a pathologically large request could exhaust the
+    /// native stack or blow up combinatorially; bounding the input closes both.
+    InputTooLarge {
+        /// Number of shards supplied in the request.
+        shards: usize,
+        /// Number of nodes supplied in the request.
+        nodes: usize,
+        /// The shard-count cap that was exceeded ([`MAX_SHARDS`]).
+        max_shards: usize,
+        /// The node-count cap that was exceeded ([`MAX_NODES`]).
+        max_nodes: usize,
+    },
     /// Every shard is individually placeable, but no *complete* assignment fits
     /// within the fleet's cumulative memory capacity (the shards collectively
     /// exceed what the eligible nodes can jointly hold).
@@ -121,6 +157,17 @@ impl std::fmt::Display for PlacementRejection {
                     .join("; ");
                 f.write_str(&joined)
             }
+            PlacementRejection::InputTooLarge {
+                shards,
+                nodes,
+                max_shards,
+                max_nodes,
+            } => write!(
+                f,
+                "placement request too large: {shards} shard(s) (max {max_shards}), \
+                 {nodes} node(s) (max {max_nodes}) — rejected before the bounded search to \
+                 avoid stack exhaustion / combinatorial blow-up"
+            ),
             PlacementRejection::CapacityExhausted {
                 shard,
                 required_mb,
@@ -167,12 +214,27 @@ impl PlacementPlanner {
         shards: &[ModelShard],
         nodes: &[FleetNode],
     ) -> Result<PlacementPlan, PlacementRejection> {
-        // Trivially satisfiable: nothing to place.
+        // Trivially satisfiable: nothing to place (bounded regardless of fleet
+        // size — depth-0 search, no fan-out).
         if shards.is_empty() {
             return Ok(PlacementPlan {
                 assignments: Vec::new(),
                 total_objective: 0.0,
                 memory_used_mb: BTreeMap::new(),
+            });
+        }
+
+        // Defensive input-size bound (PIR WP20, #867): the branch-and-bound
+        // search below recurses to depth = shards.len() and fans out over each
+        // shard's eligible nodes, so a pathologically large request could
+        // exhaust the native stack or blow up combinatorially. Reject over-cap
+        // inputs here, before any recursion, with a specific structured reason.
+        if shards.len() > MAX_SHARDS || nodes.len() > MAX_NODES {
+            return Err(PlacementRejection::InputTooLarge {
+                shards: shards.len(),
+                nodes: nodes.len(),
+                max_shards: MAX_SHARDS,
+                max_nodes: MAX_NODES,
             });
         }
 

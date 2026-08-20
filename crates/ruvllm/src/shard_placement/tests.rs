@@ -7,7 +7,9 @@
 //! specific reason — never silently placed on a violating node — while the
 //! latency/cost objective only optimizes *among* feasible placements.
 
-use super::planner::{ObjectiveWeights, PlacementPlanner, PlacementRejection};
+use super::planner::{
+    ObjectiveWeights, PlacementPlanner, PlacementRejection, MAX_NODES, MAX_SHARDS,
+};
 use super::policy::{ConstraintViolation, GovernancePolicy};
 use super::{FleetNode, ModelShard, NodeId, ResidencyZone, ShardId, TrustTier};
 
@@ -406,4 +408,82 @@ fn empty_shard_set_is_trivially_satisfiable() {
     let plan = PlacementPlanner::default().plan(&[], &nodes).unwrap();
     assert!(plan.assignments.is_empty());
     assert_eq!(plan.total_objective, 0.0);
+}
+
+/// Defensive input-size bound (PIR WP20, #867): a request whose shard or node
+/// count exceeds the documented cap is rejected up front — before the
+/// branch-and-bound search runs — so it can neither exhaust the native stack
+/// (recursion depth = shard count) nor blow up combinatorially.
+#[test]
+fn oversized_request_is_rejected_before_search() {
+    // One shard over the shard cap on a small fleet.
+    let too_many_shards: Vec<ModelShard> = (0..=MAX_SHARDS)
+        .map(|i| ModelShard::new(format!("stage-{i}"), i, 1))
+        .collect();
+    let small_fleet = vec![FleetNode::new(
+        "n0",
+        ResidencyZone::new("us"),
+        TrustTier(9),
+        1_000_000,
+    )];
+    match PlacementPlanner::default()
+        .plan(&too_many_shards, &small_fleet)
+        .unwrap_err()
+    {
+        PlacementRejection::InputTooLarge {
+            shards,
+            nodes,
+            max_shards,
+            max_nodes,
+        } => {
+            assert_eq!(shards, MAX_SHARDS + 1);
+            assert_eq!(nodes, 1);
+            assert_eq!(max_shards, MAX_SHARDS);
+            assert_eq!(max_nodes, MAX_NODES);
+        }
+        other => panic!("expected InputTooLarge (shards), got {other:?}"),
+    }
+
+    // One node over the node cap with a single shard.
+    let one_shard = vec![ModelShard::new("stage-0", 0, 1)];
+    let too_many_nodes: Vec<FleetNode> = (0..=MAX_NODES)
+        .map(|i| FleetNode::new(format!("n{i}"), ResidencyZone::new("us"), TrustTier(9), 1000))
+        .collect();
+    match PlacementPlanner::default()
+        .plan(&one_shard, &too_many_nodes)
+        .unwrap_err()
+    {
+        PlacementRejection::InputTooLarge {
+            nodes, max_nodes, ..
+        } => {
+            assert_eq!(nodes, MAX_NODES + 1);
+            assert_eq!(max_nodes, MAX_NODES);
+        }
+        other => panic!("expected InputTooLarge (nodes), got {other:?}"),
+    }
+}
+
+/// The bound admits at-cap requests: exactly [`MAX_SHARDS`] shards over
+/// [`MAX_NODES`] nodes is within limits and still produces a valid plan.
+#[test]
+fn at_cap_request_still_plans() {
+    let shards: Vec<ModelShard> = (0..MAX_SHARDS)
+        .map(|i| ModelShard::new(format!("stage-{i}"), i, 1))
+        .collect();
+    let nodes: Vec<FleetNode> = (0..MAX_NODES)
+        .map(|i| {
+            FleetNode::new(
+                format!("n{i}"),
+                ResidencyZone::new("us"),
+                TrustTier(9),
+                1_000_000,
+            )
+        })
+        .collect();
+    assert_eq!(shards.len(), MAX_SHARDS);
+    assert_eq!(nodes.len(), MAX_NODES);
+
+    let plan = PlacementPlanner::default().plan(&shards, &nodes).unwrap();
+    assert_plan_respects_constraints(&plan, &shards, &nodes);
+    assert_eq!(plan.assignments.len(), MAX_SHARDS);
 }
