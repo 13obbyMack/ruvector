@@ -18,6 +18,17 @@ use ndarray::Array2;
 
 use super::mapper::{CalibrationLayerPair, KvMapper};
 
+/// Squared-Frobenius-norm floor below which an activation matrix is treated
+/// as degenerate (all-zero or vanishingly small).
+///
+/// A degenerate operand carries no directional information, so a cosine or
+/// relative-error score computed from it is meaningless. Crucially, an
+/// all-zero validation pair must NEVER score as a perfect pass: since
+/// `pred = source · W` is zero whenever the source is zero, a zeroed
+/// validation set would otherwise approve *any* mapper unconditionally —
+/// defeating the gate's "never migrate blind" contract.
+const DEGENERATE_NORM_EPS: f64 = 1e-12;
+
 /// Gate decision: migrate the cache, or veto into a full re-prefill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateDecision {
@@ -110,11 +121,26 @@ pub struct TransferQualityGate {
 impl TransferQualityGate {
     /// Create a gate from thresholds and a held-out validation set
     /// (one [`CalibrationLayerPair`] per layer, in layer order).
+    ///
+    /// Rejects a validation set in which the majority of pairs (including
+    /// all of them) are degenerate — i.e. have near-zero-norm activations on
+    /// either side. Such a set cannot meaningfully assess a mapper, and an
+    /// all-zero set would otherwise approve any mapper unconditionally.
+    /// Individual degenerate pairs that slip past this check still score as
+    /// hard failures in [`Self::assess`], never as passes.
     pub fn new(config: QualityGateConfig, validation: Vec<CalibrationLayerPair>) -> Result<Self> {
         if validation.is_empty() {
             return Err(RuvLLMError::KvCache(
                 "TransferQualityGate requires a non-empty validation set".to_string(),
             ));
+        }
+        let degenerate = validation.iter().filter(|p| pair_is_degenerate(p)).count();
+        if degenerate * 2 > validation.len() {
+            return Err(RuvLLMError::KvCache(format!(
+                "validation set is degenerate: {degenerate} of {} pairs have \
+                 near-zero-norm activations and cannot assess a mapper",
+                validation.len()
+            )));
         }
         Ok(Self { config, validation })
     }
@@ -139,6 +165,26 @@ impl TransferQualityGate {
                 mapper.num_layers(),
                 self.validation.len()
             )));
+        }
+        // Real runtime dimension validation (NOT a debug_assert): the
+        // comparison helpers iterate `zip`, which silently truncates to the
+        // shorter operand in release builds — a mismatched validation set
+        // would be scored on a tiny prefix of the data. Reject it instead.
+        for (idx, pair) in self.validation.iter().enumerate() {
+            if pair.source.dim() != mapper.source_dim() {
+                return Err(RuvLLMError::KvCache(format!(
+                    "validation pair {idx}: source dim {} does not match mapper source dim {}",
+                    pair.source.dim(),
+                    mapper.source_dim()
+                )));
+            }
+            if pair.target.dim() != mapper.target_dim() {
+                return Err(RuvLLMError::KvCache(format!(
+                    "validation pair {idx}: target dim {} does not match mapper target dim {}",
+                    pair.target.dim(),
+                    mapper.target_dim()
+                )));
+            }
         }
 
         let mut layers = Vec::with_capacity(self.validation.len());
@@ -192,9 +238,28 @@ impl TransferQualityGate {
     }
 }
 
+/// Squared Frobenius norm of a matrix, accumulated in f64.
+fn squared_norm(m: &Array2<f32>) -> f64 {
+    m.iter().map(|v| (*v as f64) * (*v as f64)).sum()
+}
+
+/// True when any side of a validation pair has a near-zero-norm activation
+/// matrix, i.e. carries no signal a mapper could be assessed against.
+fn pair_is_degenerate(pair: &CalibrationLayerPair) -> bool {
+    squared_norm(&pair.source.keys) <= DEGENERATE_NORM_EPS
+        || squared_norm(&pair.source.values) <= DEGENERATE_NORM_EPS
+        || squared_norm(&pair.target.keys) <= DEGENERATE_NORM_EPS
+        || squared_norm(&pair.target.values) <= DEGENERATE_NORM_EPS
+}
+
 /// Flattened cosine similarity between two equally-shaped matrices.
+///
+/// A degenerate (near-zero-norm) operand on either side scores `-1.0` — the
+/// worst possible similarity — so a zeroed pair is a veto, never a pass.
+/// Shape equality is enforced by [`TransferQualityGate::assess`] before this
+/// is called; the assert is defense-in-depth against truncating `zip`.
 fn cosine_similarity(a: &Array2<f32>, b: &Array2<f32>) -> f32 {
-    debug_assert_eq!(a.shape(), b.shape());
+    assert_eq!(a.shape(), b.shape(), "cosine_similarity shape mismatch");
     let mut dot = 0.0f64;
     let mut na = 0.0f64;
     let mut nb = 0.0f64;
@@ -203,15 +268,20 @@ fn cosine_similarity(a: &Array2<f32>, b: &Array2<f32>) -> f32 {
         na += (*x as f64) * (*x as f64);
         nb += (*y as f64) * (*y as f64);
     }
-    if na == 0.0 || nb == 0.0 {
-        return if na == nb { 1.0 } else { 0.0 };
+    if na <= DEGENERATE_NORM_EPS || nb <= DEGENERATE_NORM_EPS {
+        return -1.0;
     }
     (dot / (na.sqrt() * nb.sqrt())) as f32
 }
 
 /// Relative Frobenius error `‖a − b‖_F / ‖b‖_F`.
+///
+/// A degenerate (near-zero-norm) target scores `f32::INFINITY` — even when
+/// the prediction is also zero — so a zeroed pair is a veto, never a pass.
+/// Shape equality is enforced by [`TransferQualityGate::assess`] before this
+/// is called; the assert is defense-in-depth against truncating `zip`.
 fn relative_error(a: &Array2<f32>, b: &Array2<f32>) -> f32 {
-    debug_assert_eq!(a.shape(), b.shape());
+    assert_eq!(a.shape(), b.shape(), "relative_error shape mismatch");
     let mut diff = 0.0f64;
     let mut norm = 0.0f64;
     for (x, y) in a.iter().zip(b.iter()) {
@@ -219,8 +289,8 @@ fn relative_error(a: &Array2<f32>, b: &Array2<f32>) -> f32 {
         diff += d * d;
         norm += (*y as f64) * (*y as f64);
     }
-    if norm == 0.0 {
-        return if diff == 0.0 { 0.0 } else { f32::INFINITY };
+    if norm <= DEGENERATE_NORM_EPS {
+        return f32::INFINITY;
     }
     (diff.sqrt() / norm.sqrt()) as f32
 }

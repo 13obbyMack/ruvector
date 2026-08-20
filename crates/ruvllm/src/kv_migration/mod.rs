@@ -34,7 +34,10 @@ pub mod quality;
 #[cfg(test)]
 mod tests;
 
-pub use mapper::{CalibrationLayerPair, KvMapper, LinearKvMapper};
+pub use mapper::{
+    CalibrationLayerPair, KvMapper, LinearKvMapper, DEFAULT_RIDGE_LAMBDA, MAX_CALIBRATION_LAYERS,
+    MAX_CALIBRATION_TOKENS, MAX_FIT_DIM,
+};
 pub use quality::{
     GateDecision, LayerQuality, QualityGateConfig, QualityReport, TransferQualityGate,
 };
@@ -74,7 +77,12 @@ impl LayerKvTensor {
         num_kv_heads: usize,
         head_dim: usize,
     ) -> Result<Self> {
-        let dim = num_kv_heads * head_dim;
+        let dim = num_kv_heads.checked_mul(head_dim).ok_or_else(|| {
+            RuvLLMError::KvCache(format!(
+                "KV dimension overflow: num_kv_heads ({num_kv_heads}) * head_dim ({head_dim}) \
+                 exceeds usize"
+            ))
+        })?;
         if dim == 0 {
             return Err(RuvLLMError::KvCache("zero KV dimension".to_string()));
         }

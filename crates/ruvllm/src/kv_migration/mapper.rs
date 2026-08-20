@@ -56,6 +56,25 @@ use super::LayerKvTensor;
 /// normal equations solvable when calibration tokens barely cover `src_dim`.
 pub const DEFAULT_RIDGE_LAMBDA: f32 = 1e-4;
 
+/// Maximum flattened per-token KV dimension (`num_kv_heads * head_dim`)
+/// accepted by [`LinearKvMapper::fit`], on both the source and target side.
+///
+/// The closed-form solve is O(n³) in the source dimension and allocates an
+/// `[n, n]` Gram matrix, so calibration input of size O(tokens · n) buys
+/// O(n³) work — an unbounded `n` is a denial-of-service hazard (`n = 65_536`
+/// would request a ~17 GB Gram matrix, and an allocation failure aborts the
+/// process). 8192 comfortably covers realistic flattened KV dimensions while
+/// keeping the solve tractable.
+pub const MAX_FIT_DIM: usize = 8192;
+
+/// Maximum number of calibration layers accepted by [`LinearKvMapper::fit`].
+/// Each layer costs two independent O(n³) solves (keys and values).
+pub const MAX_CALIBRATION_LAYERS: usize = 512;
+
+/// Maximum calibration tokens per layer accepted by [`LinearKvMapper::fit`].
+/// Bounds the O(tokens · n²) Gram-matrix accumulation.
+pub const MAX_CALIBRATION_TOKENS: usize = 1 << 20;
+
 /// Paired calibration activations for one layer: the same token sequence's
 /// K/V tensors as produced by the source model and by the target model.
 #[derive(Debug, Clone)]
@@ -135,11 +154,27 @@ impl LinearKvMapper {
     /// `calibration` holds one [`CalibrationLayerPair`] per layer, in layer
     /// order. All layers must share the same source and target dimensions.
     /// `ridge_lambda` must be positive; see [`DEFAULT_RIDGE_LAMBDA`].
+    ///
+    /// ## Cost
+    ///
+    /// Per layer, the closed-form solve costs O(tokens · n² + n³ + n² · m)
+    /// time and allocates an `[n, n]` Gram matrix, where `n` is the source
+    /// dimension and `m` the target dimension — the O(n³) term dominates for
+    /// realistic shapes. Inputs are bounded by [`MAX_FIT_DIM`],
+    /// [`MAX_CALIBRATION_LAYERS`], and [`MAX_CALIBRATION_TOKENS`]; anything
+    /// larger is rejected up front, before any allocation or solve.
     pub fn fit(calibration: &[CalibrationLayerPair], ridge_lambda: f32) -> Result<Self> {
         if calibration.is_empty() {
             return Err(RuvLLMError::KvCache(
                 "cannot fit LinearKvMapper from empty calibration set".to_string(),
             ));
+        }
+        if calibration.len() > MAX_CALIBRATION_LAYERS {
+            return Err(RuvLLMError::KvCache(format!(
+                "calibration set has {} layers, exceeding MAX_CALIBRATION_LAYERS = {}",
+                calibration.len(),
+                MAX_CALIBRATION_LAYERS
+            )));
         }
         if !(ridge_lambda > 0.0) || !ridge_lambda.is_finite() {
             return Err(RuvLLMError::KvCache(format!(
@@ -149,8 +184,20 @@ impl LinearKvMapper {
 
         let source_dim = calibration[0].source.dim();
         let target_dim = calibration[0].target.dim();
+        if source_dim == 0 || target_dim == 0 {
+            return Err(RuvLLMError::KvCache(format!(
+                "calibration dims must be non-zero, got {source_dim}->{target_dim}"
+            )));
+        }
+        if source_dim > MAX_FIT_DIM || target_dim > MAX_FIT_DIM {
+            return Err(RuvLLMError::KvCache(format!(
+                "calibration dims {source_dim}->{target_dim} exceed MAX_FIT_DIM = {MAX_FIT_DIM} \
+                 (the solve is O(n³) in the source dimension)"
+            )));
+        }
 
-        let mut layers = Vec::with_capacity(calibration.len());
+        // Validate every layer BEFORE the first O(n³) solve, so a malformed
+        // set is rejected without paying for any partial fit.
         for (idx, pair) in calibration.iter().enumerate() {
             if pair.source.dim() != source_dim || pair.target.dim() != target_dim {
                 return Err(RuvLLMError::KvCache(format!(
@@ -159,6 +206,17 @@ impl LinearKvMapper {
                     pair.target.dim()
                 )));
             }
+            if pair.source.tokens() > MAX_CALIBRATION_TOKENS {
+                return Err(RuvLLMError::KvCache(format!(
+                    "layer {idx} has {} calibration tokens, exceeding MAX_CALIBRATION_TOKENS = {}",
+                    pair.source.tokens(),
+                    MAX_CALIBRATION_TOKENS
+                )));
+            }
+        }
+
+        let mut layers = Vec::with_capacity(calibration.len());
+        for pair in calibration.iter() {
             let w_k = ridge_least_squares(&pair.source.keys, &pair.target.keys, ridge_lambda)?;
             let w_v = ridge_least_squares(&pair.source.values, &pair.target.values, ridge_lambda)?;
             layers.push(LayerMaps { w_k, w_v });

@@ -2,7 +2,10 @@
 
 use ndarray::Array2;
 
-use super::mapper::{CalibrationLayerPair, KvMapper, LinearKvMapper, DEFAULT_RIDGE_LAMBDA};
+use super::mapper::{
+    CalibrationLayerPair, KvMapper, LinearKvMapper, DEFAULT_RIDGE_LAMBDA, MAX_CALIBRATION_LAYERS,
+    MAX_CALIBRATION_TOKENS, MAX_FIT_DIM,
+};
 use super::quality::{GateDecision, QualityGateConfig, TransferQualityGate};
 use super::{migrate_kv_cache, KvCacheSnapshot, LayerKvTensor, MigrationResult, MlpKvMapper};
 
@@ -235,6 +238,138 @@ fn mlp_mapper_stub_returns_not_implemented() {
     let m = synthetic_matrix(2, 4, 3);
     let err = stub.map_layer(0, &m, &m).unwrap_err();
     assert!(err.to_string().contains("Not implemented"), "{err}");
+}
+
+/// All-zero calibration pair for degenerate-validation tests.
+fn zero_pair(tokens: usize, dim: usize) -> CalibrationLayerPair {
+    let zeros = || Array2::<f32>::zeros((tokens, dim));
+    CalibrationLayerPair::new(
+        LayerKvTensor::new(zeros(), zeros()).unwrap(),
+        LayerKvTensor::new(zeros(), zeros()).unwrap(),
+    )
+    .unwrap()
+}
+
+/// (security) An all-zero (or majority-degenerate) validation set must never
+/// be able to approve a mapper: gate construction rejects it outright, so
+/// the caller is forced down the re-prefill path.
+#[test]
+fn all_zero_validation_set_is_rejected_never_migrates() {
+    let (tokens, dim) = (16, 8);
+
+    // Entirely degenerate: rejected at construction.
+    let all_zero: Vec<CalibrationLayerPair> = (0..2).map(|_| zero_pair(tokens, dim)).collect();
+    let err = TransferQualityGate::with_defaults(all_zero).unwrap_err();
+    assert!(err.to_string().contains("degenerate"), "{err}");
+
+    // Majority degenerate (2 of 3): also rejected at construction.
+    let mut majority = vec![zero_pair(tokens, dim), zero_pair(tokens, dim)];
+    majority.push(identity_pairs(1, tokens, dim, 11).pop().unwrap());
+    let err = TransferQualityGate::with_defaults(majority).unwrap_err();
+    assert!(err.to_string().contains("degenerate"), "{err}");
+}
+
+/// (security) A minority of degenerate pairs slips past construction but
+/// scores as a hard failure — never as a perfect 1.0/0.0 pass — so the
+/// worst-layer rule vetoes into Reprefill.
+#[test]
+fn degenerate_pairs_in_mixed_validation_score_as_failures() {
+    let (layers, tokens, dim) = (3, 32, 8);
+    let calibration = identity_pairs(layers, tokens, dim, 42);
+    let mapper = LinearKvMapper::fit(&calibration, DEFAULT_RIDGE_LAMBDA).unwrap();
+
+    // 2 honest pairs + 1 all-zero pair (minority: construction succeeds).
+    let mut validation = identity_pairs(2, tokens, dim, 999);
+    validation.push(zero_pair(tokens, dim));
+    let gate = TransferQualityGate::with_defaults(validation).unwrap();
+
+    let report = gate.assess(&mapper).unwrap();
+    assert_eq!(report.decision, GateDecision::Reprefill);
+    let degen = &report.layers[2];
+    assert_eq!(degen.key_cosine, -1.0, "degenerate cosine must be a failure");
+    assert_eq!(degen.value_cosine, -1.0);
+    assert!(degen.key_relative_error.is_infinite());
+    assert!(degen.value_relative_error.is_infinite());
+    assert_eq!(report.worst_cosine, -1.0);
+}
+
+/// (security) Validation pairs whose dims do not match the mapper are
+/// rejected with an explicit error — a real runtime check, not a
+/// debug_assert that compiles out and lets `zip` truncate in release.
+#[test]
+fn dim_mismatched_validation_is_explicitly_rejected() {
+    let (layers, tokens, dim) = (2, 32, 8);
+    let calibration = identity_pairs(layers, tokens, dim, 5);
+    let mapper = LinearKvMapper::fit(&calibration, DEFAULT_RIDGE_LAMBDA).unwrap();
+
+    // Target dim 1 instead of the mapper's 8: must error, not silently
+    // score a truncated prefix.
+    let bad_target: Vec<CalibrationLayerPair> = (0..layers)
+        .map(|l| {
+            CalibrationLayerPair::new(
+                tensor(tokens, dim, 500 + l as u64),
+                tensor(tokens, 1, 600 + l as u64),
+            )
+            .unwrap()
+        })
+        .collect();
+    let gate = TransferQualityGate::with_defaults(bad_target).unwrap();
+    let err = gate.assess(&mapper).unwrap_err();
+    assert!(err.to_string().contains("target dim"), "{err}");
+
+    // Source dim 4 instead of 8: same explicit rejection.
+    let bad_source: Vec<CalibrationLayerPair> = (0..layers)
+        .map(|l| {
+            CalibrationLayerPair::new(
+                tensor(tokens, 4, 700 + l as u64),
+                tensor(tokens, dim, 800 + l as u64),
+            )
+            .unwrap()
+        })
+        .collect();
+    let gate = TransferQualityGate::with_defaults(bad_source).unwrap();
+    let err = gate.assess(&mapper).unwrap_err();
+    assert!(err.to_string().contains("source dim"), "{err}");
+}
+
+/// (security) `num_kv_heads * head_dim` overflow is rejected instead of
+/// wrapping to a small stride in release builds.
+#[test]
+fn from_flat_dimension_overflow_is_rejected() {
+    let flat = vec![0.0f32; 8];
+    let err =
+        LayerKvTensor::from_flat(&flat, &flat, (usize::MAX / 4) + 2, 4).unwrap_err();
+    assert!(err.to_string().contains("overflow"), "{err}");
+}
+
+/// (security) `fit()` bounds dimensions, layer count, and calibration
+/// length up front, before paying for any O(n³) solve or `[n, n]` alloc.
+#[test]
+fn fit_rejects_oversized_calibration_inputs() {
+    // Dimension above MAX_FIT_DIM.
+    let big_dim_pair = CalibrationLayerPair::new(
+        LayerKvTensor::new(
+            Array2::<f32>::zeros((1, MAX_FIT_DIM + 1)),
+            Array2::<f32>::zeros((1, MAX_FIT_DIM + 1)),
+        )
+        .unwrap(),
+        LayerKvTensor::new(Array2::<f32>::zeros((1, 4)), Array2::<f32>::zeros((1, 4))).unwrap(),
+    )
+    .unwrap();
+    let err = LinearKvMapper::fit(&[big_dim_pair], DEFAULT_RIDGE_LAMBDA).unwrap_err();
+    assert!(err.to_string().contains("MAX_FIT_DIM"), "{err}");
+
+    // Layer count above MAX_CALIBRATION_LAYERS.
+    let many_layers: Vec<CalibrationLayerPair> = (0..MAX_CALIBRATION_LAYERS + 1)
+        .map(|_| zero_pair(1, 1))
+        .collect();
+    let err = LinearKvMapper::fit(&many_layers, DEFAULT_RIDGE_LAMBDA).unwrap_err();
+    assert!(err.to_string().contains("MAX_CALIBRATION_LAYERS"), "{err}");
+
+    // Token count above MAX_CALIBRATION_TOKENS.
+    let long_pair = zero_pair(MAX_CALIBRATION_TOKENS + 1, 1);
+    let err = LinearKvMapper::fit(&[long_pair], DEFAULT_RIDGE_LAMBDA).unwrap_err();
+    assert!(err.to_string().contains("MAX_CALIBRATION_TOKENS"), "{err}");
 }
 
 /// Layer-count mismatch between cache and mapper is rejected up front.
