@@ -377,35 +377,6 @@ impl CausalEpisodicGraph {
         }
     }
 
-    fn collect_provenance(
-        &self,
-        node: NodeRef,
-        atomic: &mut BTreeSet<ObservationId>,
-        visited_clusters: &mut BTreeSet<ClusterId>,
-    ) -> Result<(), FusionError> {
-        match node {
-            NodeRef::Observation(id) => {
-                if !self.observations.contains_key(&id) {
-                    return Err(FusionError::UnknownObservation(id));
-                }
-                atomic.insert(id);
-                Ok(())
-            }
-            NodeRef::Cluster(id) => {
-                if !visited_clusters.insert(id) {
-                    return Ok(()); // already expanded; cycle-safe
-                }
-                let cluster = self
-                    .clusters
-                    .get(&id)
-                    .ok_or(FusionError::UnknownCluster(id))?;
-                for member in &cluster.members {
-                    self.collect_provenance(*member, atomic, visited_clusters)?;
-                }
-                Ok(())
-            }
-        }
-    }
 }
 
 #[cfg(test)]
