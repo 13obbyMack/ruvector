@@ -48,7 +48,7 @@ impl CompactionPolicy for LruPolicy {
             .enumerate()
             .map(|(i, e)| (i, e.last_accessed_at))
             .collect();
-        indexed.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        indexed.sort_unstable_by_key(|&(_, v)| std::cmp::Reverse(v));
         indexed
             .into_iter()
             .take(target_size)
@@ -80,7 +80,7 @@ impl CompactionPolicy for LfuPolicy {
             .enumerate()
             .map(|(i, e)| (i, e.access_count))
             .collect();
-        indexed.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        indexed.sort_unstable_by_key(|&(_, v)| std::cmp::Reverse(v));
         indexed
             .into_iter()
             .take(target_size)
@@ -118,6 +118,7 @@ impl Default for CoherenceWeights {
 /// and semantic coherence with the active query context window.
 ///
 /// This is the novel variant introduced by this nightly research run.
+#[derive(Default)]
 pub struct CoherencePolicy {
     pub weights: CoherenceWeights,
 }
@@ -125,14 +126,6 @@ pub struct CoherencePolicy {
 impl CoherencePolicy {
     pub fn new(weights: CoherenceWeights) -> Self {
         Self { weights }
-    }
-}
-
-impl Default for CoherencePolicy {
-    fn default() -> Self {
-        Self {
-            weights: CoherenceWeights::default(),
-        }
     }
 }
 

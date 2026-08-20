@@ -61,6 +61,11 @@ members = [
     "crates/ruvector-graph-wasm",
     "crates/ruvector-gnn",
     "crates/ruvector-proof-gate",
+    # Agent-memory compaction (ADR-252-agent-memory-compaction) + TARL
+    # transactional ledger (ADR-307, PIR WP4). Previously dangling: neither
+    # in members nor exclude, so `cargo test -p ruvector-agent-memory`
+    # could not run at all.
+    "crates/ruvector-agent-memory",
     "crates/ruvector-retrieval-receipt",
     "crates/ruvector-gnn-rerank",
     "crates/ruvector-gnn-node",

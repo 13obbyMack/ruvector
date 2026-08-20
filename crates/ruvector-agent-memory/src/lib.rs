@@ -19,6 +19,11 @@
 //!
 //! ## References
 //!
+//! The `ledger` and `ops` modules add the TARL (Transaction-Aware Reliable
+//! Ledgers, arXiv:2608.03699) transactional memory ledger (ADR-307, PIR WP4):
+//! five executable memory operations over accepted/pending/rejected states,
+//! with witness-record emission (ADR-134 schema) and proof-gated acceptance.
+//!
 //! - Park et al. 2023, "Generative Agents" (arXiv:2304.03442)
 //! - Zhong et al. 2023, "MemoryBank" (arXiv:2305.10250)
 //! - Xu 2026, "Self-Aware Vector Embeddings for RAG" (arXiv:2604.20598)
@@ -26,11 +31,20 @@
 //! - Survey 2026, "From Storage to Experience" (arXiv:2605.06716)
 
 pub mod compaction;
+pub mod ledger;
 pub mod memory;
+pub mod ops;
 pub mod scoring;
 
 pub use compaction::{CoherencePolicy, CoherenceWeights, CompactionPolicy, LfuPolicy, LruPolicy};
+#[cfg(feature = "proof-gate")]
+pub use ledger::WriteGateAdapter;
+pub use ledger::{replay_history, AlwaysAdmitGate, LedgerEntry, ProofGate, TransactionalLedger};
 pub use memory::{MemoryEntry, MemoryStore, SearchResult};
+pub use ops::{
+    AcceptanceReceipt, EvidenceGrade, LedgerError, LedgerState, LedgerWitnessRecord, MemoryOp,
+    MemoryWitnessLog, NoopWitnessSink, TransitionKind, TransitionRecord, WitnessSink,
+};
 pub use scoring::{coherence_score, cosine_sim, normalize};
 
 /// Compact `store` in-place using `policy`, retaining `target_size` entries.

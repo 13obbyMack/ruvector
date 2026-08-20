@@ -15,5 +15,14 @@ path = "src/main.rs"
 
 [dependencies]
 rand = "0.8"
+serde = { workspace = true }
+# Existing ADR-194/047 proof-gated write machinery; adapts to the ledger's
+# ProofGate trait behind the `proof-gate` feature (see src/ledger.rs).
+ruvector-proof-gate = { path = "../ruvector-proof-gate", optional = true }
+
+[features]
+default = []
+proof-gate = ["dep:ruvector-proof-gate"]
 
 [dev-dependencies]
+serde_json = { workspace = true }
