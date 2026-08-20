@@ -11,10 +11,13 @@
 **This ADR is deliberately numbered ADR-323. `ruvector`'s own ADR-322 number
 is skipped, not merely left unused by coincidence.** The reason is a
 cross-repo citation-ambiguity risk this program has already hit four
-separate times (per ADR-305 §6 and ADR-313's Context: the "metaharness
-ADR-322" misattribution, the ADR-150 misattribution, and two further
-instances documented in `04-verification-addendum.md` §5, §8c, §8d) —
-assuming the wrong repo owns an ADR number before checking.
+separate times (per ADR-305 §6 and ADR-313's Context): the ADR-103
+cross-repo ambiguity (ADR-305 §4); the "metaharness ADR-322" misattribution,
+resolved to `ruflo` ADR-322 (`04-verification-addendum.md` §5); the phantom
+"metaharness ADR-251" citation, which does not exist at all
+(`04-verification-addendum.md` §8b); and the "ruvector ADR-150"
+misattribution, resolved to `ruflo` ADR-150 (`04-verification-addendum.md`
+§8c) — each one assuming the wrong repo owns an ADR number before checking.
 
 **`ruflo` ADR-322** (with children 322A/322B/322C) is the single
 most-cited external ADR in this program: ADR-305, ADR-306, ADR-310,
@@ -45,7 +48,8 @@ ADR-322"**, per ADR-316's citation rule. ADR-316's collision-check tooling
 (`scripts/adr-index.mjs --check`) gates on duplicate numbers, not on gaps in
 the sequence, so this deliberate skip does not trip that gate — confirmed
 against ADR-316's own Decision §5 (the check "exits non-zero if `docs/adr/`
-contains a duplicate plain number," not an unused one).
+contains a duplicate plain number that is not in the frozen historical list
+above (or if a frozen number's file count grows)," not an unused one).
 
 ## Context
 
@@ -95,6 +99,18 @@ released reproduction package rather than rebuilding from the paper alone.
 **Name collision**: no significant collision found for "pipeline-sharded
 inference" or the paper's likely short names in a targeted search.
 
+**Preprint-reproduction rule** (applies uniformly across this program, per
+`07-wave2-program-plan.md`): the paper's own 1.79× concurrent-throughput
+figure and its 4-node/70B interactive-serving figures (5.72/6.43 tok/s)
+describe the source paper's own hardware and benchmark run, not this
+program's fleet. This ADR treats governed pipeline-shard placement as a
+**candidate mutation**, not adopted prior art — promotion follows the same
+`research-gate`-recomputed-delta discipline as every other Wave-2 item
+(ADR-306): the paper's figures are the target shape this program aims to
+reproduce internally, never numbers this program is entitled to cite as its
+own acceptance bar without independently measuring them on its own
+2-node/8B and 4-node/70B setups.
+
 ADR-314 already implements `ruvllm`'s closed-form linear KV-cache mapper for
 **cross-model** migration within a single node (`kv_cache.rs`,
 `paged_attention.rs`, `serving/kv_cache_manager.rs`). This ADR is a distinct
@@ -124,7 +140,7 @@ live `labscommunity/pipeline-sharded-inference-paper` reproduction package
      assignment.
    - **Cost** — resource/compute cost of the candidate placement.
    - **Trust** — node attestation and witness status (per this program's
-     existing RVM witness-chain discipline, ADR-134/ADR-312) — an
+     existing RVM witness-chain discipline, ADR-134 (witness-schema-log-format)/ADR-312) — an
      unattested or under-trusted node is not eligible to host a shard
      carrying sensitive state.
    - **Data residency** — placement constraints where shard state must not
@@ -161,7 +177,7 @@ live `labscommunity/pipeline-sharded-inference-paper` reproduction package
   build.
 - Governing shard placement on trust/residency/hardware, not just
   latency/cost, extends this program's existing witness-chain and isolation
-  disciplines (ADR-134, ADR-312, the hosted-RVM honesty discipline from
+  disciplines (ADR-134 (witness-schema-log-format), ADR-312, the hosted-RVM honesty discipline from
   ruvector ADR-285) into the serving-placement layer, rather than treating
   placement as a pure performance-optimization problem.
 - Explicitly separating the 1.79× and 4-node/70B results prevents this
@@ -194,7 +210,7 @@ live `labscommunity/pipeline-sharded-inference-paper` reproduction package
   latency/cost score.
 - **Witness-chain requirement**: node trust/attestation status consumed by
   the placement policy is verified via this program's existing RVM witness
-  chain (ADR-134, anchored per ADR-312), not a separately-trusted signal.
+  chain (ADR-134 (witness-schema-log-format), anchored per ADR-312), not a separately-trusted signal.
 - **Precision citation discipline**: the 1.79× figure is always cited as
   specific to the 2-node/8B-class configuration; the 4-node/70B result is
   always cited separately, never combined into one headline number.

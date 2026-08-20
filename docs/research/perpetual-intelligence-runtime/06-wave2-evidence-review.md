@@ -10,13 +10,17 @@ fabricate a citation, flag name collisions, and — per ADR-305 §6's
 fix-history rule — treat every "code is available" claim as unverified
 until the repository itself is checked, not just the paper's prose.
 
-**One item could not be completed and is flagged rather than guessed**: the
-brief for this wave asked for "ruv's acceptance test verbatim." That text
-was not present in the Wave-2 brief as relayed to this research pass, and a
-search of the tracking issue (`ruvnet/ruvector#837`, all 14 comments) found
-only the priority order, not an acceptance-test statement. `07-wave2-
-program-plan.md` flags this as an open item rather than inventing test
-criteria — see that document's "Missing input" note.
+**One item was initially incomplete and is now resolved**: the brief for
+this wave asked for "ruv's acceptance test verbatim." That text was not
+present in the Wave-2 brief as relayed to this research pass, and a search
+of the tracking issue (`ruvnet/ruvector#837`, all 14 comments as of
+2026-08-20T12:41:41Z — the issue has since accumulated further comments)
+found only the priority order, not an acceptance-test statement.
+`07-wave2-program-plan.md` originally flagged this as an open item rather
+than inventing test criteria; ruv subsequently supplied the exact wording
+directly (2026-08-20), which is now carried verbatim in
+`07-wave2-program-plan.md`'s acceptance-test section and in ADR-317. Issue
+#862 is the test's canonical written record.
 
 ## Summary table
 

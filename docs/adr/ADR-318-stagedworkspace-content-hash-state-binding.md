@@ -41,7 +41,8 @@ to TRUSS in this wave (ADR-319).
 `ruvector` already has the durable-artifact and provenance primitives this
 pattern needs: RVF (`crates/rvf`, append-only crash-safe segments with
 canonical format, ruvector ADR-029) and RVM's witness records
-(`crates/rvm`, hash-chained per privileged action, ruvector ADR-134),
+(`crates/rvm`, hash-chained per privileged action, ruvector ADR-134
+(witness-schema-log-format)),
 formalized as the transactional memory tier in ADR-307 and anchored across
 layers via ADR-312's shared witness schema and cross-layer anchoring
 contract. ADR-312 was designed for mutation/promotion records specifically;

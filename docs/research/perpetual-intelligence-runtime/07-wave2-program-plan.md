@@ -78,9 +78,12 @@ same as Wave 1's plan stated for ADR-305–315.
 **Why 322 is skipped deliberately, not just left free**: a `ruvector`-local
 ADR-322 would not be a filename collision (`ruflo`'s ADR-322 lives in a
 different repo's `v3/docs/adr/`), but this exact program has already hit the
-"wrong repo owns this ADR number" failure mode four times in one document
-(`04-verification-addendum.md` §5, §8c, §8d — "metaharness ADR-322" →
-actually `ruflo` ADR-322; "ruvector ADR-150" → actually `ruflo` ADR-150), and
+"wrong repo owns this ADR number" failure mode four times: the ADR-103
+cross-repo ambiguity (ADR-305 §4); "metaharness ADR-322" → actually
+`ruflo` ADR-322 (`04-verification-addendum.md` §5); the phantom "metaharness
+ADR-251" citation, which does not exist at all
+(`04-verification-addendum.md` §8b); and "ruvector ADR-150" → actually
+`ruflo` ADR-150 (`04-verification-addendum.md` §8c). Separately,
 ADR-305/306/310/312/313 already cite `ruflo` ADR-322/322A/322B/322C by
 number repeatedly as the flywheel-receipt/promotion authority this very
 program adopted. Minting an unrelated `ruvector` ADR-322 for pipeline-sharded
@@ -150,7 +153,7 @@ autogenous, or RuView. Specific surfaces:
 - **WP15** (ADR-317): `crates/ruvector-sota-bench/harness` (vetoes.ts extension), `crates/sona/src/darwin_guard.rs`
 - **WP16** (ADR-318): `crates/rvf`, `crates/rvm` (extends the ADR-312 anchoring contract), `ruvector-agent-memory`
 - **WP17** (ADR-319): new module alongside `crates/rvm/crates/rvm-cap` (capability/tool-broker enforcement) and Darwin's mutation-proposal surface (`harness/src/darwin.ts`)
-- **WP18** (ADR-320): `agentdb`, `crates/rvf` (continuous-latent-state tier), coordinates with `latentmesh-align`-consuming code per the existing ADR-310 CI gate
+- **WP18** (ADR-320): `crates/rvf/rvf-adapters/agentdb`, `crates/rvf` (continuous-latent-state tier), coordinates with `latentmesh-align`-consuming code per the existing ADR-310 CI gate
 - **WP19** (ADR-321): `harness/src/darwin.ts`, `examples/mragent` `scorePolicy` — same surfaces WP9 already owns
 - **WP20** (ADR-323): `crates/ruvllm` (`kv_cache.rs`, `paged_attention.rs`, `serving/kv_cache_manager.rs` — same files WP13 touches, coordinate to avoid merge conflicts)
 
@@ -169,7 +172,7 @@ autogenous, or RuView. Specific surfaces:
 
 1. **Two of six papers have no confirmed upstream code (TRUSS, StagedWorkspace) — both are top-3 priority.** (MemFuse was initially suspected to lack code too; a second verification pass found and confirmed `Darwin-Agent/Mi-Memory/tree/master/MemFuse` is real and live.) WP16 and WP17 are reproduction-from-description efforts, not integration efforts, which is a materially larger scope than WP15/18/19/20's "adapt a released repo" pattern. Size these two WPs accordingly and do not schedule them as if a working reference implementation exists to port.
 2. **The preprint-reproduction risk, handled ruv's way**: every one of these six papers reports numbers on its own benchmark, evaluated by its own authors. Per the "candidate mutation" framing above, none of those numbers may be cited as the acceptance bar for a promoted PIR change — only this program's own `research-gate`-recomputed delta counts. The risk is schedule pressure causing a WP to shortcut this and cite the paper's number directly; the mitigation is already structural (ADR-306's existing gate), but it depends on WP15–20 actually routing through it rather than treating it as optional given each paper's own artifact already "proves" the number.
-3. **Two sharp name collisions (TRUSS/Trussed AI, MemFuse/memfuse) create real mislabeling risk in fast-moving swarm work.** Unlike Wave 1's low-risk LiveMem/iOS-app collision, both of this wave's collisions are with live products in the *same* problem domain, meaning a hurried commit message, ADR reference, or Slack-style status update reading just "TRUSS" or "MemFuse" is genuinely ambiguous to a reader who doesn't already know this program's citation-discipline rule.
+3. **Two sharp name collisions (TRUSS/`truss-agent.com`, MemFuse/memfuse) create real mislabeling risk in fast-moving swarm work.** Unlike Wave 1's low-risk LiveMem/iOS-app collision, both of this wave's collisions are with live products in the *same* problem domain, meaning a hurried commit message, ADR reference, or Slack-style status update reading just "TRUSS" or "MemFuse" is genuinely ambiguous to a reader who doesn't already know this program's citation-discipline rule.
 4. **The pipeline-shards headline number requires care to cite correctly.** The 1.79× figure and the 4-node/70B configuration are two separate results in the source paper; WP20 and any ADR-323 text must keep them separate, per the conflation flag in `06-wave2-evidence-review.md`.
 5. **The novelty claim is not proven, only not-yet-falsified.** If a full 5-property match surfaces later (the evidence review's caveat explicitly says this search wasn't exhaustive), it would not block this wave's WPs — they're framed as internal candidate mutations either way — but it would change how this program is allowed to describe its own novelty in any public-facing ADR or status update.
 6. **The Wave-2 acceptance test (now resolved, see above) is a combined-effect test spanning three ADRs (317/318/319).** WP15–17 issues should reference it explicitly rather than each WP inventing its own narrower success criterion, and no WP should claim the combined test is satisfied until all three of WP15/16/17 have landed and been benchmarked together against a HarnessRisk rerun.

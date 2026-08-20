@@ -152,7 +152,7 @@ architecture (arXiv:2608.18704) and adapting the confirmed-live
 
 ## Affected Repos
 
-- `ruvnet/ruvector` only — `agentdb`, `crates/rvf` (continuous-latent-state
+- `ruvnet/ruvector` only — `crates/rvf/rvf-adapters/agentdb`, `crates/rvf` (continuous-latent-state
   tier), coordinates with `latentmesh-align`-consuming code per the existing
   ADR-310 CI gate. Single-repo scope per `07-wave2-program-plan.md`.
 

@@ -55,6 +55,18 @@ comment, or issue derived from it, and never uses bare "TRUSS" as a product,
 package, or crate name — the same discipline this program applied to TARL in
 Wave 1 (ADR-307).
 
+**Preprint-reproduction rule** (applies uniformly across this program, per
+`07-wave2-program-plan.md`): TRUSS's own reported figures (task
+effectiveness 17.11%→52.94%, security rate 50.80%→100%, repair reducing
+attack success with zero attack regression) describe the paper's own
+benchmark and its own authors' unreleased implementation, not this
+program's shadow-execution stage. This ADR treats the shadow-execution
+mechanism it defines as a **candidate mutation**, not adopted prior art —
+promotion of any candidate through this gate is conditioned on this
+program's own `research-gate`-recomputed benchmark delta over the pre-gate
+baseline, never on citing TRUSS's published numbers as if they already
+describe this program's implementation.
+
 `ruvector` already has two of the three pieces this pattern needs: ADR-311's
 anomaly quarantine (HMAC integrity + statistical anomaly scoring on
 latent-channel payloads) and ADR-315's constitutional capability-expansion
