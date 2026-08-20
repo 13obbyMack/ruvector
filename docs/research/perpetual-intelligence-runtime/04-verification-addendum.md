@@ -276,3 +276,121 @@ None remaining from the original metaharness-ADR-322 question (resolved in
 between `ruvnet/dream-machine` ADR-0001, `ruvector`'s ADR-282
 (`research-gate`), and autogenous ADR-400/401's flywheel — WP1/WP2 own
 producing that reconciliation, per ADR-305 and ADR-306.
+
+## 8. PR #847 review corrections — a fourth research pass (adr-reviewer + asset-scout, post-merge-review)
+
+An adversarial review of the initial PIR ADR set (PR #847) verified every
+cross-repo claim against direct clones of `ruvnet/LatentMesh`, `ruvnet/autogenous`,
+`ruvnet/dream-machine`, and `ruvnet/metaharness`, and separately against a
+clone of `ruvnet/ruflo` (HEAD `fa13ee4`, 2026-08-15; 177 ADRs in
+`v3/docs/adr/`) that §1–§7 above did not have access to. Three findings were
+blocking; this addendum records the corrected facts so future PIR work
+doesn't regress to the earlier drafts' claims.
+
+### 8a. Autogenous ADR-401's promotion predicate is DONE, not open
+
+§2a above (and the earlier draft of ADR-305/ADR-315) cited ADR-401's
+capability-table row 5 ("not yet one checked predicate") as the program's
+residual scope. **That row is stale relative to ADR-401's own Decision
+section.** ADR-401's Update 1 §3, "Converge the promotion invariant to one
+predicate," is marked **DONE**: `mesh-evolve.ts` exports
+`promoteAuthorized(candidate, champion, { authorized, reversible }) →
+PromotionDecision`, the single gate `Promote = Better ∧ Safe ∧ Authorized ∧
+Reversible` with each conjunct independently blocking, `evolveMesh` routing
+every promotion through it, proven by `test/promote-authorized.test.ts`
+(all-four promotes; any three-of-four does not). ADR-315 (this program) is
+rescoped accordingly: it adopts `promoteAuthorized`, it does not build or
+close it.
+
+### 8b. "metaharness ADR-251" does not exist — corrected provenance
+
+ADR-306 (and this addendum's own §6, before this correction) restated
+dream-machine ADR-0001's "Prior instances" citation of "metaharness ADR-251
+(MetaHarness Nightly Dream Cycle)" as fact. Direct inspection of
+`ruvnet/metaharness` (HEAD `5453c8c`) finds **230 ADR files topping out at
+`ADR-250-sota-proof-ladder.md`** — no ADR-251. The Nightly Dream Cycle
+material instead lives in `docs/dream-cycle/` (`2026-08-13-gist.md`,
+`2026-08-14-gist.md`, `LEDGER.md`), not as an ADR. ADR-306 now cites
+`docs/dream-cycle/` and states the bad citation's provenance (inherited from
+dream-machine ADR-0001) rather than repeating it as independently verified.
+
+### 8c. "ruvector ADR-150 (optionalDependencies policy)" is a misattribution
+
+ADR-313 (and ADR-306, and `03-program-plan.md`) cited "ruvector ADR-150" as
+the source of the `optionalDependencies` policy `METAHARNESS-README.md`
+claims compliance with. Checked against both clones:
+
+- `ruvector`'s own `ADR-150` is `ADR-150-pi-brain-ruvltra-tailscale.md` — "π
+  Brain + RuvLtra via Tailscale — Semantic Embedding Upgrade." Unrelated.
+- `metaharness`'s own `ADR-150` is
+  `ADR-150-tailscale-local-frontier-concurrent-benchmarks.md`. Also
+  unrelated.
+- `METAHARNESS-README.md` itself attributes the policy to "**ADR-150**:
+  MetaHarness Integration Surfaces (**upstream**)" — a document neither
+  clone contains.
+
+This is the exact failure mode ADR-305 §4 requires PIR documents to avoid
+(repo-qualify every cross-repo ADR reference) reproduced inside the set
+meant to enforce it. Every reference is now corrected to cite
+`METAHARNESS-README.md`'s documented invariant directly, with the upstream
+attribution noted as unverified rather than repeated as a resolvable
+citation.
+
+### 8d. The ruflo ADR-322 family verified verbatim; ADR-381 needed two corrections
+
+A full clone of `ruvnet/ruflo` confirms the ADR-322 family exactly as this
+program's ADR-306/310/312/313 cite it:
+
+| ADR | Title | Status |
+|---|---|---|
+| 322 | Adopt `@metaharness/{flywheel,darwin}` as pluggable engines behind ruflo's ADR-176 self-improvement flywheel | Accepted — phases 0–2 implemented (2026-07-28) |
+| 322A | Evaluation and promotion transaction model | Accepted — implemented (`RUFLO_FLYWHEEL_TRANSACTION_V1`) |
+| 322B | Darwin proposer adapter | Accepted — implemented for bounded retrieval-policy candidates (`RUFLO_FLYWHEEL_DARWIN_V1`) |
+| 322C | Receipt, ledger, and verification protocol | Accepted — implemented (`RUFLO_FLYWHEEL_RECEIPT_V1`) |
+
+322B's separation-of-powers sentence is verbatim (`ADR-322B-darwin-proposer-adapter.md`
+line 10): *"A proposer produces untrusted candidates only. It cannot issue
+promotion decisions or mutate active policy."* ADR-322 line 15 reinforces it:
+*"Darwin adapters remain candidate generators and never gain promotion
+authority."* 322C's stack is confirmed with more precision than this
+program's earlier drafts stated: canonical JSON is RFC 8785 JCS, digest is
+SHA-256, signature is `Ed25519(domainPrefix || 0x00 || canonicalBytes)`
+across **three distinct signing domains** (bootstrap, receipt, ledger-head —
+not one), with `candidateId = SHA-256(JCS(candidate policy))` and `receiptId
+= SHA-256(JCS(unsigned receipt payload))`. Every authorizing term in a 322C
+record is graded `recomputed`, `signature-verified`, or `trusted-assertion`.
+322C line 105 also settles the ADR-103 cross-repo ambiguity this program
+flagged in ADR-305: keys "use ADR-103's provider mechanism but a distinct
+purpose/domain," confirming the witness-manifest ADR-103 is `ruflo`'s.
+
+**ADR-381 needed two corrections.** (a) **Status is Proposed, not
+Accepted** (line 3, dated 2026-08-10; no supersede or later Accepted line —
+earlier drafts of ADR-306/310/312 implied it was settled governance
+alongside its Accepted siblings). (b) **The 0.6% figure and the `α_k =
+α_total · 6/(π²k²)` allocation belong to `ruflo` PR #2956's mechanism**,
+which ADR-381 *governs*, not to ADR-381's own decision. ADR-381's actual
+contribution is narrower: scoping the α ledger to one stream per project
+root within the ADR-322 transaction state, and `resetSequentialEvidence` — an
+explicit, `confirm: true`-gated, human-reasoned evidence-epoch reset for
+budget exhaustion, expiring all outstanding receipts so stale evidence
+can't be replayed against a fresh budget. (c) The false-promotion bound is
+**per-epoch**, not global: line 33 states the guarantee as "family-wise
+false-promotion probability is ≤ α_total **per epoch**" after a reset. Any
+PIR document citing this bound now states it the same way.
+
+### 8e. The `ruvllm` HTTP-307 bug is already fixed; the systemic lesson
+
+ADR-313 (and `03-program-plan.md`) cited an HTTP-307 redirect bug in
+`ruvllm`'s model-download path as an open blocker. It was already fixed on
+`main` before this ADR set was written (commit `946275a61`, PR #590,
+2026-06-18). The actual remaining download blocker is a GGUF glob/alias bug
+in `ruvllm-cli`'s `get_files_to_download()` (`download.rs:193`'s glob
+pattern disagreeing with `models.rs:65`'s alias resolution).
+
+All three blocking findings (8a–8c) and this one share a root cause: a claim
+was carried forward from a source document — an upstream ADR's stale table
+row, a citation inherited from another repo's ADR, a documented-but-unlocated
+upstream attribution, or an earlier bug report — without checking that
+source's own current state via fix history (`git log` on the named path,
+merged PRs, release notes). ADR-305 now states this as a standing
+verification rule for the remainder of this program (see its Decision §6).

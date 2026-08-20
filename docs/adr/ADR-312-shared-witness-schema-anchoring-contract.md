@@ -3,7 +3,7 @@
 - **Status**: Proposed
 - **Date**: 2026-08-19
 - **Deciders**: RuV Perpetual Intelligence Runtime (PIR) Program
-- **Related**: ADR-305 (PIR, depends on); ADR-306, ADR-307, ADR-309, ADR-315 (PIR, consumers); ruflo ADR-322C (flywheel receipt/ledger/verification protocol); ruflo ADR-381 (sequential promotion evidence); ruvector ADR-134 (witness schema/log format); see `docs/research/perpetual-intelligence-runtime/04-verification-addendum.md` §3, §5
+- **Related**: ADR-305 (PIR, depends on); ADR-306, ADR-307, ADR-309, ADR-315 (PIR, consumers); ruflo ADR-322/322C (flywheel receipt/ledger/verification protocol, Accepted — implemented, verified verbatim against source); ruflo PR #2956 (anytime-valid sequential-evidence mechanism); ruflo ADR-381 (Proposed — stream identity + budget-exhaustion recovery over that mechanism); ruvector ADR-134 (witness schema/log format); see `docs/research/perpetual-intelligence-runtime/04-verification-addendum.md` §3, §5, §8
 - **Tags**: pir, witness, provenance, security, cross-repo
 
 ## Context
@@ -33,19 +33,43 @@ keyed-MAC chain is deliberately not a signature scheme suitable for
 cross-service, offline verification. **Merging them, or making one depend on
 the other, would be a design error**, not a simplification.
 
-A better anchor already exists. `ruflo ADR-322C` (part of the Accepted,
-phases-0–2-implemented ADR-322 flywheel-integration series) defines a
-receipt/ledger/verification protocol built specifically to be a portable,
-offline-verifiable, cross-layer wire format: **RFC 8785 JCS canonical JSON,
-SHA-256 digests, Ed25519 signatures with domain separation**
-(`Ed25519(domainPrefix || 0x00 || canonicalBytes)`), UUIDv7 run IDs,
-deterministic paired-bootstrap statistical recomputation, and fail-closed
-verification (unknown fields, non-finite numbers, and negative zero all
-rejected). Separately, `ruflo ADR-381` defines an anytime-valid sequential
-statistical evidence scheme (`α_k = α_total · 6/(π²k²)`, measured 0.6%
-family-wise false-promotion rate over 1,000 simulated nulls) for the
-statistical claims a witness chain needs to carry when it records a
-promotion decision.
+A better anchor already exists, and this program has now verified it
+directly against a clone of `ruvnet/ruflo` (HEAD `fa13ee4`, 2026-08-15; 177
+ADRs in `v3/docs/adr/`), not merely inherited it. `ruflo ADR-322C` (part of
+the Accepted — phases-0–2-implemented — ADR-322 flywheel-integration series)
+defines a receipt/ledger/verification protocol built specifically to be a
+portable, offline-verifiable, cross-layer wire format: **RFC 8785 JCS
+canonical JSON, SHA-256 digests, Ed25519 signatures with domain separation**
+(`Ed25519(domainPrefix || 0x00 || canonicalBytes)`) — confirmed to use
+**three distinct signing domains** (bootstrap, receipt, ledger-head), not
+one, with explicit identity derivation (`candidateId =
+SHA-256(JCS(candidate policy))`, `receiptId = SHA-256(JCS(unsigned receipt
+payload))`). Every authorizing term in a 322C record carries an explicit
+evidence grade — **`recomputed`, `signature-verified`, or
+`trusted-assertion`** — a vocabulary this ADR adopts below for grading
+anchored claims. UUIDv7 run IDs, deterministic paired-bootstrap statistical
+recomputation, an O_EXCL cross-process lock with directory-fsynced
+compare-and-swap, and fail-closed verification (unknown fields, non-finite
+numbers, and negative zero all rejected) are likewise confirmed against
+source. **This same verification pass corroborates the ADR-103 ambiguity
+this program flagged elsewhere (ADR-305)**: ADR-322C line 105 states its
+keys "use ADR-103's provider mechanism but a distinct purpose/domain" —
+confirming the witness-manifest ADR-103 is `ruflo`'s, not `ruvector`'s.
+
+Separately, `ruflo ADR-381` is **Proposed** (not Accepted; date 2026-08-10)
+and governs a narrower scope than this ADR originally attributed to it. The
+anytime-valid sequential statistical evidence scheme itself — `α_k =
+α_total · 6/(π²k²)` per-test allocation so `Σα_k = α_total`, and the
+measured 0.6% family-wise false-promotion rate over 1,000 simulated nulls —
+belongs to **ruflo PR #2956**, which ADR-381 *governs* rather than defines:
+ADR-381's own decision is (1) scoping the α ledger to the ADR-322
+transaction state, one stream per project root, and (2)
+`resetSequentialEvidence`, an explicit, `confirm: true`-gated, human-reasoned
+**evidence-epoch** reset for budget exhaustion that expires all outstanding
+receipts so stale evidence cannot be replayed against a fresh budget.
+**The false-promotion bound is per-epoch, not global**: after a reset, the
+guarantee is family-wise false-promotion probability ≤ `α_total` for that
+epoch — any PIR document citing this bound must state it the same way.
 
 ## Decision
 
@@ -66,11 +90,17 @@ cross-layer anchoring contract**, not a crate merge or dependency edge:
    anchoring boundary, regardless of each crate's own internal
    representation.
 3. Where a witness record makes a statistical claim (e.g. "this mutation's
-   improvement was significant"), that claim's evidence follows ruflo
-   ADR-381's sequential-evidence scheme rather than a single uncorrected
+   improvement was significant"), that claim's evidence follows ruflo PR
+   #2956's anytime-valid e-process scheme (governed by ADR-381's stream
+   identity and evidence-epoch reset) rather than a single uncorrected
    significance test — this is the concrete mechanism that makes "outperform
    its parent" (invariant 5) auditable across an arbitrarily long sequence of
-   promotion attempts, not just a single one.
+   promotion attempts within an epoch. Any witness record's statistical
+   claim is stated as a **per-epoch** bound, not a global one, and each
+   authorizing term is tagged with 322C's evidence grade
+   (`recomputed`/`signature-verified`/`trusted-assertion`) so a reader can
+   tell which parts of the claim were independently recomputed versus merely
+   asserted.
 4. ruvector ADR-134's witness schema (the 64-byte cache-line-aligned,
    hash-chained record format used by `rvm-witness`) is unchanged by this
    ADR; this decision governs the boundary where a non-RVM witness record
@@ -116,10 +146,12 @@ cross-layer anchoring contract**, not a crate merge or dependency edge:
   verification rules — this program does not weaken that contract at the
   boundary.
 - **Sequential-evidence discipline**: any witness record carrying a
-  statistical promotion claim states its evidence per ruflo ADR-381's
-  anytime-valid scheme, not a single-test p-value, so the acceptance
-  harness's (ADR-306, WP12) day-30 comparison remains statistically sound
-  across many promotion attempts.
+  statistical promotion claim states its evidence per ruflo PR #2956's
+  anytime-valid e-process scheme (governed by ADR-381), not a single-test
+  p-value, expressed as a **per-epoch** bound, so the acceptance harness's
+  (ADR-306, WP12) day-30 comparison remains statistically sound within each
+  evidence epoch — a day-30-vs-day-1 comparison spanning an epoch reset must
+  not silently claim a global bound it does not have.
 - **Standard repo gate**: `npx @claude-flow/cli@latest security scan` after
   any change to signing, canonicalization, or verification code in either
   witness crate or the anchoring boundary.
@@ -128,7 +160,7 @@ cross-layer anchoring contract**, not a crate merge or dependency edge:
 
 - `ruvnet/rvm` (`rvm-witness`, unchanged internally)
 - `ruvnet/autogenous` (`witness` crate, unchanged internally)
-- `ruvnet/ruflo` (ADR-322C canonical encoding/signature scheme, ADR-381 statistics — consumed, not modified, by this ADR)
+- `ruvnet/ruflo` (ADR-322/322C canonical encoding/signature scheme — Accepted; PR #2956's sequential-evidence mechanism; ADR-381's stream-identity/epoch-reset governance — Proposed; all consumed, not modified, by this ADR)
 - `ruvnet/ruvector` (anchoring-boundary implementation, RVM witness consumer)
 
 ## Dependencies

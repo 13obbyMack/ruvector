@@ -3,7 +3,7 @@
 - **Status**: Proposed
 - **Date**: 2026-08-19
 - **Deciders**: RuV Perpetual Intelligence Runtime (PIR) Program
-- **Related**: ADR-305 (PIR, depends on); ADR-312 (PIR, shares verification stack); ADR-313 (PIR, downstream consumer); ruvector ADR-282 (research-gate); ruflo ADR-322/322A/322B/322C (flywheel integration); ruflo ADR-381 (sequential promotion evidence); dream-machine ADR-0001 (Accepted, engine v0.1.0 shipped); metaharness ADR-251 (Nightly Dream Cycle); see `docs/research/perpetual-intelligence-runtime/04-verification-addendum.md` §6
+- **Related**: ADR-305 (PIR, depends on); ADR-312 (PIR, shares verification stack); ADR-313 (PIR, downstream consumer); ruvector ADR-282 (research-gate); ruflo ADR-322/322A/322B/322C (flywheel integration, Accepted — verified against source); ruflo ADR-381 (Proposed — stream identity + budget-exhaustion recovery only, not the statistics; see Context); ruflo PR #2956 (the anytime-valid statistics mechanism itself); dream-machine ADR-0001 (Accepted, engine v0.1.0 shipped); metaharness `docs/dream-cycle/` (Nightly Dream Cycle — not an ADR; corrects "metaharness ADR-251," which does not exist); see `docs/research/perpetual-intelligence-runtime/04-verification-addendum.md` §6, §8
 - **Tags**: pir, dream-machine, promotion, evaluation, cross-repo
 
 ## Context
@@ -31,8 +31,15 @@ parent."* This ADR's premise changed twice during research for this program
    `@metaharness/flywheel`, `@metaharness/darwin`, `@metaharness/redblue`,
    the `metaharness` CLI, `ruvector`, and `agentdb` as optional/peer
    dependencies, and its own text names two prior instances it
-   **subsumes**: `ruvnet/ruflo`'s nightly dream cycle and metaharness
-   ADR-251 ("MetaHarness Nightly Dream Cycle").
+   **subsumes**: `ruvnet/ruflo`'s nightly dream cycle and, per its own
+   "Prior instances" line, "metaharness ADR-251 (MetaHarness Nightly Dream
+   Cycle)." **That second citation does not exist and this ADR does not
+   restate it as fact**: `ruvnet/metaharness`'s ADR series is 230 files
+   topping out at `ADR-250-sota-proof-ladder.md` — no ADR-251. Its Nightly
+   Dream Cycle material instead lives in `docs/dream-cycle/`
+   (`2026-08-13-gist.md`, `2026-08-14-gist.md`, `LEDGER.md`), not as an ADR.
+   The bad citation is inherited from dream-machine ADR-0001's own text,
+   noted here as its provenance rather than independently verified.
 
 **"Dream Machine" therefore now exists in four places**, and this program
 must name which is canonical for which layer rather than building a fifth:
@@ -41,15 +48,18 @@ must name which is canonical for which layer rather than building a fifth:
 |---|---|
 | Generalized, product-level evaluation engine (compile/ledger/witness/schedule/memory, CLI/TUI) | `ruvnet/dream-machine` ADR-0001 (Accepted, v0.1.0 shipped) |
 | Statistical significance + hard vetoes + signed replay bundles, already CI-wired inside `ruvector` | `ruvector` ADR-282 (`scripts/research-gate/`, `crates/ruvector-sota-bench/harness`) |
-| Evaluation↔promotion transaction model, separation of proposer vs. promotion authority | ruflo ADR-322A/322B (see ADR-305, ADR-313) |
-| Sequential/anytime-valid statistical evidence across adaptively-chosen candidates | ruflo ADR-381 (0.6% measured family-wise false-promotion rate over 1,000 simulated nulls) |
-| Earlier reference instances, now subsumed | `ruvnet/ruflo` nightly dream cycle; `ruvnet/metaharness` ADR-251 |
+| Evaluation↔promotion transaction model, separation of proposer vs. promotion authority | ruflo ADR-322/322A/322B (Accepted — implemented; see ADR-305, ADR-313) |
+| Sequential/anytime-valid statistical evidence across adaptively-chosen candidates | ruflo **PR #2956** (the mechanism: `α_k = α_total·6/(π²k²)`, 0.6% measured family-wise false-promotion rate over 1,000 simulated nulls, bound holds **per epoch**); ruflo **ADR-381** (Proposed — governs stream identity and budget-exhaustion recovery *over* that mechanism, not the statistics themselves) |
+| Earlier reference instances, now subsumed | `ruvnet/ruflo` nightly dream cycle; `ruvnet/metaharness` `docs/dream-cycle/` (not an ADR — see above) |
 
 **Version drift**: `ruvnet/dream-machine` composes `@metaharness/darwin`
 0.9.1 / `@metaharness/flywheel` 0.1.10; `ruvector` currently pins `darwin`
 0.8.0 / `flywheel` 0.1.7. This program's WP0b (MetaHarness
 dependency-compliance remediation) should account for this drift when it
-fixes the ADR-150 `optionalDependencies` non-compliance bug.
+fixes the `optionalDependencies` non-compliance documented in
+`METAHARNESS-README.md` (see ADR-313 for the corrected citation — the
+policy is attributed there to an upstream metaharness ADR-150 not present
+in either repo, not to `ruvector`'s own ADR-150, which is unrelated).
 
 ## Decision
 
@@ -72,17 +82,23 @@ core**, wired to `ruvector`'s already-CI-integrated statistical layer:
 4. The evaluation↔promotion transaction boundary follows ruflo ADR-322A/
    322B: an evaluation verdict is advisory input, never a promotion
    decision in itself.
-5. **ADR-0001's constitutional principle is adopted verbatim and is not
+5. **Dream-machine's constitutional principle is adopted and is not
    negotiable within this program: "Evaluation is not promotion — the
-   machine never merges; a human does."** Automated gates (research-gate's
-   statistics, dream-machine's ledger/witness pipeline, ruflo's promotion
-   transaction) may recommend promote/reject; only a human-authorized action
-   performs the final merge into an active policy or codebase. This
-   constrains the frozen-weights-and-governed-mutation loop this program
-   builds (ADR-313, ADR-315) — no PIR work package may wire an unattended
-   `/loop`-style auto-merge path, mirroring ADR-0001's own explicit
-   phase-3/4 gating of unattended promotion pending separate privilege,
-   spend, and rollout controls.
+   machine never merges; a human does."** This exact sentence is verbatim in
+   dream-machine's `README.md` (L19–20) and `packages/cli/README.md`, not in
+   ADR-0001 itself — ADR-0001 §2.4 states the same substance in its own
+   words: *"Evaluation is not promotion. The session never merges, never
+   self-promotes flywheel state…"* and *"Promotion is a human act."* This
+   ADR cites the README's phrasing because it is the more quotable form, and
+   attributes it to the repo rather than to ADR-0001 specifically. Automated
+   gates (research-gate's statistics, dream-machine's ledger/witness
+   pipeline, ruflo's promotion transaction) may recommend promote/reject;
+   only a human-authorized action performs the final merge into an active
+   policy or codebase. This constrains the frozen-weights-and-governed-mutation
+   loop this program builds (ADR-313, ADR-315) — no PIR work package may
+   wire an unattended `/loop`-style auto-merge path, mirroring ADR-0001's
+   own explicit phase-3/4 gating of unattended promotion pending separate
+   privilege, spend, and rollout controls.
 
 ## Consequences
 
@@ -91,9 +107,11 @@ core**, wired to `ruvector`'s already-CI-integrated statistical layer:
 - Converts what was the program's single largest identified risk (building
   a promotion-evaluation system from nothing) into a consolidation task
   across four already-Accepted-or-implemented pieces of prior art.
-- Inherits ruflo ADR-381's measured statistical guarantee (0.6% family-wise
-  false-promotion rate) instead of needing to re-derive or re-validate a
-  sequential-testing scheme from scratch.
+- Inherits ruflo PR #2956's measured statistical guarantee (0.6% family-wise
+  false-promotion rate, per epoch) instead of needing to re-derive or
+  re-validate a sequential-testing scheme from scratch; ADR-381 (Proposed)
+  layers stream-identity and budget-recovery governance on top of that
+  already-implemented mechanism.
 - The "evaluation is not promotion, a human merges" principle gives
   invariant 5 a hard human-in-the-loop backstop, directly addressing the
   acceptance test's "zero unapproved capability expansion" requirement
@@ -102,7 +120,7 @@ core**, wired to `ruvector`'s already-CI-integrated statistical layer:
 ### Negative
 
 - Four separate prior instances (dream-machine, ruflo dream cycle,
-  metaharness ADR-251, ruvector research-gate) must be reconciled into one
+  metaharness `docs/dream-cycle/`, ruvector research-gate) must be reconciled into one
   coherent pipeline for this program; no repo checked by this program's
   research passes has published that reconciliation yet — it is WP1/WP2's
   deliverable, not a pre-existing fact this ADR can cite.
@@ -138,8 +156,8 @@ core**, wired to `ruvector`'s already-CI-integrated statistical layer:
 
 - `ruvnet/dream-machine` (adopted engine, external dependency)
 - `ruvnet/ruvector` (`scripts/research-gate/`, `crates/ruvector-sota-bench/harness`, ADR-282; SONA dream-replay)
-- `ruvnet/ruflo` (ADR-322A/322B transaction model, ADR-381 statistics)
-- `ruvnet/metaharness` (ADR-251, prior reference instance)
+- `ruvnet/ruflo` (ADR-322/322A/322B transaction model — Accepted, verified verbatim against source; PR #2956 — the sequential-statistics mechanism; ADR-381 — Proposed, stream-identity/budget-recovery governance only)
+- `ruvnet/metaharness` (`docs/dream-cycle/`, prior reference instance — not an ADR)
 
 ## Dependencies
 

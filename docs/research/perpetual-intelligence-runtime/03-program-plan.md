@@ -4,7 +4,12 @@ Status: draft for ADR seeding, swarm work-package assignment, and GitHub issue f
 
 **Revision note**: the second inventory pass materially changed two things worth knowing before reading the rest of this plan. First, "Dream Machine" is *not* a from-scratch build — real, CI-wired, cryptographically-signed statistical promotion machinery already exists (`scripts/research-gate/`, `crates/ruvector-sota-bench/harness`, ADR-282) and should be adopted/renamed, not reinvented; this meaningfully de-risks what was previously flagged as the top program risk. Second, ADR numbering in this repo is not the "ADR-001 through ADR-118" stated in the root `CLAUDE.md` — the true count is 283 files with duplicated numbers up to ADR-304 (see asset map §6 of the cross-cutting notes) — every new ADR in this program must be numbered above 304.
 
-## Governing invariants (carried from the brief, unchanged)
+## Governing invariants
+
+Invariants 1–6 are carried from the brief, unchanged. Invariant 7 was added
+during ADR authoring (PR #847, ADR-305), adopted from ruflo ADR-322B's
+proposer/promotion separation-of-powers rule — see ADR-305 for the source
+citation.
 
 1. Every observation may change memory.
 2. Every memory change is transactional.
@@ -12,6 +17,9 @@ Status: draft for ADR seeding, swarm work-package assignment, and GitHub issue f
 4. Every behavioral mutation is tested.
 5. Every promoted mutation must outperform its parent.
 6. Every physical action produces new evidence.
+7. A proposer produces untrusted candidates only; it cannot issue promotion
+   decisions or mutate active policy (adopted from ruflo ADR-322B, binding
+   on ADR-306, ADR-313, ADR-315).
 
 Risk control: Darwin proposes, RVM gates what can change, Dream Machine requires statistically credible improvement before promotion.
 
@@ -39,7 +47,19 @@ Build **1 + 2 + 3** (self-evolving physical intelligence, persistent transaction
 
 Numbers are placeholders — assign real numbers **above ADR-304** via `ruflo-adr:adr-create` at kickoff (the repo's true max, not the stale "ADR-118" in root `CLAUDE.md` — see asset map §6), and confirm against both `ruvector`'s and `LatentMesh`'s ADR sequences before merging (see asset map note on ADR-103 ambiguity). ADR-create should also register each new ADR in `ruflo-adr:adr-index` immediately to avoid adding to the duplicate-number problem it's meant to fix.
 
-0. **ADR — ADR numbering hygiene remediation.** Decision: run a one-time audit + fix pass over `docs/adr/` to resolve the ~15+ duplicate ADR numbers found (ADR-272 ×5, ADR-264/252/194/144/040 ×3 each, ~12 more ×2), by renumbering the later-created duplicate in each collision to the next free number above 304 and updating all in-repo references (code comments, other ADRs, tool descriptions like `ruflo-core:witness`'s ADR-103 citation) to match. This is process hygiene, not glamorous, but every ADR this program creates depends on the numbering space being trustworthy.
+**This list has eleven ADRs (1–11 below); the two work packages below numbered
+WP0a and WP0b are process/bug-fix work with no corresponding ADR** — they
+were mistakenly written as "ADR — …" entries in an earlier draft of this
+plan, which claimed thirteen ADRs against the eleven PR #847 actually
+shipped (ADR-305 through ADR-315). Reworded here as work-package-only items
+so this plan and the shipped ADR set agree:
+
+- **WP0a — ADR numbering hygiene remediation** (no ADR). Audit + fix pass
+  over `docs/adr/` to resolve the ~15+ duplicate ADR numbers found (ADR-272
+  ×5, ADR-264/252/194/144/040 ×3 each, ~12 more ×2), by renumbering the
+  later-created duplicate in each collision to the next free number above
+  304 and updating all in-repo references to match. Process hygiene,
+  tracked as a separate issue, not a PIR ADR.
 
 1. **ADR — Adopt LatentMesh ADR-009 as the Perpetual Intelligence Runtime's control-loop spine.** Decision: rather than defining a new cross-mechanism architecture, this program formally adopts the `execute → transfer → causal audit → measure → update authority → persist → evolve topology` loop from LatentMesh ADR-009, and commits to closing the specific gap that ADR names ("statistical primitive and admission gate implemented; closed loop across live components not wired"). Coordination channel opened with LatentMesh maintainers before any conflicting ADR numbers are assigned.
 
@@ -63,7 +83,25 @@ Numbers are placeholders — assign real numbers **above ADR-304** via `ruflo-ad
 
 11. **ADR — Governance constitution for capability expansion.** Decision: adopt `autogenous`'s constitution/admission-gate pattern as the enforcement point for "zero unapproved capability expansion" (acceptance-test requirement); every mutation that would expand an agent's capability set (new tool access, new physical action class, new communication peer) requires explicit constitutional approval logged to the witness chain, distinct from ordinary behavioral mutation promotion. Note `autogenous`'s own README self-labels it "research prototype" status — treat its APIs as unstable and budget time for API churn, don't assume production-grade stability.
 
-12. **ADR — MetaHarness dependency-compliance remediation.** Decision: fix the confirmed bug where `crates/ruvector-sota-bench/harness`'s nine `@metaharness/*` npm dependencies are declared as plain (hard) dependencies while `METAHARNESS-README.md` claims ADR-150 `optionalDependencies` compliance — either make them genuinely optional per the documented policy, or correct the documentation to state the real (hard-dependency) install requirement. Also track and fix the known HTTP-307 redirect bug in `ruvllm`'s model-download path that currently blocks live-serve end-to-end testing of Darwin's local mutator backend (ADR-259).
+- **WP0b — MetaHarness dependency-compliance remediation** (no ADR). Fix the
+  confirmed bug where `crates/ruvector-sota-bench/harness`'s nine
+  `@metaharness/*` npm dependencies are declared as plain (hard)
+  dependencies while `METAHARNESS-README.md` claims `optionalDependencies`
+  compliance, attributed there to "**ADR-150**: MetaHarness Integration
+  Surfaces (**upstream**)" — a document neither the `ruvector` nor the
+  `metaharness` clone contains (`ruvector`'s own ADR-150 is
+  `pi-brain-ruvltra-tailscale`, unrelated; `metaharness`'s own ADR-150 is
+  `tailscale-local-frontier-concurrent-benchmarks`, also unrelated). Fix the
+  bug directly — make the nine packages genuinely optional per the
+  documented policy, or correct the documentation to state the real
+  (hard-dependency) install requirement — rather than repeating the
+  dangling citation. **The previously-tracked HTTP-307 redirect bug in
+  `ruvllm`'s model-download path is already fixed on `main`** (commit
+  `946275a61`, PR #590, 2026-06-18); it is not part of this work package.
+  Verifying that fix surfaced the actual remaining download blocker: a GGUF
+  glob/alias bug in `ruvllm-cli`'s `get_files_to_download()`
+  (`download.rs:193`'s glob pattern, `models.rs:65`'s alias resolution),
+  which this work package tracks and fixes instead.
 
 ---
 
@@ -72,7 +110,7 @@ Numbers are placeholders — assign real numbers **above ADR-304** via `ruflo-ad
 | # | Package | Bounded context | Team composition | Depends on |
 |---|---|---|---|---|
 | WP0a | ADR numbering hygiene remediation | Governance | coordinator, adr-architect | — |
-| WP0b | MetaHarness dependency-compliance + ruvllm HTTP-307 fix | Physical Skill Evolution | coordinator, backend-dev, tester | — |
+| WP0b | MetaHarness dependency-compliance + ruvllm-cli GGUF glob/alias fix | Physical Skill Evolution | coordinator, backend-dev, tester | — |
 | WP1 | LatentMesh coordination & ADR alignment | Governance | coordinator, adr-architect, system-architect | WP0a |
 | WP2 | Adopt research-gate/sota-bench as Dream Machine; wire to Darwin | World Verification | coordinator, system-architect, coder ×2, tester | WP1 |
 | WP3 | Three-level memory tiers on RuVector (LiveMem + TARL ledger on top of existing proof-gated writes) | Persistent Memory Governance | coordinator, backend-dev, memory-specialist, tester | WP1 |
@@ -140,7 +178,7 @@ Use `hierarchical` topology, `max-agents 8`, `specialized` strategy per project 
 1. **Cross-repo coordination overhead, not Dream Machine, is now the top risk.** Four of the seven bounded contexts depend on sibling repos (`LatentMesh`, `rvm`, `autogenous`, `RuView`) maintained outside this program's direct control — LatentMesh's own ADR-009 shows its maintainers are still actively revising scope (twice in one day, per its own text), `autogenous` self-labels "research prototype," and `ruvector` has zero existing wiring to either LatentMesh or Autogenous today. This program's timeline is exposed to their churn and to genuinely new (not integration) engineering effort on the `ruvector` side. *(Dream Machine was the top risk in the first pass of this plan — the second inventory pass found real, CI-wired promotion machinery already exists under `research-gate`/`ruvector-sota-bench`, which downgrades that specific risk substantially.)*
 2. **Two of eight founding claims are unverified, and one previously-"external" component (LATTE) turns out to have zero prior art anywhere.** Treating WP7 (quarantine) and WP14 (universal CSI vocabulary) as "implement the paper" instead of "build it for the first time" will produce schedule and credibility risk if that distinction gets lost downstream (e.g., in an ADR that cites "LATTE" as if it were a real paper).
 3. **ADR numbering hygiene is worse than expected and could actively cause confusion mid-program.** 283 files, true max ADR-304, with ~15+ genuine duplicate numbers (one number reused 5 times). If WP0a isn't run early, this program's own new ADRs risk colliding with existing (possibly still-duplicate) numbers, and cross-references to "ADR-X" throughout this plan and the asset map need the reader to know which of several same-numbered documents is meant.
-4. **Two real dependency/compliance bugs are already blocking parts of the pipeline this program needs.** The MetaHarness `optionalDependencies` non-compliance (hard dependency on nine `@metaharness/*` packages) and the `ruvllm` HTTP-307 download bug (blocks Darwin's local-mutator live-serve e2e testing) are both concrete, small, already-known issues — cheap to fix (WP0b) but currently unfixed, and WP9 (the SHAPER-pattern evolution loop, arguably the program's centerpiece) depends on both being resolved first.
+4. **A real dependency/compliance bug is already blocking part of the pipeline this program needs.** The MetaHarness `optionalDependencies` non-compliance (hard dependency on nine `@metaharness/*` packages) and the `ruvllm-cli` GGUF glob/alias bug in `get_files_to_download()` (blocks Darwin's local-mutator live-serve e2e testing) are concrete, small, already-known issues — cheap to fix (WP0b) but currently unfixed, and WP9 (the SHAPER-pattern evolution loop, arguably the program's centerpiece) depends on both being resolved first. (A third bug this plan previously tracked here, an HTTP-307 redirect in `ruvllm`'s model-download path, is already fixed on `main` — commit `946275a61`, PR #590, 2026-06-18 — and is not part of WP0b's remaining scope.)
 
 ---
 
@@ -169,10 +207,10 @@ Each epic body: one paragraph linking to `docs/research/perpetual-intelligence-r
 - Title: `[PIR][WP0a] Resolve duplicate ADR numbers in docs/adr/ (ADR-272 ×5, ADR-264/252/194/144/040 ×3, ~12 more ×2)`
 - Body — Goal: audit `docs/adr/` and resolve every duplicate ADR number by renumbering the later-created file in each collision to the next free number above the true max (currently ADR-304), updating all in-repo references. Acceptance criteria: `ruflo-adr:adr-index` reports zero duplicate numbers; every renumbered ADR's old-number references (code comments, other ADRs, MCP tool descriptions) are updated; a CI check is added that fails on future duplicate ADR numbers. Dependencies: none — do this first, it blocks every other ADR this program creates.
 
-**WP0b — MetaHarness dependency compliance + ruvllm HTTP-307 fix**
+**WP0b — MetaHarness dependency compliance + ruvllm-cli GGUF glob/alias fix**
 - Repo: `ruvnet/ruvector`. Labels: `pir`, `phase-0`.
-- Title: `[PIR][WP0b] Fix MetaHarness optionalDependencies non-compliance and ruvllm HTTP-307 download bug`
-- Body — Goal: (1) make the nine `@metaharness/*` packages in `crates/ruvector-sota-bench/harness` genuinely optional per ADR-150's documented policy, or correct `METAHARNESS-README.md` to state the real hard-dependency requirement; (2) fix the HTTP-307 redirect bug in `ruvllm`'s model-download path blocking Darwin's local-mutator live-serve e2e tests (ADR-259). Acceptance criteria: `npm install` succeeds without the `@metaharness/*` packages present (if made optional) or documentation matches reality (if not); `ruvllm`-backed Darwin mutator passes a live-serve end-to-end test. Dependencies: none. **Blocks WP9.**
+- Title: `[PIR][WP0b] Fix MetaHarness optionalDependencies non-compliance and ruvllm-cli GGUF glob/alias bug`
+- Body — Goal: (1) make the nine `@metaharness/*` packages in `crates/ruvector-sota-bench/harness` genuinely optional per `METAHARNESS-README.md`'s documented policy (attributed there to an upstream metaharness ADR-150 not present in either repo — unverified; do not cite a `ruvector` or `metaharness` ADR-150, both of which are unrelated documents), or correct the documentation to state the real hard-dependency requirement; (2) fix the GGUF glob/alias mismatch in `ruvllm-cli`'s `get_files_to_download()` (`download.rs:193`, `models.rs:65`) blocking Darwin's local-mutator live-serve e2e tests (ADR-259). Note: the HTTP-307 redirect bug this issue previously also tracked is already fixed on `main` (commit `946275a61`, PR #590, 2026-06-18) and is out of scope here. Acceptance criteria: `npm install` succeeds without the `@metaharness/*` packages present (if made optional) or documentation matches reality (if not); `ruvllm`-backed Darwin mutator passes a live-serve end-to-end test. Dependencies: none. **Blocks WP9.**
 
 **WP1 — LatentMesh coordination & ADR alignment**
 - Repo: `ruvnet/ruvector` (primary) + linked issue in `ruvnet/LatentMesh`. Labels: `pir`, `adr`, `cross-repo`, `phase-0`.

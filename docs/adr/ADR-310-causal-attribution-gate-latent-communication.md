@@ -3,7 +3,7 @@
 - **Status**: Proposed
 - **Date**: 2026-08-19
 - **Deciders**: RuV Perpetual Intelligence Runtime (PIR) Program
-- **Related**: ADR-309 (PIR, depends on); ADR-311 (PIR, downstream consumer); ruflo ADR-381 (sequential promotion evidence)
+- **Related**: ADR-309 (PIR, depends on); ADR-311 (PIR, downstream consumer); ruflo PR #2956 (anytime-valid sequential-evidence mechanism); ruflo ADR-381 (Proposed — stream identity + budget-exhaustion recovery over that mechanism)
 - **Tags**: pir, causal-audit, ci-gate, latent-communication, security
 
 ## Context
@@ -47,10 +47,18 @@ claims can justify further rollout. Concretely:
    with a control (unrelated or null) payload and confirm the receiving
    agent's behavior changes accordingly when the real payload is restored.
 3. Statistical claims produced by this gate (e.g. "the latent channel's
-   effect on receiver behavior is significant") follow ruflo ADR-381's
-   anytime-valid sequential-evidence scheme when the gate runs repeatedly
-   across many PRs over time, rather than treating each PR's audit as an
-   independent, uncorrected significance test.
+   effect on receiver behavior is significant") follow ruflo PR #2956's
+   anytime-valid e-process scheme (`α_k = α_total·6/(π²k²)` per-test
+   allocation, so `Σα_k = α_total` holds across arbitrarily many
+   adaptively-chosen PRs) when the gate runs repeatedly over time, rather
+   than treating each PR's audit as an independent, uncorrected significance
+   test. Ruflo ADR-381 (Proposed) is the governance layer over that
+   mechanism — per-project stream identity and an audited,
+   `confirm: true`-gated evidence-epoch reset for budget exhaustion. **The
+   false-promotion bound this composition provides is per-epoch, not
+   global**: after a reset, the guarantee is family-wise false-promotion
+   probability ≤ `α_total` for that epoch, and this gate's own statistical
+   claims must be stated the same way.
 4. A CI failure on this gate blocks merge; it does not merely warn.
 
 ## Consequences
@@ -63,10 +71,10 @@ claims can justify further rollout. Concretely:
   after a later change would otherwise go undetected.
 - Reuses a peer-reviewed, grade-A methodology instead of inventing an
   in-house causal-attribution test from scratch.
-- Composing with ruflo ADR-381's sequential-evidence scheme keeps the gate's
-  statistical claims sound even as it runs many times over the program's
-  lifetime, rather than accumulating false-positive risk across repeated
-  single tests.
+- Composing with ruflo PR #2956's sequential-evidence scheme (governed by
+  ADR-381) keeps the gate's statistical claims sound, per epoch, even as it
+  runs many times over the program's lifetime, rather than accumulating
+  false-positive risk across repeated single tests.
 
 ### Negative
 
@@ -90,8 +98,9 @@ claims can justify further rollout. Concretely:
   the audit history for any given latent-channel change is queryable
   end-to-end.
 - **Sequential-evidence discipline**: statistical claims from repeated gate
-  runs follow ruflo ADR-381's scheme rather than compounding uncorrected
-  significance tests.
+  runs follow ruflo PR #2956's e-process scheme (governed by ADR-381) rather
+  than compounding uncorrected significance tests, and are stated as
+  per-epoch bounds, not global ones.
 
 ## Affected Repos
 

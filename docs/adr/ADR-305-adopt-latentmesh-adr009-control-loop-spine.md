@@ -94,13 +94,23 @@ ruflo ADR-322 has a directly load-bearing implementation detail for this
 program: its child ADR-322B states, verbatim, *"A proposer produces
 untrusted candidates only. It cannot issue promotion decisions or mutate
 active policy."* This is the same separation-of-powers boundary autogenous
-ADR-401 admits it has not yet fully closed (capability 5: `Promote = Better
-∧ Safe ∧ Authorized ∧ Reversible` is "not yet one checked predicate"). ruflo
-ADR-322A already implements it as one atomic transaction
-(`promoteFlywheelCandidate` as sole promotion authority, verified under 100
-concurrent promotion attempts producing exactly one commit). This program
+ADR-401's capability-5 table row describes as "not yet one checked
+predicate" — **but that row is stale relative to ADR-401's own Decision
+section.** ADR-401's **Update 1 §3, "Converge the promotion invariant to one
+predicate," is marked DONE**: `mesh-evolve.ts` exports
+`promoteAuthorized(candidate, champion, { authorized, reversible }) →
+PromotionDecision`, the single gate `Promote = Better ∧ Safe ∧ Authorized ∧
+Reversible`, with each conjunct independently blocking and
+`evolveMesh` routing every promotion through it — proven by
+`test/promote-authorized.test.ts` (all-four promotes; any three-of-four does
+not). This program cites the Decision section, not the stale capability
+table, as ADR-401's authoritative status on this point (see ADR-315 for the
+corrected scope this implies). ruflo ADR-322A independently implements the
+same separation as one atomic transaction (`promoteFlywheelCandidate` as
+sole promotion authority, verified under 100 concurrent promotion attempts
+producing exactly one commit). This program
 adopts that separation-of-powers invariant as a **governing invariant**,
-alongside the six carried from the original brief (see Decision §2 below).
+alongside the six carried from the original brief (see Decision §3 below).
 
 **This changes the decision below**: LatentMesh ADR-009 is a *proposed,
 unwired, ~1.4K-LOC integration contract*. Autogenous ADR-400/401 are
@@ -158,12 +168,30 @@ levels:
 5. The program's committed first work package (WP1) is, before any other PIR
    work starts: (a) read autogenous ADR-401 in full and produce the
    explicit adopt/diverge decision required above, (b) confirm LatentMesh
-   ADR-009's loop against source (done — see Verification note), and (c)
-   read ruflo ADR-322/322A/322B/322C in full and confirm its
-   separation-of-powers invariant is correctly adopted by every PIR ADR that
-   defines a promotion mechanism (done for citation purposes here; binding
-   confirmation against source is WP1's responsibility, mirroring the
-   LatentMesh verification pattern above).
+   ADR-009's loop against source (done — see Verification note), (c)
+   confirm ruflo ADR-322/322A/322B/322C against source (**done**: cloned
+   directly, HEAD `fa13ee4`, 2026-08-15; the separation-of-powers quote,
+   the 322C canonical-encoding/signature stack including its three signing
+   domains, and the evidence-grading vocabulary all check out verbatim —
+   see `04-verification-addendum.md` §8), and (d) apply the **fix-history
+   verification rule** below to every remaining inherited claim this
+   program has not yet independently checked.
+6. **Fix-history verification rule (added after PR #847 review)**: an
+   inherited "known bug," "gap," or "not yet implemented" claim from any
+   source document — the program brief, an upstream ADR, or a prior research
+   pass in this program itself — must be checked against that path's actual
+   fix history (`git log` on the named file/module, the owning repo's
+   release notes or merged PRs) before being repeated in a PIR ADR. It is
+   not sufficient that the asserting document's prose says the bug is open.
+   This rule exists because all three of this ADR set's blocking review
+   findings (ADR-401's promotion predicate, the "metaharness ADR-251"
+   citation, and the ADR-150 misattribution — see ADR-315, ADR-306, ADR-313)
+   shared the same root cause: a claim was carried forward from an upstream
+   document without checking whether upstream's own state had since moved
+   past it, or whether the citation resolved to a real document at all. The
+   `ruvllm` HTTP-307 bug ADR-313 originally cited as open (later found
+   already fixed on `main`, commit `946275a61`) is the concrete instance
+   that surfaced this pattern.
 
 ## Consequences
 

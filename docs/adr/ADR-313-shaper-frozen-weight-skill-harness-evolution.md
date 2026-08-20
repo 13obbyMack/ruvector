@@ -3,7 +3,7 @@
 - **Status**: Proposed
 - **Date**: 2026-08-19
 - **Deciders**: RuV Perpetual Intelligence Runtime (PIR) Program
-- **Related**: ADR-306 (PIR, depends on); ADR-308 (PIR, downstream consumer); ADR-305 (PIR, separation-of-powers invariant); ruvector ADR-150 (optionalDependencies policy); ruvector ADR-259 (ruvllm mutator backend); ruvector ADR-271 (darwin_guard); ruflo ADR-322B (proposer/promotion separation)
+- **Related**: ADR-306 (PIR, depends on); ADR-308 (PIR, downstream consumer); ADR-305 (PIR, separation-of-powers invariant); `METAHARNESS-README.md`'s documented integration invariant (attributed to an upstream metaharness ADR-150 not present in either repo — unverified; see Context); ruvector ADR-259 (ruvllm mutator backend); ruvector ADR-271 (darwin_guard); ruflo ADR-322/322A/322B (proposer/promotion separation, Accepted — verified verbatim against source)
 - **Tags**: pir, shaper, darwin, frozen-weights, evolution
 
 ## Context
@@ -30,16 +30,37 @@ mutate (seven approved surfaces via `CodeGenerator`, e.g. `OpenRouterMutator`,
 `RuvllmMutator`) → sandbox → 6-term score → archive-as-tree → repeat.
 `ruvllm` is a real, wired local mutator backend (ruvector ADR-259).
 
-**Two concrete, already-identified bugs block this work package** and must
+**One concrete, already-identified bug blocks this work package** and must
 be fixed first (program plan WP0b), not discovered mid-implementation:
 
-1. `METAHARNESS-README.md` claims ruvector ADR-150 `optionalDependencies`
-   compliance, but the nine `@metaharness/*` packages in
-   `crates/ruvector-sota-bench/harness` are plain (hard) dependencies — the
-   harness currently hard-fails to install without them, contradicting its
-   own documented policy.
-2. A known HTTP-307 redirect bug in `ruvllm`'s model-download path blocks
-   end-to-end live-serve testing of the mutator backend.
+1. `METAHARNESS-README.md` claims `optionalDependencies` compliance,
+   attributing the policy to "**ADR-150**: MetaHarness Integration Surfaces
+   (**upstream**)." **That attribution does not resolve to a real document
+   in either repo**: `ruvector`'s own ADR-150 is
+   `ADR-150-pi-brain-ruvltra-tailscale.md` ("π Brain + RuvLtra via Tailscale
+   — Semantic Embedding Upgrade") — unrelated; `metaharness`'s own ADR-150
+   is `ADR-150-tailscale-local-frontier-concurrent-benchmarks.md` — also
+   unrelated. `METAHARNESS-README.md` labels its source "upstream," meaning
+   a document neither clone contains. This ADR cites the bug directly rather
+   than repeating the dangling number: the nine `@metaharness/*` packages in
+   `crates/ruvector-sota-bench/harness` are plain (hard) dependencies,
+   contradicting `METAHARNESS-README.md`'s own documented
+   `optionalDependencies` policy — the harness currently hard-fails to
+   install without them.
+
+**A second bug this ADR previously cited — an HTTP-307 redirect bug in
+`ruvllm`'s model-download path — is already fixed on `main`** (commit
+`946275a61`, PR #590, 2026-06-18). This ADR no longer treats it as a
+blocker. Verifying that fix surfaced the actual remaining download blocker:
+a **GGUF glob/alias bug in `ruvllm-cli`'s `get_files_to_download()`**
+(`download.rs:193`'s glob pattern and `models.rs:65`'s alias resolution
+disagree on which files a given model alias should pull), which still
+blocks reliable end-to-end live-serve testing of the mutator backend. This
+correction is itself an instance of the verification discipline ADR-305 now
+states as a program-wide rule: an inherited "known bug" claim must be
+checked against fix history (`git log` on the named path, upstream release
+notes) before being repeated in a new ADR, not trusted from the asserting
+document's prose alone.
 
 ## Decision
 
@@ -57,16 +78,23 @@ weights frozen throughout, following SHAPER's pattern (arXiv:2608.11350):
    verification requirement (day-30 re-hash must be bit-identical to day 0).
 3. Darwin's mutation proposals are exactly that — proposals. Per ruflo
    ADR-322B's separation-of-powers invariant, adopted as a governing
-   invariant in ADR-305: *"a proposer produces untrusted candidates only; it
-   cannot issue promotion decisions or mutate active policy."* Darwin's
-   mutation surfaces never gain promotion authority; every proposal routes
+   invariant in ADR-305, quoted here verbatim against source (confirmed
+   `ADR-322B-darwin-proposer-adapter.md` line 10): *"A proposer produces
+   untrusted candidates only. It cannot issue promotion decisions or mutate
+   active policy."* ADR-322 line 15 reinforces the same point from the
+   Darwin-adapter side: *"Darwin adapters remain candidate generators and
+   never gain promotion authority."* Darwin's mutation surfaces in this
+   program never gain promotion authority either; every proposal routes
    through ADR-306's adopted evaluation pipeline before any change to active
    policy.
-4. WP0b's two blocking bugs are fixed before this work package's live-serve
-   testing begins: the ADR-150 `optionalDependencies` non-compliance (make
-   the nine `@metaharness/*` packages genuinely optional, or correct the
-   documentation to state the real hard-dependency requirement) and the
-   `ruvllm` HTTP-307 redirect bug in the model-download path.
+4. WP0b's remaining blocking bug is fixed before this work package's
+   live-serve testing begins: the `optionalDependencies` non-compliance
+   (make the nine `@metaharness/*` packages genuinely optional, or correct
+   `METAHARNESS-README.md` to state the real hard-dependency requirement)
+   and the `ruvllm-cli` GGUF glob/alias bug in `get_files_to_download()`
+   (`download.rs:193`, `models.rs:65`). The previously-cited HTTP-307
+   redirect bug is not part of this gate — it shipped fixed on `main` before
+   this ADR was written.
 
 ## Consequences
 
@@ -84,9 +112,12 @@ weights frozen throughout, following SHAPER's pattern (arXiv:2608.11350):
 
 ### Negative
 
-- This work package cannot start live-serve testing until WP0b's two bugs
-  are fixed — an explicit, tracked blocking dependency, not a soft
-  preference.
+- This work package cannot start live-serve testing until WP0b's remaining
+  bug (the GGUF glob/alias mismatch) is fixed — an explicit, tracked
+  blocking dependency, not a soft preference. The HTTP-307 bug this ADR
+  originally also gated on turned out to already be fixed on `main`,
+  illustrating why every inherited bug claim needs a fix-history check
+  before it is repeated (see ADR-305).
 - Darwin currently exists as an external npm dependency
   (`@metaharness/darwin`) called from three sites, not a first-class
   in-repo asset; this ADR does not itself resolve that architectural
@@ -108,8 +139,9 @@ weights frozen throughout, following SHAPER's pattern (arXiv:2608.11350):
 - **Proof-gated promotion**: every mutation still passes through
   `ruvector-proof-gate`/`rvm-proof` regardless of SHAPER-pattern compliance.
 - **WP0b blocking gate**: this work package's live-serve acceptance criteria
-  cannot be claimed complete while either the ADR-150 compliance bug or the
-  ruvllm HTTP-307 bug remains open.
+  cannot be claimed complete while either the `optionalDependencies`
+  compliance bug or the `ruvllm-cli` GGUF glob/alias bug
+  (`get_files_to_download()`) remains open.
 
 ## Affected Repos
 
@@ -129,7 +161,7 @@ produces.
   can't handle**: rejected — this directly contradicts the acceptance test's
   central constraint and SHAPER's own pattern; any capability gap should be
   addressed via richer harness/skill mutation surfaces, not weight updates.
-- **Defer fixing WP0b's two bugs until they actually block a specific
-  task**: rejected — both are already identified, small, and cheap to fix;
-  deferring them guarantees they surface mid-implementation of this ADR's
+- **Defer fixing WP0b's remaining bug until it actually blocks a specific
+  task**: rejected — it is already identified, small, and cheap to fix;
+  deferring it guarantees it surfaces mid-implementation of this ADR's
   higher-priority work instead of being resolved ahead of time.
