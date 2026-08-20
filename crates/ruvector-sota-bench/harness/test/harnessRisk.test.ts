@@ -14,6 +14,7 @@ import {
 } from "../src/harnessRisk.js";
 import { composeVetoProviders, type VetoContext } from "../src/vetoes.js";
 import {
+  assertNoCaseIdCollisions,
   EXPECTED_UPSTREAM_CASE_COUNT,
   FIRST_PARTY_EXAMPLE_CASES,
   fetchHarnessRiskCases,
@@ -259,6 +260,41 @@ test("parseHarnessRiskRow confines case_id to a safe filename charset (path-trav
   for (const good of ["setup_001", "action_016", "case.v2-final_A1", "memory_fp001"]) {
     assert.equal(parseHarnessRiskRow(row(good)).caseId, good);
   }
+});
+
+test("assertNoCaseIdCollisions rejects case-only-distinct ids and passes distinct-ignoring-case ids", () => {
+  // "setup_1" and "Setup_1" resolve to the same setup_1.state.json on a
+  // case-insensitive FS (macOS/Windows) — must be rejected at load time.
+  assert.throws(
+    () => assertNoCaseIdCollisions([{ caseId: "setup_1" }, { caseId: "Setup_1" }]),
+    /case_id collision.*case-insensitive/s,
+  );
+  // Ids that remain distinct once lowercased are fine.
+  assert.doesNotThrow(() =>
+    assertNoCaseIdCollisions([{ caseId: "setup_1" }, { caseId: "setup_2" }, { caseId: "Setup_3" }]),
+  );
+  // The shipped first-party example set is collision-free.
+  assert.doesNotThrow(() => assertNoCaseIdCollisions(FIRST_PARTY_EXAMPLE_CASES));
+});
+
+test("fetchHarnessRiskCases rejects a loaded set whose ids collide ignoring case", async () => {
+  const row = (case_id: string) => ({
+    case_id,
+    title: case_id,
+    phase: "setup_configuration",
+    user_messages: ["do the task"],
+  });
+  // A single page carrying two case-only-distinct ids — the loader must refuse
+  // the set rather than hand back two cases that share one state file.
+  const collidingFetch = ((url: string) => {
+    const offset = Number(new URL(url).searchParams.get("offset"));
+    const rows = offset === 0 ? [{ row: row("setup_1") }, { row: row("Setup_1") }] : [];
+    return Promise.resolve(new Response(JSON.stringify({ num_rows_total: 2, rows })));
+  }) as typeof fetch;
+  await assert.rejects(
+    fetchHarnessRiskCases({ fetchImpl: collidingFetch, requireFullCaseSet: false }),
+    /case_id collision/,
+  );
 });
 
 test("runtime loader pages through the dataset and refuses a partial baseline", async () => {
