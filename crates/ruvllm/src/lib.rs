@@ -130,6 +130,8 @@ pub mod hub;
 pub mod intelligence;
 pub mod kernels;
 pub mod kv_cache;
+#[cfg(feature = "kv-migration")]
+pub mod kv_migration;
 pub mod lora;
 pub mod memory_pool;
 #[cfg(all(target_os = "macos", feature = "metal-compute"))]

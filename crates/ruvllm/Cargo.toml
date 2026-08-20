@@ -134,6 +134,11 @@ wasm-simd = []
 # Quantization support (requires platform-specific SIMD)
 quantize = []
 
+# Cross-model KV-cache migration: closed-form linear mapper + transfer-quality
+# gate (arXiv:2608.03893, PIR WP13, ADR-314). Default-OFF so it cannot affect
+# existing builds.
+kv-migration = []
+
 # P5 Optimization: Optional routing metrics collection
 # Disable for production to avoid Instant::now() syscall overhead (~0.04-0.08µs)
 routing-metrics = []
