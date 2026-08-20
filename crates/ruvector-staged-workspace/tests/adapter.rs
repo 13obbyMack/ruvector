@@ -210,6 +210,62 @@ fn multi_artifact_commit_orders_workspace_hash_by_id() {
 }
 
 #[test]
+fn empty_artifacts_commit_returns_workspace_hash_over_current_heads() {
+    let state = StateFile::new("empty-commit");
+    let hash_of = |o: &AdapterOutcome| match &o.response {
+        AdapterResponse::CommitOk {
+            artifacts,
+            workspace_hash,
+            ..
+        } => (artifacts.len(), workspace_hash.clone()),
+        other => panic!("expected CommitOk, got {other:?}"),
+    };
+    // Fresh state, zero artifacts: valid — WP15's first-party cases can
+    // carry no seed files. workspace_hash is the hash over zero heads.
+    let out = handle_raw(&commit_request(state.path(), &[]));
+    assert_eq!(out.exit_code, 0);
+    assert_eq!(hash_of(&out), (0, ContentHash::of(b"").to_hex()));
+    // After a real commit, an empty commit reports the hash over the
+    // existing heads without mutating anything.
+    handle_raw(&commit_request(state.path(), &[("doc.md", ABC_B64)]));
+    let before = handle_raw(&commit_request(state.path(), &[]));
+    assert_eq!(before.exit_code, 0);
+    let mut expected = Vec::new();
+    expected.extend_from_slice(&(b"doc.md".len() as u64).to_le_bytes());
+    expected.extend_from_slice(b"doc.md");
+    expected.extend_from_slice(&ContentHash::of(b"abc").0);
+    assert_eq!(hash_of(&before), (0, ContentHash::of(&expected).to_hex()));
+}
+
+#[test]
+fn commit_is_append_only_and_never_an_integrity_rejection() {
+    // The commit path has no StaleView/BindingMismatch/UnknownArtifact
+    // branches: an existing lineage always accepts a new version as the
+    // next revision. With NoopAnchor the only conceivable commit rejection
+    // (anchor-rejected) cannot fire, so commit can never exit 1 here.
+    let state = StateFile::new("append-only");
+    assert_eq!(
+        handle_raw(&commit_request(state.path(), &[("doc.md", ABC_B64)])).exit_code,
+        0
+    );
+    assert_eq!(
+        handle_raw(&commit_request(state.path(), &[("doc.md", ABCD_B64)])).exit_code,
+        0
+    );
+    // Re-committing the OLD content is a NEW revision (append-only), not a
+    // rejection: staleness is a property of reads, never of writes.
+    let out = handle_raw(&commit_request(state.path(), &[("doc.md", ABC_B64)]));
+    assert_eq!(out.exit_code, 0);
+    match &out.response {
+        AdapterResponse::CommitOk { artifacts, .. } => {
+            assert_eq!(artifacts[0].revision_id, 3);
+            assert_eq!(artifacts[0].content_hash, ContentHash::of(b"abc").to_hex());
+        }
+        other => panic!("expected CommitOk, got {other:?}"),
+    }
+}
+
+#[test]
 fn base64_decoder_matches_rfc_4648_vectors() {
     assert_eq!(base64_decode(""), Some(vec![]));
     assert_eq!(base64_decode("YQ=="), Some(b"a".to_vec()));
