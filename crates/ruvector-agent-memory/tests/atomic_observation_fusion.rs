@@ -249,6 +249,34 @@ fn governed_ingest_composes_with_wp4_ledger() {
     assert_eq!(prov, [parent_id, child_id].into_iter().collect());
 }
 
+/// Depth-safety (security audit #874, MEDIUM): a deeply nested linear fuse
+/// chain (`C1=fuse([obs])`, `C2=fuse([C1])`, … `CN`) must resolve without
+/// overflowing the stack. The old recursive `collect_provenance` aborted the
+/// process (SIGABRT) at this depth; the iterative worklist bounds depth by heap.
+#[test]
+fn deep_fuse_chain_provenance_is_depth_safe() {
+    let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
+    let obs = observe(SourceKind::RuViewRf, "rf", "acme", 0.5, vec![], b"root-evidence");
+    let obs_id = graph.ingest(obs).unwrap();
+
+    // 200_000 levels deep — far past what the recursive version could survive,
+    // but linear and fast iteratively.
+    const DEPTH: usize = 200_000;
+    let mut current = graph.fuse(&[NodeRef::Observation(obs_id)], "level-0").unwrap();
+    for level in 1..DEPTH {
+        current = graph
+            .fuse(&[NodeRef::Cluster(current)], format!("level-{level}"))
+            .unwrap();
+    }
+
+    // The load-bearing provenance query resolves to exactly the one atomic
+    // source, without aborting.
+    let provenance = graph.resolve_provenance(NodeRef::Cluster(current)).unwrap();
+    assert_eq!(provenance, [obs_id].into_iter().collect());
+    // Weakest-link confidence propagated unchanged through the whole chain.
+    assert!((graph.cluster(current).unwrap().confidence - 0.5).abs() < 1e-6);
+}
+
 #[test]
 fn governed_ingest_rejects_ungoverned_parent() {
     let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));

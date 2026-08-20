@@ -260,16 +260,43 @@ impl CausalEpisodicGraph {
     /// Resolve `node` to the set of **atomic source observations** it derives
     /// from — the load-bearing provenance guarantee. For an observation this is
     /// the observation itself; for a cluster it is the transitive union of its
-    /// members' atomic sources. The traversal is cycle-safe (the cluster layer
-    /// is acyclic by construction, but a `visited` guard makes resolution total
-    /// regardless).
+    /// members' atomic sources.
+    ///
+    /// Traversal is **iterative** (an explicit heap-allocated worklist, not the
+    /// call stack), so a deeply nested fuse chain (`C1=fuse([obs])`,
+    /// `C2=fuse([C1])`, …) is bounded by heap, not stack depth, and cannot
+    /// overflow the stack / abort the process on this load-bearing query. It is
+    /// also **cycle-safe**: the `visited_clusters` guard makes resolution total
+    /// even though the cluster layer is acyclic by construction.
     pub fn resolve_provenance(
         &self,
         node: NodeRef,
     ) -> Result<BTreeSet<ObservationId>, FusionError> {
         let mut atomic = BTreeSet::new();
         let mut visited_clusters = BTreeSet::new();
-        self.collect_provenance(node, &mut atomic, &mut visited_clusters)?;
+        let mut worklist: Vec<NodeRef> = vec![node];
+        while let Some(current) = worklist.pop() {
+            match current {
+                NodeRef::Observation(id) => {
+                    if !self.observations.contains_key(&id) {
+                        return Err(FusionError::UnknownObservation(id));
+                    }
+                    atomic.insert(id);
+                }
+                NodeRef::Cluster(id) => {
+                    if !visited_clusters.insert(id) {
+                        continue; // already expanded; cycle-safe
+                    }
+                    let cluster = self
+                        .clusters
+                        .get(&id)
+                        .ok_or(FusionError::UnknownCluster(id))?;
+                    for member in &cluster.members {
+                        worklist.push(*member);
+                    }
+                }
+            }
+        }
         Ok(atomic)
     }
 
