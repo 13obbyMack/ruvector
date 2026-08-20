@@ -171,6 +171,27 @@ test("bindWorkspace rejects malformed commit responses instead of trusting them"
   await rm(stateDir, { recursive: true, force: true });
 });
 
+test("bindWorkspace contains a path-escaping caseId: rejects, never touches the adapter, writes nothing outside stateDir", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "rvf-binder-"));
+  let invoked = 0;
+  const binder = createSubprocessRvfBinder({
+    repoRoot: "/unused",
+    stateDir,
+    invoker: () => {
+      invoked += 1;
+      return Promise.resolve(invocation(0, { ok: true, artifacts: [], workspace_hash: HASH_A }));
+    },
+  });
+  // A traversing caseId that bypasses the parse boundary (constructed directly)
+  // must still be rejected by the binder's resolved-path containment check.
+  const escaping = { ...fixtureCase({ workspace_files: { "a.md": "x" } }), caseId: "../../evil" };
+  const escapePath = resolve(stateDir, "../../evil.state.json");
+  await assert.rejects(binder.bindWorkspace(escaping), RvfAdapterMalfunction);
+  assert.equal(invoked, 0, "the adapter must not be invoked for an escaping caseId");
+  assert.equal(existsSync(escapePath), false, "no .state.json may be written outside stateDir");
+  await rm(stateDir, { recursive: true, force: true });
+});
+
 // Integration against the real adapter bin (WP16, crates/ruvector-staged-workspace,
 // PR #871). Skips while that crate is not present on this checkout — it lands
 // on feat/pir-wp16-stagedworkspace and this branch carries only the TS bridge.

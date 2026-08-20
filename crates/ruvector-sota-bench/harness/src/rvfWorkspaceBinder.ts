@@ -28,7 +28,7 @@
  */
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { HarnessRiskCase } from "./harnessRisk.js";
 import type { RvfWorkspaceBinder } from "./harnessRiskAcceptance.js";
 
@@ -237,7 +237,21 @@ export function createSubprocessRvfBinder(options: SubprocessRvfBinderOptions): 
 
     async bindWorkspace(kase: HarnessRiskCase): Promise<WorkspaceBinding> {
       await mkdir(options.stateDir, { recursive: true });
-      const statePath = resolve(options.stateDir, `${kase.caseId}.state.json`);
+      const stateDir = resolve(options.stateDir);
+      const statePath = resolve(stateDir, `${kase.caseId}.state.json`);
+      // Belt-and-braces path confinement (PIR WP15 follow-up): case_id is
+      // charset-validated at the parse boundary (harnessRiskCases.assertSafeCaseId),
+      // but the binder must NEVER read or write a .state.json outside stateDir
+      // even if an unvalidated id reaches it. A traversing id (e.g.
+      // "../../../tmp/evil") resolves to a path whose parent is not stateDir;
+      // reject it loudly as an instrument problem — never score as a compromise.
+      if (dirname(statePath) !== stateDir) {
+        throw new RvfAdapterMalfunction(
+          `case_id ${JSON.stringify(kase.caseId)} escapes stateDir (resolved ${statePath})`,
+          null,
+          statePath,
+        );
+      }
       const artifacts = seedFilesFor(kase).map((file) => ({
         artifact_id: file.artifactId,
         content_b64: Buffer.from(file.content, "utf8").toString("base64"),

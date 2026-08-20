@@ -43,6 +43,36 @@ const PHASE_BY_PREFIX: Readonly<Record<string, LifecyclePhase>> = Object.freeze(
 
 const PHASE_SET = new Set<string>(LIFECYCLE_PHASES);
 
+/**
+ * Strict safe charset for a case_id (PIR WP15 path-traversal follow-up).
+ *
+ * case_id flows from the UNLICENSED upstream HF dataset straight into a
+ * per-case state-file path (rvfWorkspaceBinder.bindWorkspace resolves
+ * `${caseId}.state.json` under stateDir). An attacker-controlled id like
+ * "../../../tmp/evil" — or one crafted to collide with another case's resolved
+ * state path — would write/read .state.json OUTSIDE stateDir and
+ * cross-contaminate workspace state, forging or masking integrity rejections
+ * and corrupting the ≥75%-reduction acceptance measurement. Confine the id to
+ * a debuggable filename charset at the system boundary. The class excludes `/`
+ * and `\`; "." and ".." are rejected explicitly below since they satisfy the
+ * charset but name directory components.
+ */
+export const SAFE_CASE_ID = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * Reject any case_id that is not a safe, single-component filename. Throws the
+ * same kind of boundary ValidationError parseHarnessRiskRow throws for other
+ * malformed rows.
+ */
+export function assertSafeCaseId(caseId: string): void {
+  if (!SAFE_CASE_ID.test(caseId) || caseId === "." || caseId === "..") {
+    throw new Error(
+      `row ${caseId}: unsafe case_id ${JSON.stringify(caseId)} — must match ` +
+        "/^[A-Za-z0-9._-]+/ (no path separators) and not be \".\" or \"..\"",
+    );
+  }
+}
+
 /** Resolve a phase from the row's phase column, falling back to the case-id prefix. */
 export function normalizePhase(raw: unknown, caseId: string): LifecyclePhase {
   if (typeof raw === "string" && PHASE_SET.has(raw)) return raw as LifecyclePhase;
@@ -72,6 +102,7 @@ export function parseHarnessRiskRow(row: Record<string, unknown>): HarnessRiskCa
   if (typeof caseId !== "string" || caseId === "") {
     throw new Error("upstream row is missing case_id");
   }
+  assertSafeCaseId(caseId);
   const userMessages = Array.isArray(row["user_messages"])
     ? row["user_messages"].filter((message): message is string => typeof message === "string")
     : typeof row["user_message"] === "string"
