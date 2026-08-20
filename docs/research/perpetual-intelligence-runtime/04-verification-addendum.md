@@ -331,11 +331,11 @@ verified. **Future readers**: the correct fix is ADR-306's current text —
 do not "fix" it back to "metaharness ADR-251" on the assumption that an ADR
 citation inside another Accepted ADR must already be resolved.
 
-### 8c. "ruvector ADR-150 (optionalDependencies policy)" is a misattribution
+### 8c. "ruvector ADR-150 (optionalDependencies policy)" is a misattribution — resolved to `ruflo` ADR-150
 
 ADR-313 (and ADR-306, and `03-program-plan.md`) cited "ruvector ADR-150" as
 the source of the `optionalDependencies` policy `METAHARNESS-README.md`
-claims compliance with. Checked against both clones:
+claims compliance with. Checked against all three clones:
 
 - `ruvector`'s own `ADR-150` is `ADR-150-pi-brain-ruvltra-tailscale.md` — "π
   Brain + RuvLtra via Tailscale — Semantic Embedding Upgrade." Unrelated.
@@ -343,15 +343,39 @@ claims compliance with. Checked against both clones:
   `ADR-150-tailscale-local-frontier-concurrent-benchmarks.md`. Also
   unrelated.
 - `METAHARNESS-README.md` itself attributes the policy to "**ADR-150**:
-  MetaHarness Integration Surfaces (**upstream**)" — a document neither
-  clone contains.
+  MetaHarness Integration Surfaces (**upstream**)."
+
+**A first pass through this section marked that attribution unverified. It
+resolves cleanly**: the upstream document is **`ruflo`'s own ADR-150**,
+`v3/docs/adr/ADR-150-metaharness-integration-surfaces.md` — *"ADR-150 —
+MetaHarness Integration Surfaces in `npx ruflo`,"* **Status: Implemented**
+(2026-06-16, rev. 06-17). The evidence chain: (1) the title matches
+`METAHARNESS-README.md`'s citation on its distinctive phrase; (2) this ADR
+set already established the README's *other* "upstream" citation
+(ADR-103, same README, same word "upstream") is ruflo's — corroborated
+independently by ruflo ADR-322C line 105 (see §8d) — same pattern, same
+repo; (3) `METAHARNESS-README.md`'s own section headings mirror ruflo
+ADR-150's four rules one-for-one (e.g. its "MetaHarness Removable" heading
+against ADR-150's rule 1); (4) ruflo ADR-322 line 17 shows the policy in
+force upstream, at the exact package versions ADR-306's version-drift note
+already flags `ruvector` as pinning (`@metaharness/darwin@^0.8.0`,
+`@metaharness/flywheel@^0.1.7`, both declared `optionalDependencies`).
+ADR-150's normative rule 2 is verbatim the policy in question: *"Optional in
+`package.json`: `@metaharness/*` packages MUST appear in
+`optionalDependencies` or `peerDependencies` (optional), never in
+`dependencies`."* Rule 4 — *"at least one CI job must run `--ignore-optional`
+… the only structural defense against accidentally promoting an optional dep
+to required"* — is a stronger, CI-testable acceptance criterion than a
+plain `npm install` check, and is now the one this program's ADRs and plan
+cite.
 
 This is the exact failure mode ADR-305 §4 requires PIR documents to avoid
 (repo-qualify every cross-repo ADR reference) reproduced inside the set
-meant to enforce it. Every reference is now corrected to cite
-`METAHARNESS-README.md`'s documented invariant directly, with the upstream
-attribution noted as unverified rather than repeated as a resolvable
-citation.
+meant to enforce it — and it is now the **fourth** instance of the same
+"wrong repo owns this ADR number" pattern this program has caught (ADR-103,
+"metaharness ADR-322" → ruflo ADR-322, "metaharness ADR-251" → does not
+exist, and this one). Every reference in the ADR set and the plan now cites
+`ruflo` ADR-150 directly instead of an unverified attribution.
 
 ### 8d. The ruflo ADR-322 family verified verbatim; ADR-381 needed two corrections
 
@@ -372,15 +396,20 @@ promotion decisions or mutate active policy."* ADR-322 line 15 reinforces it:
 authority."* 322C's stack is confirmed with more precision than this
 program's earlier drafts stated: canonical JSON is RFC 8785 JCS, digest is
 SHA-256, signature is `Ed25519(domainPrefix || 0x00 || canonicalBytes)`
-across **three distinct signing domains** (bootstrap, receipt, ledger-head —
-not one), with `candidateId = SHA-256(JCS(candidate policy))` and `receiptId
+across **two distinct Ed25519 signing domains** — `ruflo/flywheel-receipt/v1`
+(L96) and `ruflo/flywheel-ledger-head/v1` (L102) — plus a third
+domain-separated prefix, `ruflo/bootstrap/v1` (L82), that seeds the
+deterministic paired bootstrap's statistics rather than signing anything (an
+earlier draft of this addendum and of ADR-312 called this "three signing
+domains," overcounting by one), with `candidateId = SHA-256(JCS(candidate
+policy))` and `receiptId
 = SHA-256(JCS(unsigned receipt payload))`. Every authorizing term in a 322C
 record is graded `recomputed`, `signature-verified`, or `trusted-assertion`.
 322C line 105 also settles the ADR-103 cross-repo ambiguity this program
 flagged in ADR-305: keys "use ADR-103's provider mechanism but a distinct
 purpose/domain," confirming the witness-manifest ADR-103 is `ruflo`'s.
 
-**ADR-381 needed two corrections.** (a) **Status is Proposed, not
+**ADR-381 needed three corrections.** (a) **Status is Proposed, not
 Accepted** (line 3, dated 2026-08-10; no supersede or later Accepted line —
 earlier drafts of ADR-306/310/312 implied it was settled governance
 alongside its Accepted siblings). (b) **The 0.6% figure and the `α_k =

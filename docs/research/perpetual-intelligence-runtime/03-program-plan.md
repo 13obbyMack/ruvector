@@ -88,14 +88,21 @@ so this plan and the shipped ADR set agree:
   `@metaharness/*` npm dependencies are declared as plain (hard)
   dependencies while `METAHARNESS-README.md` claims `optionalDependencies`
   compliance, attributed there to "**ADR-150**: MetaHarness Integration
-  Surfaces (**upstream**)" — a document neither the `ruvector` nor the
-  `metaharness` clone contains (`ruvector`'s own ADR-150 is
-  `pi-brain-ruvltra-tailscale`, unrelated; `metaharness`'s own ADR-150 is
-  `tailscale-local-frontier-concurrent-benchmarks`, also unrelated). Fix the
-  bug directly — make the nine packages genuinely optional per the
-  documented policy, or correct the documentation to state the real
-  (hard-dependency) install requirement — rather than repeating the
-  dangling citation. **The previously-tracked HTTP-307 redirect bug in
+  Surfaces (**upstream**)." Neither `ruvector`'s own ADR-150
+  (`pi-brain-ruvltra-tailscale`) nor `metaharness`'s own ADR-150
+  (`tailscale-local-frontier-concurrent-benchmarks`) is the right document
+  — both unrelated. **The upstream document is `ruflo` ADR-150**
+  (`v3/docs/adr/ADR-150-metaharness-integration-surfaces.md`, "MetaHarness
+  Integration Surfaces in `npx ruflo`," Status **Implemented**, 2026-06-16),
+  whose rule 2 is verbatim the policy: *"`@metaharness/*` packages MUST
+  appear in `optionalDependencies` or `peerDependencies` (optional), never
+  in `dependencies`."* Fix the bug directly against that source — make the
+  nine packages genuinely optional per ruflo ADR-150 rule 2, or correct the
+  documentation to state the real (hard-dependency) install requirement —
+  and adopt rule 4 (a CI job on the `--ignore-optional` install path,
+  "the only structural defense against accidentally promoting an optional
+  dep to required") as the acceptance criterion, stronger than a plain
+  successful `npm install`. **The previously-tracked HTTP-307 redirect bug in
   `ruvllm`'s model-download path is already fixed on `main`** (commit
   `946275a61`, PR #590, 2026-06-18); it is not part of this work package.
   Verifying that fix surfaced the actual remaining download blocker: a GGUF
@@ -210,7 +217,7 @@ Each epic body: one paragraph linking to `docs/research/perpetual-intelligence-r
 **WP0b — MetaHarness dependency compliance + ruvllm-cli GGUF glob/alias fix**
 - Repo: `ruvnet/ruvector`. Labels: `pir`, `phase-0`.
 - Title: `[PIR][WP0b] Fix MetaHarness optionalDependencies non-compliance and ruvllm-cli GGUF glob/alias bug`
-- Body — Goal: (1) make the nine `@metaharness/*` packages in `crates/ruvector-sota-bench/harness` genuinely optional per `METAHARNESS-README.md`'s documented policy (attributed there to an upstream metaharness ADR-150 not present in either repo — unverified; do not cite a `ruvector` or `metaharness` ADR-150, both of which are unrelated documents), or correct the documentation to state the real hard-dependency requirement; (2) fix the GGUF glob/alias mismatch in `ruvllm-cli`'s `get_files_to_download()` (`download.rs:193`, `models.rs:65`) blocking Darwin's local-mutator live-serve e2e tests (ADR-259). Note: the HTTP-307 redirect bug this issue previously also tracked is already fixed on `main` (commit `946275a61`, PR #590, 2026-06-18) and is out of scope here. Acceptance criteria: `npm install` succeeds without the `@metaharness/*` packages present (if made optional) or documentation matches reality (if not); `ruvllm`-backed Darwin mutator passes a live-serve end-to-end test. Dependencies: none. **Blocks WP9.**
+- Body — Goal: (1) make the nine `@metaharness/*` packages in `crates/ruvector-sota-bench/harness` genuinely optional per ruflo ADR-150 rule 2 (`v3/docs/adr/ADR-150-metaharness-integration-surfaces.md`, "MetaHarness Integration Surfaces in `npx ruflo`," Implemented 2026-06-16 — the real source `METAHARNESS-README.md` attributes its policy to; neither `ruvector`'s nor `metaharness`'s own ADR-150 is the right document, both unrelated), or correct the documentation to state the real hard-dependency requirement; (2) fix the GGUF glob/alias mismatch in `ruvllm-cli`'s `get_files_to_download()` (`download.rs:193`, `models.rs:65`) blocking Darwin's local-mutator live-serve e2e tests (ADR-259). Note: the HTTP-307 redirect bug this issue previously also tracked is already fixed on `main` (commit `946275a61`, PR #590, 2026-06-18) and is out of scope here. Acceptance criteria: a CI job passes on the `--ignore-optional` install path per ruflo ADR-150 rule 4 (stronger than a plain successful `npm install`) without the `@metaharness/*` packages present (if made optional), or documentation matches reality (if not); `ruvllm`-backed Darwin mutator passes a live-serve end-to-end test. Dependencies: none. **Blocks WP9.**
 
 **WP1 — LatentMesh coordination & ADR alignment**
 - Repo: `ruvnet/ruvector` (primary) + linked issue in `ruvnet/LatentMesh`. Labels: `pir`, `adr`, `cross-repo`, `phase-0`.

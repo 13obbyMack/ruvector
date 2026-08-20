@@ -3,7 +3,7 @@
 - **Status**: Proposed
 - **Date**: 2026-08-19
 - **Deciders**: RuV Perpetual Intelligence Runtime (PIR) Program
-- **Related**: ADR-312 (PIR, depends on); ADR-306 (PIR, distinct from ordinary promotion gating); autogenous ADR-393 "Product Thesis — Adaptive Agent Firewall" (autogenous repo); autogenous ADR-401 capability 5 and Update 1 §3 (governed self-improvement, `promoteAuthorized` — Done)
+- **Related**: ADR-312 (PIR, depends on); ADR-306 (PIR, distinct from ordinary promotion gating); ADR-305 (PIR, invariant 7 — proposer/promotion separation, binding here); autogenous ADR-393 "Product Thesis — Adaptive Agent Firewall" (autogenous repo); autogenous ADR-401 capability 5 and Update 1 §3 (governed self-improvement, `promoteAuthorized` — Done)
 - **Tags**: pir, governance, constitution, capability-expansion, security
 
 ## Context
@@ -55,7 +55,12 @@ for zero-unapproved-capability-expansion:
    from** ordinary behavioral-mutation promotion (ADR-306's evaluation
    pipeline). A mutation passing ADR-306's promotion gate does not
    automatically pass this gate; capability expansion needs its own,
-   separately-authorized approval record.
+   separately-authorized approval record. This gate is itself bound by
+   governing invariant 7 (adopted in ADR-305, from ruflo ADR-322B): whatever
+   proposed the capability-expanding mutation cannot also issue this gate's
+   approval — approval authority and proposal authority must be held by
+   distinct actors in the witness chain, the same separation-of-powers rule
+   ADR-313 enforces on Darwin's mutation surfaces.
 2. This program **adopts** `mesh-evolve.ts`'s `promoteAuthorized` predicate
    (`Promote = Better ∧ Safe ∧ Authorized ∧ Reversible`, all four conjuncts
    already independently blocking upstream) as the mechanism whose
@@ -124,6 +129,9 @@ for zero-unapproved-capability-expansion:
 - **Distinctness from behavioral promotion**: this gate is never satisfied
   merely by a mutation passing ADR-306's evaluation pipeline — the two are
   independently blocking.
+- **Separation-of-powers invariant** (governing invariant 7, ADR-305): the
+  actor that proposed a capability-expanding mutation cannot also approve
+  it through this gate.
 - **Hosted-RVM honesty discipline** (ruvector ADR-285): if any part of this
   gate's enforcement runs in a hosted (non-bare-metal) mode, isolation
   claims must match what has actually been tested.

@@ -41,8 +41,11 @@ defines a receipt/ledger/verification protocol built specifically to be a
 portable, offline-verifiable, cross-layer wire format: **RFC 8785 JCS
 canonical JSON, SHA-256 digests, Ed25519 signatures with domain separation**
 (`Ed25519(domainPrefix || 0x00 || canonicalBytes)`) — confirmed to use
-**three distinct signing domains** (bootstrap, receipt, ledger-head), not
-one, with explicit identity derivation (`candidateId =
+**two distinct Ed25519 signing domains** (`ruflo/flywheel-receipt/v1` and
+`ruflo/flywheel-ledger-head/v1`), not one, plus a third domain-separated
+prefix (`ruflo/bootstrap/v1`) that seeds the deterministic paired
+bootstrap's statistics rather than signing anything — with explicit identity
+derivation (`candidateId =
 SHA-256(JCS(candidate policy))`, `receiptId = SHA-256(JCS(unsigned receipt
 payload))`). Every authorizing term in a 322C record carries an explicit
 evidence grade — **`recomputed`, `signature-verified`, or

@@ -57,9 +57,10 @@ must name which is canonical for which layer rather than building a fifth:
 0.8.0 / `flywheel` 0.1.7. This program's WP0b (MetaHarness
 dependency-compliance remediation) should account for this drift when it
 fixes the `optionalDependencies` non-compliance documented in
-`METAHARNESS-README.md` (see ADR-313 for the corrected citation — the
-policy is attributed there to an upstream metaharness ADR-150 not present
-in either repo, not to `ruvector`'s own ADR-150, which is unrelated).
+`METAHARNESS-README.md` (see ADR-313 for the source citation — the policy is
+ruflo ADR-150, "MetaHarness Integration Surfaces in `npx ruflo`," Implemented
+2026-06-16; neither `ruvector`'s nor `metaharness`'s own ADR-150 is the right
+document, both being unrelated).
 
 ## Decision
 
