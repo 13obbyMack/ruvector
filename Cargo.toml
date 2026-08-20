@@ -82,6 +82,11 @@ members = [
     "crates/ruvector-graph-wasm",
     "crates/ruvector-gnn",
     "crates/ruvector-proof-gate",
+    # Agent-memory compaction (ADR-252-agent-memory-compaction) + TARL
+    # transactional ledger (ADR-307, PIR WP4). Previously dangling: neither
+    # in members nor exclude, so `cargo test -p ruvector-agent-memory`
+    # could not run at all.
+    "crates/ruvector-agent-memory",
     "crates/ruvector-retrieval-receipt",
     "crates/ruvector-gnn-rerank",
     "crates/ruvector-gnn-node",
@@ -329,10 +334,9 @@ members = [
     "crates/ruvector-bet4-ivf-bench",
     "crates/ruvector-hnsw-repair",
     "crates/ruvector-temporal-tensor-wasm",
-    # Also added mid-list by PR #858 (TARL ledger). Cargo tolerates duplicate
-    # member entries (see the two ruvector-nervous-system lines above), so
-    # merge order does not matter; whichever PR lands second can drop one.
-    "crates/ruvector-agent-memory",
+    # NOTE: ruvector-agent-memory is listed once, mid-list next to
+    # ruvector-proof-gate (TARL ledger, PR #858); the duplicate entry the
+    # #859 sweep added here as a merge hedge was dropped on merge.
 ]
 resolver = "2"
 

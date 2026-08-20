@@ -11,8 +11,7 @@
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use ruvector_agent_memory::{
-    compact, recall_at_k, CoherencePolicy, CompactionPolicy, LfuPolicy,
-    LruPolicy, MemoryStore,
+    compact, recall_at_k, CoherencePolicy, CompactionPolicy, LfuPolicy, LruPolicy, MemoryStore,
 };
 use std::time::{Duration, Instant};
 

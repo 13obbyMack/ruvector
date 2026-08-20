@@ -8792,6 +8792,9 @@ name = "ruvector-agent-memory"
 version = "0.1.0"
 dependencies = [
  "rand 0.8.6",
+ "ruvector-proof-gate",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
