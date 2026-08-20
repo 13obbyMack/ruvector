@@ -75,16 +75,18 @@ function loadPackage(name: string): Promise<Record<string, any>> {
   if (!pending) {
     pending = nativeImport(name).catch((error: any) => {
       if (error?.code === 'ERR_MODULE_NOT_FOUND' || error?.code === 'MODULE_NOT_FOUND') {
-        // Per the MetaHarness optional-dependency contract (METAHARNESS-README.md,
-        // attributed upstream to "ADR-150: MetaHarness Integration Surfaces"): the
-        // MetaHarness stack is an optionalDependency; ruvector must keep working
-        // without it, and callers of a MetaHarness-backed capability get a clear
-        // error naming the missing package.
+        // Per ruflo ADR-150 "MetaHarness Integration Surfaces"
+        // (ruflo/v3/docs/adr/ADR-150-metaharness-integration-surfaces.md, Implemented
+        // 2026-06-16; summarized locally in METAHARNESS-README.md): "@metaharness/*
+        // packages MUST appear in optionalDependencies or peerDependencies (optional),
+        // never in dependencies". ruvector must keep working without the MetaHarness
+        // stack, and callers of a MetaHarness-backed capability get a clear error
+        // naming the missing package.
         moduleCache.delete(name);
         const missing = new Error(
           `Optional MetaHarness package "${name}" is not installed. ` +
             `Run \`npm install ${name}\` to enable this capability; ` +
-            `ruvector itself works without it (see METAHARNESS-README.md).`,
+            `ruvector itself works without it (ruflo ADR-150, see METAHARNESS-README.md).`,
         );
         (missing as any).code = 'ERR_METAHARNESS_OPTIONAL_MISSING';
         (missing as any).cause = error;
