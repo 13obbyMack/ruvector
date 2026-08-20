@@ -24,7 +24,28 @@ exclude = ["external/ruqu", "external/rvdna", "examples/OSpipe", "examples/rvf",
     # rvforge-reader: Tauri v2 desktop app (ADR-289). Standalone workspace —
     # the webview/bundler dependency graph and its feature unification are
     # app-specific and would be paid for by every `cargo build --workspace`.
-    "crates/rvforge-reader"]
+    "crates/rvforge-reader",
+    # agentic-robotics family: excluded: does not build — see #859. The six
+    # crates were authored against a different workspace root: they inherit
+    # workspace.package keys this root does not define (description, homepage,
+    # documentation, keywords, categories), reference workspace deps this root
+    # does not declare (zenoh, rustdds, cdr, hdrhistogram), and pin internal
+    # path deps at 0.1.x while version.workspace would make them 2.3.0 —
+    # cargo metadata fails at manifest parse before any code is compiled.
+    "crates/agentic-robotics-core",
+    "crates/agentic-robotics-rt",
+    "crates/agentic-robotics-embedded",
+    "crates/agentic-robotics-mcp",
+    "crates/agentic-robotics-node",
+    "crates/agentic-robotics-benchmarks",
+    # excluded: does not build — see #859. 51 compile errors: API drift
+    # against ruvector-attention 2.x plus a missing bincode dependency.
+    "crates/ruvector-attention-cli",
+    # excluded: does not build — see #859. 11 compile errors: API drift
+    # against ruvector-sparse-inference (SparseModel is now an enum without
+    # forward_embedding/sparsity_statistics/encode; serde derives were
+    # dropped from InferenceConfig/ModelMetadata).
+    "crates/ruvector-sparse-inference-wasm"]
 members = [
     "crates/ruvector-bounded-rag",
     "crates/ruvector-temporal-coherence",
@@ -307,6 +328,15 @@ members = [
     "crates/ruvector-streaming-qng",
     # Entropy-adaptive ANN beam search: live Shannon entropy gates beam width (ADR-303)
     "crates/ruvector-entropy-ann",
+    # PIR #859 workspace-membership sweep: these crates were dangling —
+    # present under crates/ but neither in members nor exclude, so their
+    # tests and lints never ran in CI.
+    "crates/ruvector-bet4-ivf-bench",
+    "crates/ruvector-hnsw-repair",
+    "crates/ruvector-temporal-tensor-wasm",
+    # NOTE: ruvector-agent-memory is listed once, mid-list next to
+    # ruvector-proof-gate (TARL ledger, PR #858); the duplicate entry the
+    # #859 sweep added here as a merge hedge was dropped on merge.
 ]
 resolver = "2"
 

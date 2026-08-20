@@ -29,6 +29,12 @@ pub struct ModelDefinition {
     pub context_length: usize,
     /// Notes about the model
     pub notes: String,
+    /// GGUF "twin" repo for models whose `hf_id` only hosts safetensors.
+    /// When a quantized (GGUF) download is requested, weights are resolved
+    /// from this repo instead of `hf_id`. `None` means `hf_id` itself hosts
+    /// the GGUF files (or no GGUF twin is known).
+    #[serde(default)]
+    pub gguf_repo: Option<String>,
 }
 
 /// Get all recommended models
@@ -46,6 +52,7 @@ pub fn get_recommended_models() -> Vec<ModelDefinition> {
             memory_gb: 9.5,
             context_length: 32768,
             notes: "Best overall performance for reasoning tasks on M4 Pro".to_string(),
+            gguf_repo: None,
         },
         // Fast instruction following
         ModelDefinition {
@@ -59,6 +66,7 @@ pub fn get_recommended_models() -> Vec<ModelDefinition> {
             memory_gb: 4.5,
             context_length: 32768,
             notes: "Excellent speed/quality tradeoff with sliding window attention".to_string(),
+            gguf_repo: Some("bartowski/Mistral-7B-Instruct-v0.3-GGUF".to_string()),
         },
         // Tiny/testing model
         ModelDefinition {
@@ -72,6 +80,7 @@ pub fn get_recommended_models() -> Vec<ModelDefinition> {
             memory_gb: 2.5,
             context_length: 16384,
             notes: "Surprisingly capable for its size, fast inference".to_string(),
+            gguf_repo: Some("bartowski/microsoft_Phi-4-mini-instruct-GGUF".to_string()),
         },
         // Tool use model
         ModelDefinition {
@@ -85,6 +94,7 @@ pub fn get_recommended_models() -> Vec<ModelDefinition> {
             memory_gb: 2.2,
             context_length: 131072,
             notes: "Optimized for tool use and function calling".to_string(),
+            gguf_repo: Some("bartowski/Llama-3.2-3B-Instruct-GGUF".to_string()),
         },
         // Code-specific model
         ModelDefinition {
@@ -98,6 +108,7 @@ pub fn get_recommended_models() -> Vec<ModelDefinition> {
             memory_gb: 4.8,
             context_length: 32768,
             notes: "Specialized for coding tasks, excellent at code completion".to_string(),
+            gguf_repo: None,
         },
         // Large reasoning model (for when you have the memory)
         ModelDefinition {
@@ -111,6 +122,7 @@ pub fn get_recommended_models() -> Vec<ModelDefinition> {
             memory_gb: 20.0,
             context_length: 32768,
             notes: "Requires significant memory, but provides best quality".to_string(),
+            gguf_repo: None,
         },
     ]
 }
@@ -145,6 +157,27 @@ pub fn resolve_model_id(identifier: &str) -> String {
         // Assume it's a direct HF model ID
         identifier.to_string()
     }
+}
+
+/// Resolve the repo that hosts the *weights* for `identifier` at `quant`.
+///
+/// A quantized (GGUF) request against an alias whose `hf_id` is a
+/// safetensors-only repo is routed to the registry's `gguf_repo` twin when one
+/// is defined. Repos that already host GGUF files (id contains "GGUF") and
+/// unquantized requests resolve as before. Unknown identifiers pass through
+/// unchanged — the download command then validates against the actual HF file
+/// listing and fails with the available files rather than a 404 on a glob.
+pub fn resolve_weights_repo(identifier: &str, quant: QuantPreset) -> String {
+    let base = resolve_model_id(identifier);
+    if quant == QuantPreset::None || base.to_ascii_uppercase().contains("GGUF") {
+        return base;
+    }
+    if let Some(model) = get_model(identifier) {
+        if let Some(gguf_repo) = model.gguf_repo {
+            return gguf_repo;
+        }
+    }
+    base
 }
 
 /// Get model aliases map
@@ -187,6 +220,18 @@ impl QuantPreset {
             Self::Q8 => "Q8_0.gguf",
             Self::F16 => "F16.gguf",
             Self::None => "F32.gguf",
+        }
+    }
+
+    /// Quant tags to match against actual GGUF filenames (lowercase).
+    /// Repos vary in spelling (e.g. Qwen ships `fp16`, bartowski ships `f16`),
+    /// so each preset may accept several tags.
+    pub fn gguf_tags(&self) -> &'static [&'static str] {
+        match self {
+            Self::Q4K => &["q4_k_m"],
+            Self::Q8 => &["q8_0"],
+            Self::F16 => &["f16", "fp16"],
+            Self::None => &["f32", "fp32"],
         }
     }
 
@@ -240,5 +285,44 @@ mod tests {
     fn test_quant_preset() {
         assert_eq!(QuantPreset::from_str("q4k"), Some(QuantPreset::Q4K));
         assert_eq!(QuantPreset::Q4K.bytes_per_weight(), 0.5);
+    }
+
+    #[test]
+    fn test_weights_repo_gguf_twin_for_safetensors_alias() {
+        // `phi` -> microsoft/Phi-4-mini-instruct hosts safetensors only; a
+        // quantized request must route to the GGUF twin, not the base repo.
+        let repo = resolve_weights_repo("phi", QuantPreset::Q4K);
+        assert_eq!(repo, "bartowski/microsoft_Phi-4-mini-instruct-GGUF");
+        assert!(repo.contains("GGUF"));
+    }
+
+    #[test]
+    fn test_weights_repo_unquantized_stays_on_base_repo() {
+        assert_eq!(
+            resolve_weights_repo("phi", QuantPreset::None),
+            "microsoft/Phi-4-mini-instruct"
+        );
+    }
+
+    #[test]
+    fn test_weights_repo_native_gguf_alias_unchanged() {
+        assert_eq!(
+            resolve_weights_repo("qwen", QuantPreset::Q4K),
+            "Qwen/Qwen2.5-14B-Instruct-GGUF"
+        );
+    }
+
+    #[test]
+    fn test_weights_repo_unknown_id_passes_through() {
+        assert_eq!(
+            resolve_weights_repo("custom/model", QuantPreset::Q4K),
+            "custom/model"
+        );
+    }
+
+    #[test]
+    fn test_gguf_tags_cover_repo_spelling_variants() {
+        assert!(QuantPreset::F16.gguf_tags().contains(&"fp16"));
+        assert_eq!(QuantPreset::Q4K.gguf_tags(), &["q4_k_m"]);
     }
 }
