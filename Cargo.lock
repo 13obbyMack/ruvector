@@ -4915,6 +4915,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "latentmesh-thoughtmap"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "lattice-embed"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
