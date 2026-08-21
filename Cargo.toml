@@ -209,6 +209,9 @@ members = [
     "crates/rvAgent/rvagent-mcp",
     "crates/rvAgent/rvagent-wasm",
     "crates/rvAgent/rvagent-a2a",
+    # PIR WP23 / ADR-326 — DeAR-pattern decentralized capability-grounded
+    # reasoning. First latentmesh-* crate; extended by ADR-309 WP5 transport.
+    "crates/rvAgent/latentmesh-thoughtmap",
     # ADR-159 a2a-swarm demo
     "examples/a2a-swarm",
     # ETL pipeline example
