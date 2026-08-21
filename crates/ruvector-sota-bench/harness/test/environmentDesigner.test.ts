@@ -64,15 +64,17 @@ const PARENT_CONTEXT: ContextGenome = {
   entries: { "env:seed": "existing curriculum entry" },
 };
 
-// A resolver that knows the REAL evidence (and nothing forged/invented).
+// A resolver that knows the REAL evidence (models the real external store).
 const resolver = staticEvidenceResolver([REAL_EVIDENCE]);
+// A resolver that knows NOTHING — the attacker's view, holding only self-
+// declared strings with no access to any real external source.
+const emptyResolver = staticEvidenceResolver([]);
 
-test("GENERATE: an executable environment is built from an external-evidence fixture", () => {
-  const generated = generateEnvironment(groundedSpec);
+test("GENERATE: an executable environment is built from an external-evidence fixture", async () => {
+  const generated = await generateEnvironment(groundedSpec, resolver);
   assert.equal(generated.spec.id, "env-grounded-1");
+  assert.ok(generated.verificationKey);
   assert.match(generated.verificationKey, /^[0-9a-f]{16}$/);
-  // The key is derived FROM the external evidence — uncomputable without it.
-  assert.equal(generated.verificationKey, verificationKeyFor(GROUNDED_PROVENANCE));
 
   const env = generated.environment;
   // Gym-style reset()/step()/reward()/verify() contract (SPADE arXiv:2608.19197).
@@ -96,11 +98,53 @@ test("GENERATE: an executable environment is built from an external-evidence fix
   // Shape validation: malformed evidence is rejected at generation.
   assert.throws(() => assertExternalEvidence({ ...REAL_EVIDENCE, contentSha256: "z" }), /64 lowercase hex/);
   // A self-invented environment is REPRESENTABLE (so the veto can reject it).
-  assert.doesNotThrow(() => generateEnvironment(ungroundedSpec));
+  await assert.doesNotReject(() => generateEnvironment(ungroundedSpec, resolver));
+});
+
+test("KEY BINDING (defense-in-depth): the verification key is UNCOMPUTABLE without resolved external content", async () => {
+  const generated = await generateEnvironment(groundedSpec, resolver);
+
+  // Deterministic GIVEN real resolution: same provenance + same resolver ⇒ same key.
+  assert.equal(await verificationKeyFor(GROUNDED_PROVENANCE, resolver), generated.verificationKey);
+
+  // Bound to the RESOLVER's content hash, NOT the self-declared one: a resolver
+  // reporting different real content for the same locator yields a DIFFERENT
+  // key — an attacker cannot reproduce the key from the provenance strings alone.
+  const differentContent = staticEvidenceResolver([{ ...REAL_EVIDENCE, contentSha256: "c".repeat(64) }]);
+  const otherKey = await verificationKeyFor(GROUNDED_PROVENANCE, differentContent);
+  assert.ok(otherKey);
+  assert.notEqual(otherKey, generated.verificationKey);
+
+  // An attacker holding only the (well-formed) provenance but NO access to the
+  // real source (resolver resolves nothing) gets NO valid key — not a constant.
+  assert.equal(await verificationKeyFor(GROUNDED_PROVENANCE, emptyResolver), null);
+
+  // Empty (self-invented) evidence ⇒ null key, NOT a fixed public constant.
+  assert.equal(await verificationKeyFor(UNGROUNDED_PROVENANCE, resolver), null);
+
+  // A forged well-formed cite that does not resolve ⇒ null key.
+  const forgedProvenance: EnvironmentProvenance = {
+    evidence: [{ ...REAL_EVIDENCE, locator: "test/does-not-exist.test.ts" }],
+    designerNote: "citation of convenience",
+    citation: SPADE_CITATION,
+  };
+  assert.equal(await verificationKeyFor(forgedProvenance, resolver), null);
+
+  // And an environment with a null key is intrinsically UNSOLVABLE: no action —
+  // not even the constant the OLD self-hashing scheme would have produced —
+  // yields reward. A designer with no real anchor cannot construct a solvable
+  // challenge at all.
+  const selfInvented = await generateEnvironment(ungroundedSpec, resolver);
+  assert.equal(selfInvented.verificationKey, null);
+  const start = selfInvented.environment.reset({ privileged: true });
+  assert.doesNotMatch(start.observation.prompt, /key=/); // nothing to reveal
+  for (const guess of ["", "0".repeat(16), await verificationKeyFor(GROUNDED_PROVENANCE, resolver) ?? ""]) {
+    assert.equal(selfInvented.environment.step(start, guess).reward, 0);
+  }
 });
 
 test("REGRET: the difficulty signal is the reward gap between normal and privileged play", async () => {
-  const generated = generateEnvironment(groundedSpec);
+  const generated = await generateEnvironment(groundedSpec, resolver);
   const measurement = await measureRegret(generated.environment, evidenceReadingAgent, 5);
   // The reference agent solves WITH privileged evidence and cannot WITHOUT it,
   // so a fresh grounded environment yields the maximal regret signal.
@@ -116,24 +160,30 @@ test("REGRET: the difficulty signal is the reward gap between normal and privile
   const mastered = await measureRegret(generated.environment, masteredAgent, 4);
   assert.equal(mastered.regret, 0);
 
-  assert.rejects(() => measureRegret(generated.environment, evidenceReadingAgent, 1), /at least 2 episodes/);
+  // A self-invented (unsolvable) environment produces NO regret even privileged.
+  const selfInvented = await generateEnvironment(ungroundedSpec, resolver);
+  const noSignal = await measureRegret(selfInvented.environment, evidenceReadingAgent, 3);
+  assert.equal(noSignal.privilegedReward, 0);
+  assert.equal(noSignal.regret, 0);
+
+  await assert.rejects(() => measureRegret(generated.environment, evidenceReadingAgent, 1), /at least 2 episodes/);
 });
 
 test("EXTERNAL-GROUNDING VETO (headline security gate): grounded passes, ungrounded/forged REJECTED", async () => {
   const context: VetoContext = { policy: { ef_search: "100" }, suite: { id: "fixture", items: [] }, observations: [] };
 
   // 1. A grounded environment whose evidence RESOLVES passes the gate (no veto).
-  const grounded = generateEnvironment(groundedSpec);
+  const grounded = await generateEnvironment(groundedSpec, resolver);
   const passReasons = await externalGroundingVetoProvider(() => grounded, resolver)(context);
   assert.deepEqual(passReasons, []);
 
   // 2. A self-invented environment (no external trace) is VETOED.
-  const ungrounded = generateEnvironment(ungroundedSpec);
+  const ungrounded = await generateEnvironment(ungroundedSpec, resolver);
   const absentReasons = await externalGroundingVetoProvider(() => ungrounded, resolver)(context);
   assert.ok(absentReasons.includes("external_grounding_absent"));
 
   // 3. A FORGED trace (a locator that resolves to nothing) is VETOED.
-  const forged = generateEnvironment({
+  const forged = await generateEnvironment({
     id: "env-forged-1",
     task: "Cites a source that does not exist.",
     provenance: {
@@ -141,13 +191,13 @@ test("EXTERNAL-GROUNDING VETO (headline security gate): grounded passes, ungroun
       designerNote: "citation of convenience",
       citation: SPADE_CITATION,
     },
-  });
+  }, resolver);
   const forgedReasons = await externalGroundingVetoProvider(() => forged, resolver)(context);
   assert.ok(forgedReasons.includes("external_grounding_unresolved"));
 
   // 4. A DRIFTED trace (resolves, but the content hash changed) is VETOED — a
   //    real cite cannot be silently reused after its source moved.
-  const drifted = generateEnvironment({
+  const drifted = await generateEnvironment({
     id: "env-drift-1",
     task: "Cites a real source at a stale hash.",
     provenance: {
@@ -155,7 +205,7 @@ test("EXTERNAL-GROUNDING VETO (headline security gate): grounded passes, ungroun
       designerNote: "stale",
       citation: SPADE_CITATION,
     },
-  });
+  }, resolver);
   const driftReasons = await externalGroundingVetoProvider(() => drifted, resolver)(context);
   assert.ok(driftReasons.includes("external_grounding_drift"));
 
@@ -180,7 +230,7 @@ test("VETO FIRES BEFORE EVALUATION: the grounding gate short-circuits the dream-
   };
 
   // Ungrounded ⇒ the gate returns its reason and the evaluation stage NEVER runs.
-  const ungrounded = generateEnvironment(ungroundedSpec);
+  const ungrounded = await generateEnvironment(ungroundedSpec, resolver);
   const blockedGate = groundingGatedVetoProvider(() => ungrounded, resolver, evaluationStage);
   const blocked = await blockedGate(context);
   assert.ok(blocked.includes("external_grounding_absent"));
@@ -188,7 +238,7 @@ test("VETO FIRES BEFORE EVALUATION: the grounding gate short-circuits the dream-
 
   // Grounded ⇒ the gate passes control to the evaluation stage.
   evaluationRan = false;
-  const grounded = generateEnvironment(groundedSpec);
+  const grounded = await generateEnvironment(groundedSpec, resolver);
   const openGate = groundingGatedVetoProvider(() => grounded, resolver, evaluationStage);
   assert.deepEqual(await openGate(context), []);
   assert.equal(evaluationRan, true, "a grounded environment proceeds to evaluation");
@@ -227,7 +277,7 @@ test("CONSTITUTIONAL BOUNDARY: an environment is a PROPOSAL, no promotion reacha
     assert.ok(!forbidden.test(name), `export "${name}" looks like a promotion capability`);
   }
 
-  const generated = generateEnvironment(groundedSpec);
+  const generated = await generateEnvironment(groundedSpec, resolver);
   const frontier = atFrontier(await measureRegret(generated.environment));
   const proposal = buildEnvironmentProposal(PARENT_CONTEXT, generated, frontier);
 
@@ -255,13 +305,13 @@ test("CONSTITUTIONAL BOUNDARY: an environment is a PROPOSAL, no promotion reacha
   assert.equal(dream.commit, COMMIT);
 });
 
-test("CAPABILITY EXPANSION: an environment certifying a new capability routes to the ADR-315 stub and is BLOCKED", () => {
-  const generated = generateEnvironment({
+test("CAPABILITY EXPANSION: an environment certifying a new capability routes to the ADR-315 stub and is BLOCKED", async () => {
+  const generated = await generateEnvironment({
     id: "env-expanding-1",
     task: "Certifies a capability that would grant a new tool.",
     provenance: GROUNDED_PROVENANCE,
     capabilityDelta: { addsTools: ["shell_exec"], addsActionClasses: [], addsCommunicationPeers: [] },
-  });
+  }, resolver);
   assert.ok(expandsCapabilities(generated.spec.capabilityDelta));
 
   const frontier = atFrontier({

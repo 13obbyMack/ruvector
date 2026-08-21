@@ -187,16 +187,36 @@ export interface EvaluationEnvironment {
 }
 
 /**
- * The verification key an environment checks an action against. Derived by
- * hashing the environment's external evidence — so the key is UNCOMPUTABLE
- * without that evidence's content. Grounding is therefore load-bearing at the
- * environment mechanic itself, not only at the veto: a designer with no
- * external anchor cannot even construct a solvable challenge.
+ * The verification key an environment checks an action against — the SECOND,
+ * defense-in-depth grounding layer (the resolver-backed veto is the primary
+ * gate). The key is bound to the RESOLVER's CURRENT resolved content hash
+ * (`currentSha256`), NOT to the self-declared `contentSha256`, so it is
+ * genuinely UNCOMPUTABLE without access to the real external source:
+ *   - the resolver must run (you must be able to resolve the evidence), and
+ *   - the key mixes in the content hash the resolver returns from the real
+ *     source, which a designer holding only fabricated strings does not have.
+ *
+ * Returns `null` — an UNUSABLE key, never a fixed public constant — when the
+ * provenance has NO evidence (self-invented loop) or when ANY evidence fails to
+ * resolve (forged / invented cite). An environment with a null key is
+ * intrinsically UNSOLVABLE: no action can satisfy it. So a designer with no
+ * real external anchor cannot construct a solvable challenge at all — grounding
+ * is load-bearing at the environment mechanic itself, not only at the veto.
+ * (Requiring EVERY evidence to resolve mirrors the veto: a real cite cannot
+ * launder a forged one alongside it.)
  */
-export function verificationKeyFor(provenance: EnvironmentProvenance): string {
+export async function verificationKeyFor(
+  provenance: EnvironmentProvenance,
+  resolve: EvidenceResolver,
+): Promise<string | null> {
+  if (provenance.evidence.length === 0) return null;
   const hash = createHash("sha256").update("ruvector.spade.env-key.v1\0");
   for (const item of provenance.evidence) {
-    hash.update(`${item.kind}\0${item.locator}\0${item.contentSha256}\0`);
+    const outcome = await resolve(item);
+    if (!outcome.resolved || outcome.currentSha256 === undefined) return null;
+    // Bind to the resolver's CURRENT content hash from the real source, never
+    // to the designer's self-declared item.contentSha256.
+    hash.update(`${item.kind}\0${item.locator}\0${outcome.currentSha256}\0`);
   }
   return hash.digest("hex").slice(0, 16);
 }
@@ -212,32 +232,44 @@ export interface EnvironmentSpec {
   readonly capabilityDelta?: CapabilityDelta;
 }
 
-/** A generated environment: the executable interface plus its originating spec. */
+/**
+ * A generated environment: the executable interface plus its originating spec.
+ * `verificationKey` is `null` when the provenance did not resolve to real
+ * external content (self-invented or forged) — such an environment is
+ * intrinsically unsolvable (the second grounding layer, see `verificationKeyFor`).
+ */
 export interface GeneratedEnvironment {
   readonly spec: EnvironmentSpec;
   readonly environment: EvaluationEnvironment;
-  readonly verificationKey: string;
+  readonly verificationKey: string | null;
 }
 
-function buildObservation(spec: EnvironmentSpec, key: string, privileged: boolean): EnvObservation {
+function buildObservation(spec: EnvironmentSpec, key: string | null, privileged: boolean): EnvObservation {
   const base =
     `[${SPADE_CITATION}] Task: ${spec.task}. ` +
     `Grounded in ${spec.provenance.evidence.length} external-evidence source(s). ` +
     `Emit the verification key to solve.`;
+  // Only a resolver-backed key can be revealed; an unresolved (null) key leaves
+  // even the privileged observation with no solvable answer.
   return Object.freeze({
-    prompt: privileged ? `${base} PRIVILEGED HINT — key=${key}` : base,
+    prompt: privileged && key !== null ? `${base} PRIVILEGED HINT — key=${key}` : base,
     privileged,
   });
 }
 
 /**
- * Build an executable EvaluationEnvironment from a spec. Does NOT throw on empty
+ * Build an executable EvaluationEnvironment from a spec, threading the same
+ * `resolve` the grounding veto uses. Does NOT throw on empty / unresolved
  * evidence: a self-invented environment is representable so the grounding veto
  * can be PROVEN to reject it (the invariant is a promotion-path veto, ADR-324
- * §4, not a constructor guard). It does validate the shape of any evidence
- * present, and the env id/task.
+ * §4, not a constructor guard) — but its `verificationKey` is `null`, making it
+ * intrinsically UNSOLVABLE (defense-in-depth). It validates the shape of any
+ * evidence present, and the env id/task.
  */
-export function generateEnvironment(spec: EnvironmentSpec): GeneratedEnvironment {
+export async function generateEnvironment(
+  spec: EnvironmentSpec,
+  resolve: EvidenceResolver,
+): Promise<GeneratedEnvironment> {
   if (!spec.id) throw new Error("environment spec requires a non-empty id");
   if (!spec.task) throw new Error("environment spec requires a non-empty task");
   if (spec.provenance.citation !== SPADE_CITATION) {
@@ -245,7 +277,9 @@ export function generateEnvironment(spec: EnvironmentSpec): GeneratedEnvironment
   }
   for (const item of spec.provenance.evidence) assertExternalEvidence(item);
 
-  const key = verificationKeyFor(spec.provenance);
+  // Resolver-bound: null when the provenance does not resolve to real external
+  // content — an unusable key, never a fixed public constant.
+  const key = await verificationKeyFor(spec.provenance, resolve);
 
   const environment: EvaluationEnvironment = Object.freeze({
     id: spec.id,
@@ -259,7 +293,8 @@ export function generateEnvironment(spec: EnvironmentSpec): GeneratedEnvironment
       });
     },
     step(state: EnvState, action: string): EnvTransition {
-      const solved = action === key;
+      // A null (unresolved) key is unsatisfiable: no action solves it.
+      const solved = key !== null && action === key;
       const reward = solved ? 1 : 0;
       return Object.freeze({
         state: Object.freeze({ observation: state.observation, solved, reward }),
