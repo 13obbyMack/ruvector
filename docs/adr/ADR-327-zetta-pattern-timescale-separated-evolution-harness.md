@@ -36,8 +36,10 @@ own, would suggest no code exists. **It does not**: a GitHub search located
 `github.com/air-embodied-brain/Zetta-Embodiment`, owned by the "Embodied
 Brain Team at Institute for AI Industry Research (AIR), Tsinghua
 University," created 2026-08-18 — one day after the paper's submission
-date — public, 4,224 KB, 224 stars, 13 forks, last pushed
-2026-08-19T12:20:51Z. Its README opens with text matching the abstract
+date — public, 4,224 KB, 13 forks, last pushed 2026-08-19T12:20:51Z (star
+count omitted here — it drifts continuously and is not load-bearing
+evidence; size, forks, and push date are). Its README opens with text
+matching the abstract
 verbatim, including the exact 90.8%/93.6%/11.1x figures, and names the
 evolution loop's concrete stages: Failure Cluster → Stage 1 causal Diagnose
 → Stage 2 Critic-Recovery Candidates → Shadow Replay → paired Same-seed Gate

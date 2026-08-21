@@ -11,11 +11,16 @@
 Wave-3 evidence review grades this paper **A** —
 [arXiv:2608.17756](https://arxiv.org/abs/2608.17756), "D²ACCI: A Dual-Loop
 Diagnostic Protocol for Evidence-Preserving Agent Memory," submitted
-2026-08-18 (v1), revised 2026-08-19 (v2). **"D²ACCI (Dual-Loop Diagnostic
-Protocol for evidence-preserving agent memory)" is spelled out here on first
-use; every subsequent reference to D²ACCI in this program's documents should
-do the same, following the same discipline ADR-307 applies to TARL
-(Transaction-Aware Reliable Ledgers).**
+2026-08-18 (v1), revised 2026-08-19 (v2). **The title above is the paper's
+descriptive subtitle, not its acronym expansion — the abstract spells the
+acronym out separately and verbatim: "D²ACCI (Diagnostic-Driven
+Artifact-based Closed-loop Controlled Iteration)."** That expansion —
+**"D²ACCI (Diagnostic-Driven Artifact-based Closed-loop Controlled
+Iteration)"** — is spelled out here on first use; every subsequent
+reference to D²ACCI in this program's documents should use this same
+acronym expansion (not the paper's title subtitle, which may still be
+cited separately as the descriptive title), following the same discipline
+ADR-307 applies to TARL (Transaction-Aware Reliable Ledgers).
 
 Confirmed mechanism, verbatim against the abstract: a dual-loop design — an
 **inner loop**, the actual memory-augmented-agent execution, and an **outer
@@ -66,11 +71,14 @@ genuinely new contribution sits underneath both**: `ruvector` ADR-282's
 **outcome-level** gating — did the mutation's measured end-result improve?
 D²ACCI's dual-loop diagnostic protocol is **stage-level** — when a memory
 intervention regresses or fails to improve, which of the memory pipeline's
-five distinct stages (ingestion, extraction, retrieval, filtering,
-generation) is responsible? This is a different axis of diagnosis, not a
-duplicate of research-gate's existing outcome-level promotion decision, and
-this ADR does not replace `research-gate` — it adds a complementary,
-finer-grained fault-localization layer underneath it.
+**four** distinct stages — the abstract's own enumeration, verbatim, "its
+multi-stage pipeline (ingestion, retrieval, filtering, generation)" — is
+responsible? ("Supplement extraction" is one of the paper's five ablated
+*interventions*, not a named pipeline stage; conflating the two would
+overstate the abstract's own stage count.) This is a different axis of
+diagnosis, not a duplicate of research-gate's existing outcome-level
+promotion decision, and this ADR does not replace `research-gate` — it
+adds a complementary, finer-grained fault-localization layer underneath it.
 
 **Preprint-reproduction rule** (applies uniformly across this program, per
 `09-wave3-program-plan.md`): D²ACCI's reported figures (93.59% / 90.93% /
@@ -88,14 +96,14 @@ Make every RuVector memory strategy an **immutable versioned policy
 artifact**, gated by a stage-level diagnostic protocol informed by D²ACCI's
 mechanism (arXiv:2608.17756):
 
-1. **Immutable versioned memory-strategy artifacts.** Each retrieval
-   algorithm, ingestion pipeline, extraction rule, filtering policy, and
-   generation strategy in ADR-307's memory tiers becomes an immutable,
-   versioned artifact — a candidate mutation, not a strategy mutated in
-   place. This gives every memory change a stable identity to diagnose
-   against and promote/reject as a unit, mirroring how ADR-313 already
-   treats harness/skill mutations as versioned candidates rather than
-   in-place edits.
+1. **Immutable versioned memory-strategy artifacts.** Each ingestion
+   pipeline, retrieval algorithm, filtering policy, and generation strategy
+   in ADR-307's memory tiers — the abstract's own four pipeline stages —
+   becomes an immutable, versioned artifact — a candidate mutation, not a
+   strategy mutated in place. This gives every memory change a stable
+   identity to diagnose against and promote/reject as a unit, mirroring how
+   ADR-313 already treats harness/skill mutations as versioned candidates
+   rather than in-place edits.
 2. **A memory mutation promotes only when three conditions hold jointly**,
    following D²ACCI's confirmed dual-loop pattern: (a) paired evaluation
    (this program's existing `research-gate` paired-bootstrap statistics,
@@ -104,10 +112,10 @@ mechanism (arXiv:2608.17756):
    memory-dependent tasks the mutation is not tuned against — do not
    regress, mirroring D²ACCI's confirmed "protected-slice monitoring"; and
    (c) failure provenance, when the mutation does regress, stays
-   **localizable to exactly one of the five memory-pipeline stages**
-   (ingestion / extraction / retrieval / filtering / generation) rather than
-   surfacing only as an undifferentiated end-to-end score drop. All three
-   conditions are required; any one failing blocks promotion.
+   **localizable to exactly one of the four memory-pipeline stages**
+   (ingestion / retrieval / filtering / generation) rather than surfacing
+   only as an undifferentiated end-to-end score drop. All three conditions
+   are required; any one failing blocks promotion.
 3. **Retrieval algorithms become Darwin candidates.** HNSW, graph-based
    retrieval, BM25, temporal retrieval, attractor-based retrieval, and
    learned retrieval strategies are each registered as Darwin mutation
@@ -121,7 +129,7 @@ mechanism (arXiv:2608.17756):
    ADR-306).** A memory-strategy candidate must still clear
    `research-gate`'s ordinary outcome-level promotion path; this ADR adds a
    finer-grained, stage-localized diagnostic requirement on top, specific to
-   the memory pipeline's five-stage structure, which `research-gate`'s
+   the memory pipeline's four-stage structure, which `research-gate`'s
    general-purpose statistics do not model.
 5. **First-party build, no code to adapt.** Because no reference
    implementation of D²ACCI or MemStack was found, this program implements
@@ -136,9 +144,9 @@ mechanism (arXiv:2608.17756):
 
 - Gives the memory subsystem a genuine stage-level fault-localization
   capability that `research-gate`'s existing outcome-level statistics do not
-  provide today — a regression can be attributed to ingestion, extraction,
-  retrieval, filtering, or generation specifically, rather than only "the
-  end-to-end score got worse."
+  provide today — a regression can be attributed to ingestion, retrieval,
+  filtering, or generation specifically, rather than only "the end-to-end
+  score got worse."
 - The three-condition joint-promotion bar (paired improvement, protected-slice
   non-regression, single-stage localizability) gives ADR-307's and ADR-320's
   memory tiers a structural defense against a mutation that improves one
@@ -169,7 +177,7 @@ mechanism (arXiv:2608.17756):
   evaluation, adding CI/evaluation latency to the memory-mutation path
   specifically.
 - Stage-level localizability is itself a design and validation challenge:
-  a memory pipeline's five stages are not always cleanly separable in a real
+  a memory pipeline's four stages are not always cleanly separable in a real
   implementation (e.g. a retrieval-stage change can shift what the filtering
   stage sees), and this ADR does not itself resolve how boundary cases are
   attributed — that is left to the owning work package's implementation.

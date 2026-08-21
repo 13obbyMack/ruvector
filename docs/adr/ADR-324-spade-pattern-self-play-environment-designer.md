@@ -39,8 +39,10 @@ uses that phrase, and no derived document may attribute it to the paper.
 states, verbatim, "Work in progress. Project page:
 https://spade-rl.github.io ; Code: https://github.com/spade-rl/spade."
 Verified directly via the GitHub API: `spade-rl/spade` is public, 1,389 KB,
-31 stars, 3 forks, MIT license, last pushed 2026-08-20T05:20:09Z, containing
-real training scripts for 4B/8B/30B models, Slime/SGLang + Megatron-LM
+3 forks, MIT license, last pushed 2026-08-20T05:20:09Z (star count omitted
+here — it drifts continuously and is not load-bearing evidence; size,
+forks, license, and push date are), containing real training scripts for
+4B/8B/30B models, Slime/SGLang + Megatron-LM
 integration, and an eval harness — not a placeholder. This ADR adapts the
 confirmed-live implementation, the same posture ADR-320 and ADR-321 apply to
 MemFuse and SkillForge.
