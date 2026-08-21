@@ -40,6 +40,7 @@
 //! - Survey 2026, "From Storage to Experience" (arXiv:2605.06716)
 
 pub mod compaction;
+pub mod diagnostic;
 pub mod fusion;
 pub mod ledger;
 pub mod memory;
@@ -48,6 +49,12 @@ pub mod ops;
 pub mod scoring;
 
 pub use compaction::{CoherencePolicy, CoherenceWeights, CompactionPolicy, LfuPolicy, LruPolicy};
+pub use diagnostic::{
+    apply_gated_promotion, diagnostic_coverage, evaluate_promotion, gate_and_apply,
+    localized_stage, BlockReason, DiagnosticError, DiagnosticTrace, GatedPromotion, MemoryPolicy,
+    MemoryStage, PairedEvaluation, PairedOutcome, PolicySet, PromotionDecision,
+    ProtectedSliceResult, RetrievalStrategy, StageSignal, LOCALIZATION_THRESHOLD,
+};
 pub use fusion::{CausalEpisodicGraph, ClusterId, FusedCluster, FusionError, NodeRef};
 #[cfg(feature = "proof-gate")]
 pub use ledger::WriteGateAdapter;
