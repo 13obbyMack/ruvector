@@ -171,6 +171,24 @@ mod tests {
     }
 
     #[test]
+    fn nan_latent_never_accepted_at_the_gate() {
+        // Defense-in-depth: even if a non-finite latent reached the gate directly
+        // (bypassing the incorporate choke point), guarded cosine returns 0.0 (not
+        // NaN), so attribution < threshold and the message is Rejected — never the
+        // silent NaN→Accept fall-through.
+        let mut map = ThoughtMap::new();
+        let a = map.add_step(PeerId(1), vec![1.0, 0.0, 0.0], "A");
+        let _b = map.add_step(PeerId(2), vec![0.0, 1.0, 0.0], "B");
+        let v = ControlledReplacementVerifier::default();
+
+        let nan = msg(9, vec![f32::NAN, 0.0, 0.0], a);
+        assert!(!v.verify(&map, &nan).is_accepted(), "NaN must not be accepted");
+
+        let inf = msg(9, vec![f32::INFINITY, 0.0, 0.0], a);
+        assert!(!v.verify(&map, &inf).is_accepted(), "inf must not be accepted");
+    }
+
+    #[test]
     fn missing_antecedent_is_rejected() {
         let map = ThoughtMap::new();
         let m = msg(9, vec![1.0, 0.0, 0.0], StepId(42));

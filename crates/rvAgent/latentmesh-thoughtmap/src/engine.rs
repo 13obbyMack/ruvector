@@ -41,6 +41,12 @@ pub enum Incorporation {
 /// Why a message was rejected (distinct from being dampened for quarantine).
 #[derive(Debug, Clone, PartialEq)]
 pub enum RejectionKind {
+    /// The latent payload contained a non-finite (NaN/±inf) element. Such a
+    /// message is malformed/hostile and is rejected at the choke point *before*
+    /// the causal gate — a NaN would otherwise make every `<`-comparison in the
+    /// gate false and silently fall through to Accept, then poison the map-wide
+    /// control population. This is the real fix for that class of attack.
+    NonFinite,
     /// Integrity tag did not match (tampering) — ADR-311.
     Integrity,
     /// Failed the causal-attribution gate — ADR-310.
@@ -72,6 +78,17 @@ impl<V: CausalVerifier> ReasoningEngine<V> {
     /// thought graph iff it passes every gate. Order is deliberate: cheap
     /// tamper-evidence first, then quarantine, then the causal audit.
     pub fn incorporate(&mut self, msg: &LatentMessage) -> Incorporation {
+        // 0. Finiteness (the real NaN-bypass fix). A non-finite latent would make
+        //    the causal gate's `<`-comparisons false and fall through to Accept,
+        //    then poison the map-wide control. Reject BEFORE any gate, never write
+        //    it, and strike the sender — a non-finite injection IS map degradation
+        //    (this is where the previously-unrecorded MapDegradation anomaly is
+        //    wired), so a repeat offender quarantines instead of retrying forever.
+        if !crate::vecmath::is_finite(&msg.latent) {
+            self.quarantine.record(msg.from, Anomaly::MapDegradation);
+            return Incorporation::Rejected(RejectionKind::NonFinite);
+        }
+
         // 1. Integrity (ADR-311). A tampered channel is the strongest anomaly.
         let expected = integrity_tag(msg.from, msg.to, &msg.latent, msg.causal.antecedent);
         if msg.integrity != expected {

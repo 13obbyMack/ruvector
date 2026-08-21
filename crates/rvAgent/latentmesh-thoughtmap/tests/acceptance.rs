@@ -136,6 +136,102 @@ fn latent_message_failing_causal_verification_is_rejected_not_incorporated() {
     assert_eq!(engine.map.node_count(), nodes_before + 1);
 }
 
+// 3n — SECURITY PROOF (NaN bypass): a NON-FINITE latent must NOT slip through
+//      the causal gate. A NaN would make the gate's `<`-comparisons false and
+//      fall through to Accept; it is instead rejected at the choke point, never
+//      written, and the sender is struck (not left at strikes=0 to retry).
+#[test]
+fn nan_latent_is_rejected_not_accepted_and_strikes_sender() {
+    let mut engine = engine_with_root();
+    let before = engine.map.node_count();
+    let attacker = PeerId(77);
+
+    // NaN latent that claims a REAL antecedent (root). Correctly integrity-stamped
+    // so only the finiteness guard can catch it.
+    let nan = signed_msg(attacker.0, 0, vec![f32::NAN, 0.1, 0.0], ROOT_STEP);
+    assert_eq!(
+        engine.incorporate(&nan),
+        Incorporation::Rejected(RejectionKind::NonFinite),
+        "a NaN latent must be REJECTED, never fall through to Accept"
+    );
+    assert_eq!(
+        engine.map.node_count(),
+        before,
+        "rejected NaN message must NOT be written to the thought graph"
+    );
+    assert!(
+        engine.quarantine.strikes(attacker) > 0,
+        "malformed NaN message must strike the sender, not leave it at strikes=0"
+    );
+
+    // A repeat offender quarantines instead of retrying forever.
+    let nan2 = signed_msg(attacker.0, 0, vec![f32::NAN, 0.0, 0.0], ROOT_STEP);
+    let _ = engine.incorporate(&nan2);
+    assert!(
+        engine.quarantine.is_quarantined(attacker),
+        "a repeat non-finite offender must eventually quarantine"
+    );
+}
+
+// 3i — Same for +inf / -inf latents.
+#[test]
+fn infinite_latent_is_rejected() {
+    let mut engine = engine_with_root();
+    let before = engine.map.node_count();
+    for bad in [f32::INFINITY, f32::NEG_INFINITY] {
+        let msg = signed_msg(78, 0, vec![bad, 0.0, 0.0], ROOT_STEP);
+        assert_eq!(
+            engine.incorporate(&msg),
+            Incorporation::Rejected(RejectionKind::NonFinite)
+        );
+    }
+    assert_eq!(engine.map.node_count(), before, "no inf latent may be stored");
+}
+
+// 3c — CASCADE PROOF: a rejected non-finite injection must NOT poison the
+//      map-wide control. A genuinely-spurious message stays Rejected(Spurious)
+//      afterwards (the specificity check still fires — control is not NaN).
+#[test]
+fn nonfinite_injection_does_not_poison_mapwide_specificity_control() {
+    // A map whose nodes share one direction, so a message aligned with it is
+    // genuinely spurious (explained equally by any node).
+    let mut map = ThoughtMap::new();
+    let a = map.add_step(PeerId(0), vec![1.0, 1.0, 1.0], "a");
+    map.add_step(PeerId(0), vec![1.0, 1.0, 1.0], "b");
+    map.add_step(PeerId(0), vec![1.0, 1.0, 1.0], "c");
+    let mut engine = ReasoningEngine::new(
+        map,
+        ControlledReplacementVerifier::default(),
+        Quarantine::default(),
+        DeadEndPolicy::default(),
+    );
+
+    // Baseline: a spurious message is correctly Rejected(Spurious).
+    let spurious_before = signed_msg(6, 0, vec![1.0, 1.0, 1.0], a);
+    assert_eq!(
+        engine.incorporate(&spurious_before),
+        Incorporation::Rejected(RejectionKind::Causal(RejectReason::Spurious))
+    );
+
+    // Attempt a NaN injection — rejected, nothing written.
+    let nan = signed_msg(50, 0, vec![f32::NAN, 0.0, 0.0], a);
+    assert_eq!(
+        engine.incorporate(&nan),
+        Incorporation::Rejected(RejectionKind::NonFinite)
+    );
+    assert_eq!(engine.map.node_count(), 3, "NaN injection wrote nothing");
+
+    // CASCADE CHECK: the spurious message is STILL Rejected(Spurious). If the NaN
+    // had poisoned the control (mean → NaN → control_attribution NaN), the
+    // specificity check would silently pass and this would wrongly Accept.
+    let spurious_after = signed_msg(7, 0, vec![1.0, 1.0, 1.0], a);
+    assert_eq!(
+        engine.incorporate(&spurious_after),
+        Incorporation::Rejected(RejectionKind::Causal(RejectReason::Spurious)),
+        "map-wide specificity control must survive a rejected non-finite injection"
+    );
+}
+
 // 3b — A tampered (bad-integrity) message is rejected before the causal gate.
 #[test]
 fn tampered_message_is_rejected_on_integrity() {

@@ -141,6 +141,15 @@ impl ThoughtGraphBackend for ThoughtMap {
     fn add_step(&mut self, author: PeerId, latent: Vec<f32>, summary: impl Into<String>) -> StepId {
         let id = StepId(self.next_step);
         self.next_step += 1;
+        // Defense-in-depth: never store a non-finite latent, even if a caller
+        // bypassed the `incorporate` choke point. A non-finite element is
+        // sanitized to 0.0 so the map's signatures — and the control population
+        // derived from them — stay finite and the causal gate cannot silently
+        // degrade. The real fix rejects such messages before they reach here.
+        let latent: Vec<f32> = latent
+            .into_iter()
+            .map(|x| if x.is_finite() { x } else { 0.0 })
+            .collect();
         self.nodes.push(ThoughtNode {
             id,
             author,
