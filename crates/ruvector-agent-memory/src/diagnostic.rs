@@ -363,10 +363,13 @@ impl DiagnosticTrace {
     }
 }
 
-/// Minimum share of localization mass the dominant stage must hold for an
-/// outcome to count as localized to *exactly one* stage. A genuine
-/// single-stage trace yields coverage near 1.0; four equally-attributed stages
-/// yield 0.25 (blocked).
+/// The dominant stage must hold a **strict majority** of the localization mass
+/// (coverage *strictly greater* than this) for an outcome to count as localized
+/// to *exactly one* stage — D²ACCI's headline property. A genuine single-stage
+/// trace yields coverage near 1.0; four equally-attributed stages yield 0.25
+/// (blocked); and a two-way 50/50 tie yields exactly 0.5, which is **not** a
+/// strict majority and so blocks as `NonLocalizable` rather than being
+/// arbitrarily attributed to one of the two tied stages.
 pub const LOCALIZATION_THRESHOLD: f32 = 0.5;
 
 /// The paper's graded **DCR** observability metric (the paper uses the token
@@ -399,13 +402,19 @@ pub fn diagnostic_coverage(trace: &DiagnosticTrace) -> f32 {
 }
 
 /// The stage a trace localizes to, or `None` when the outcome is not
-/// localizable to exactly one stage (coverage below [`LOCALIZATION_THRESHOLD`],
-/// or a result-only log).
+/// localizable to exactly one stage — i.e. the dominant stage does not hold a
+/// *strict majority* of the localization mass (coverage at or below
+/// [`LOCALIZATION_THRESHOLD`]), or the trace is a result-only log.
+///
+/// The strict-majority test is deliberate: a two-way 50/50 tie yields coverage
+/// exactly 0.5 and blocks as `NonLocalizable` rather than being arbitrarily
+/// attributed to one of the two tied stages — D²ACCI localizes to *exactly one*
+/// stage, and two equally-implicated stages are not one stage.
 pub fn localized_stage(trace: &DiagnosticTrace) -> Option<MemoryStage> {
     let DiagnosticTrace::Staged { signals, .. } = trace else {
         return None;
     };
-    if diagnostic_coverage(trace) < LOCALIZATION_THRESHOLD {
+    if diagnostic_coverage(trace) <= LOCALIZATION_THRESHOLD {
         return None;
     }
     signals
@@ -808,6 +817,49 @@ mod tests {
         assert!(ledger.entries_in(LedgerState::Accepted).is_empty());
     }
 
+    // ── 2c. strict majority: a 50/50 tie blocks; a clear dominant promotes ───
+
+    #[test]
+    fn strict_majority_required_two_way_tie_blocks() {
+        // Exactly two stages, equally implicated (coverage 0.5). Not a strict
+        // majority → NonLocalizable, never arbitrarily attributed to one.
+        let tie = DiagnosticTrace::staged(
+            0.02,
+            [
+                StageSignal::new(MemoryStage::Retrieval, 0.5),
+                StageSignal::new(MemoryStage::Filtering, 0.5),
+            ],
+        );
+        assert!((diagnostic_coverage(&tie) - 0.5).abs() < 1e-6);
+        assert_eq!(localized_stage(&tie), None);
+        assert_eq!(
+            evaluate_promotion(&passing(), &no_regression(), &tie),
+            PromotionDecision::Blocked {
+                reason: BlockReason::NonLocalizable,
+                coverage: 0.5,
+            }
+        );
+
+        // A clear dominant stage (0.6 vs 0.4, coverage 0.6 > 0.5) IS a strict
+        // majority → promotes, localized to the dominant stage.
+        let dominant = DiagnosticTrace::staged(
+            0.02,
+            [
+                StageSignal::new(MemoryStage::Retrieval, 0.6),
+                StageSignal::new(MemoryStage::Filtering, 0.4),
+            ],
+        );
+        assert!((diagnostic_coverage(&dominant) - 0.6).abs() < 1e-6);
+        assert_eq!(localized_stage(&dominant), Some(MemoryStage::Retrieval));
+        match evaluate_promotion(&passing(), &no_regression(), &dominant) {
+            PromotionDecision::Promote { stage, coverage } => {
+                assert_eq!(stage, MemoryStage::Retrieval);
+                assert!((coverage - 0.6).abs() < 1e-6);
+            }
+            other => panic!("expected Promote on strict majority, got {other:?}"),
+        }
+    }
+
     // ── 3. result-only log → non-diagnosable → BLOCKED ───────────────────────
 
     #[test]
@@ -904,7 +956,8 @@ mod tests {
         let single = DiagnosticTrace::staged(0.1, [StageSignal::new(MemoryStage::Generation, 0.7)]);
         assert!((diagnostic_coverage(&single) - 1.0).abs() < 1e-6);
         assert_eq!(localized_stage(&single), Some(MemoryStage::Generation));
-        // Two equal stages: 0.5 (boundary — meets threshold, picks one).
+        // Two equal stages: coverage 0.5 — NOT a strict majority, so this is a
+        // two-way tie and does NOT localize to one stage (blocks downstream).
         let two = DiagnosticTrace::staged(
             0.1,
             [
@@ -913,6 +966,7 @@ mod tests {
             ],
         );
         assert!((diagnostic_coverage(&two) - 0.5).abs() < 1e-6);
+        assert_eq!(localized_stage(&two), None, "a 50/50 tie is not one stage");
         // Unattributed stages contribute no mass.
         let unattributed = DiagnosticTrace::staged(
             0.1,
