@@ -101,7 +101,20 @@ impl Router {
                     // outweighs its cost (PIR WP28, ADR-331). Otherwise the
                     // legacy threshold rule applies unchanged.
                     let use_lightweight = match &self.config.voi {
-                        Some(gate) => self.voi_use_lightweight(gate, score, uncertainty)?,
+                        Some(gate) => match self.voi_use_lightweight(gate, score, uncertainty) {
+                            Ok(lightweight) => lightweight,
+                            // A non-finite model output is a model failure, so
+                            // it must reach the circuit breaker before the
+                            // error propagates — otherwise a degenerate model
+                            // can be hammered indefinitely through the gated
+                            // path without ever tripping the breaker.
+                            Err(e) => {
+                                if let Some(ref cb) = self.circuit_breaker {
+                                    cb.record_failure();
+                                }
+                                return Err(e);
+                            }
+                        },
                         None => {
                             score >= self.config.confidence_threshold
                                 && uncertainty <= self.config.max_uncertainty
@@ -348,6 +361,49 @@ mod tests {
                 "failed to escalate: cost={cost} noise={noise_std} score={score} uncertainty={uncertainty}"
             );
         }
+    }
+
+    #[test]
+    fn voi_gate_failures_trip_the_circuit_breaker() {
+        // A model emitting non-finite scores must reach the breaker through
+        // the gated path: without record_failure on that branch, a degenerate
+        // model can be hammered indefinitely because the errors return before
+        // the breaker is ever told.
+        let router = gated_router(0.01, 0.1);
+        let threshold = router.config().circuit_breaker_threshold;
+
+        // Poison a bias so every forward() yields NaN.
+        {
+            let mut model = router.model.write();
+            for bias in model.biases_mut() {
+                bias.fill(f32::NAN);
+            }
+        }
+
+        let request = RoutingRequest {
+            query_embedding: vec![0.5; 384],
+            candidates: vec![Candidate {
+                id: "1".to_string(),
+                embedding: vec![0.5; 384],
+                metadata: HashMap::new(),
+                created_at: Utc::now().timestamp(),
+                access_count: 1,
+                success_rate: 0.9,
+            }],
+            metadata: None,
+        };
+
+        assert!(router.circuit_breaker_status().unwrap(), "starts closed");
+        for i in 0..threshold {
+            assert!(
+                router.route(request.clone()).is_err(),
+                "non-finite score must error on attempt {i}"
+            );
+        }
+        assert!(
+            !router.circuit_breaker_status().unwrap(),
+            "breaker must open after {threshold} consecutive non-finite outputs"
+        );
     }
 
     #[test]
