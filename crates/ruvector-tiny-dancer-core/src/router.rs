@@ -6,6 +6,7 @@ use crate::feature_engineering::FeatureEngineer;
 use crate::model::FastGRNN;
 use crate::types::{RouterConfig, RoutingDecision, RoutingRequest, RoutingResponse};
 use crate::uncertainty::UncertaintyEstimator;
+use crate::voi::{self, Belief, VoiConfig, VoiDecision};
 use parking_lot::RwLock;
 use std::sync::Arc;
 use std::time::Instant;
@@ -34,6 +35,17 @@ impl Router {
         } else {
             None
         };
+
+        // Validate the optional VoI gate at construction so route() can
+        // trust it (PIR WP28, ADR-331).
+        if let Some(gate) = &config.voi {
+            gate.escalation.validate()?;
+            VoiConfig {
+                value_of_success: gate.value_of_success,
+                latency_price: gate.latency_price,
+            }
+            .validate()?;
+        }
 
         Ok(Self {
             config,
@@ -83,9 +95,18 @@ impl Router {
                         .uncertainty_estimator
                         .estimate(&features.features, score);
 
-                    // Determine routing decision
-                    let use_lightweight = score >= self.config.confidence_threshold
-                        && uncertainty <= self.config.max_uncertainty;
+                    // Determine routing decision. With a VoI gate configured,
+                    // escalation to the powerful model is an estimator
+                    // purchase: buy it only when the expected quality gain
+                    // outweighs its cost (PIR WP28, ADR-331). Otherwise the
+                    // legacy threshold rule applies unchanged.
+                    let use_lightweight = match &self.config.voi {
+                        Some(gate) => self.voi_use_lightweight(gate, score, uncertainty)?,
+                        None => {
+                            score >= self.config.confidence_threshold
+                                && uncertainty <= self.config.max_uncertainty
+                        }
+                    };
 
                     decisions.push(RoutingDecision {
                         candidate_id: candidate.id.clone(),
@@ -120,6 +141,36 @@ impl Router {
             candidates_processed: request.candidates.len(),
             feature_time_us,
         })
+    }
+
+    /// VoI escalation decision for one scored candidate: belief mean is the
+    /// model score, belief std is the conformal uncertainty (floored so the
+    /// prior stays proper), and the outside option is the configured
+    /// confidence threshold. Non-finite scores are rejected here, BEFORE any
+    /// comparison — a NaN score must fail loudly rather than silently pick a
+    /// route.
+    fn voi_use_lightweight(
+        &self,
+        gate: &crate::types::VoiGateConfig,
+        score: f32,
+        uncertainty: f32,
+    ) -> Result<bool> {
+        if !score.is_finite() || !uncertainty.is_finite() {
+            return Err(TinyDancerError::InvalidInput(format!(
+                "non-finite model output reached the VoI gate: score={score}, uncertainty={uncertainty}"
+            )));
+        }
+        let belief = Belief::new(score as f64, f64::from(uncertainty).max(1e-6))?;
+        let decision = voi::decide(
+            belief,
+            f64::from(self.config.confidence_threshold),
+            std::slice::from_ref(&gate.escalation),
+            &VoiConfig {
+                value_of_success: gate.value_of_success,
+                latency_price: gate.latency_price,
+            },
+        )?;
+        Ok(decision == VoiDecision::Route)
     }
 
     /// Reload the model from disk
@@ -188,5 +239,74 @@ mod tests {
         let response = router.route(request).unwrap();
         assert_eq!(response.decisions.len(), 2);
         assert!(response.inference_time_us > 0);
+    }
+
+    #[test]
+    fn test_routing_with_voi_gate() {
+        use crate::types::VoiGateConfig;
+        use crate::voi::EstimatorSpec;
+
+        let request = |candidates| RoutingRequest {
+            query_embedding: vec![0.5; 384],
+            candidates,
+            metadata: None,
+        };
+        let candidate = Candidate {
+            id: "1".to_string(),
+            embedding: vec![0.5; 384],
+            metadata: HashMap::new(),
+            created_at: Utc::now().timestamp(),
+            access_count: 10,
+            success_rate: 0.95,
+        };
+
+        // A prohibitively expensive escalation estimator is never bought:
+        // every decision must fall back to the lightweight route.
+        let mut config = RouterConfig::default();
+        config.voi = Some(VoiGateConfig {
+            value_of_success: 1.0,
+            latency_price: 0.0,
+            escalation: EstimatorSpec {
+                cost: 1e9,
+                latency_us: 0.0,
+                noise_std: 0.0,
+            },
+        });
+        let router = Router::new(config).unwrap();
+        let response = router.route(request(vec![candidate.clone()])).unwrap();
+        assert!(response.decisions[0].use_lightweight);
+
+        // A free perfect estimator is always bought: escalate.
+        let mut config = RouterConfig::default();
+        config.voi = Some(VoiGateConfig {
+            value_of_success: 1.0,
+            latency_price: 0.0,
+            escalation: EstimatorSpec {
+                cost: 0.0,
+                latency_us: 0.0,
+                noise_std: 0.0,
+            },
+        });
+        let router = Router::new(config).unwrap();
+        let response = router.route(request(vec![candidate])).unwrap();
+        assert!(!response.decisions[0].use_lightweight);
+    }
+
+    #[test]
+    fn test_invalid_voi_gate_rejected_at_construction() {
+        use crate::types::VoiGateConfig;
+        use crate::voi::EstimatorSpec;
+
+        let mut config = RouterConfig::default();
+        config.voi = Some(VoiGateConfig {
+            value_of_success: f64::NAN,
+            latency_price: 0.0,
+            escalation: EstimatorSpec {
+                cost: 0.0,
+                latency_us: 0.0,
+                noise_std: 0.1,
+            },
+        });
+        assert!(Router::new(config).is_err());
     }
 }

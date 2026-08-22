@@ -1,5 +1,6 @@
 //! Core types for Tiny Dancer routing system
 
+use crate::voi::EstimatorSpec;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -105,6 +106,21 @@ impl Default for RoutingMetrics {
     }
 }
 
+/// Optional value-of-information gate for the escalation decision
+/// (PIR WP28, ADR-331; arXiv:2608.20316). When set, the lightweight-vs-
+/// powerful choice is made by [`crate::voi::decide`]: the powerful model is
+/// modeled as a purchasable estimator, and it is invoked only when the
+/// expected quality gain (priced by `value_of_success`) exceeds its cost.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct VoiGateConfig {
+    /// Currency value of one unit of routing utility.
+    pub value_of_success: f64,
+    /// Currency price per microsecond of added latency.
+    pub latency_price: f64,
+    /// Cost/latency/noise model of escalating to the powerful model.
+    pub escalation: EstimatorSpec,
+}
+
 /// Configuration for the router
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouterConfig {
@@ -122,6 +138,10 @@ pub struct RouterConfig {
     pub enable_quantization: bool,
     /// Database path for AgentDB
     pub database_path: Option<String>,
+    /// Optional VoI escalation gate (off by default; absent in older
+    /// serialized configs, hence `serde(default)`).
+    #[serde(default)]
+    pub voi: Option<VoiGateConfig>,
 }
 
 impl Default for RouterConfig {
@@ -134,6 +154,7 @@ impl Default for RouterConfig {
             circuit_breaker_threshold: 5,
             enable_quantization: true,
             database_path: None,
+            voi: None,
         }
     }
 }
