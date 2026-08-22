@@ -149,6 +149,17 @@ impl Router {
     /// confidence threshold. Non-finite scores are rejected here, BEFORE any
     /// comparison — a NaN score must fail loudly rather than silently pick a
     /// route.
+    ///
+    /// The gate is **escalate-only** — the downgrade-only analog used
+    /// elsewhere in the program for metric-integrity gates. A positive-VoI
+    /// purchase can flip a would-be-lightweight route into an escalation, but
+    /// [`VoiDecision::Route`] (no purchase worth making) falls back to the
+    /// legacy threshold rule rather than asserting "lightweight". Reading
+    /// `Route` as "use the cheap model" would make the gate fail open:
+    /// `confidence_threshold` and `max_uncertainty` would never be consulted
+    /// on the gated path, so the least-confident queries — exactly the ones
+    /// escalation exists for — would silently take the cheap model whenever
+    /// escalation is priced above the VoI.
     fn voi_use_lightweight(
         &self,
         gate: &crate::types::VoiGateConfig,
@@ -170,7 +181,15 @@ impl Router {
                 latency_price: gate.latency_price,
             },
         )?;
-        Ok(decision == VoiDecision::Route)
+        Ok(match decision {
+            // Escalation is worth buying.
+            VoiDecision::Buy(_) => false,
+            // Nothing worth buying — the legacy rule still governs.
+            VoiDecision::Route => {
+                score >= self.config.confidence_threshold
+                    && uncertainty <= self.config.max_uncertainty
+            }
+        })
     }
 
     /// Reload the model from disk
@@ -241,11 +260,29 @@ mod tests {
         assert!(response.inference_time_us > 0);
     }
 
-    #[test]
-    fn test_routing_with_voi_gate() {
+    fn gated_router(cost: f64, noise_std: f64) -> Router {
         use crate::types::VoiGateConfig;
         use crate::voi::EstimatorSpec;
 
+        let mut config = RouterConfig::default();
+        config.voi = Some(VoiGateConfig {
+            value_of_success: 1.0,
+            latency_price: 0.0,
+            escalation: EstimatorSpec {
+                cost,
+                latency_us: 0.0,
+                noise_std,
+            },
+        });
+        Router::new(config).unwrap()
+    }
+
+    fn legacy_lightweight(config: &RouterConfig, score: f32, uncertainty: f32) -> bool {
+        score >= config.confidence_threshold && uncertainty <= config.max_uncertainty
+    }
+
+    #[test]
+    fn test_routing_with_voi_gate() {
         let request = |candidates| RoutingRequest {
             query_embedding: vec![0.5; 384],
             candidates,
@@ -260,36 +297,69 @@ mod tests {
             success_rate: 0.95,
         };
 
-        // A prohibitively expensive escalation estimator is never bought:
-        // every decision must fall back to the lightweight route.
-        let mut config = RouterConfig::default();
-        config.voi = Some(VoiGateConfig {
-            value_of_success: 1.0,
-            latency_price: 0.0,
-            escalation: EstimatorSpec {
-                cost: 1e9,
-                latency_us: 0.0,
-                noise_std: 0.0,
-            },
-        });
-        let router = Router::new(config).unwrap();
-        let response = router.route(request(vec![candidate.clone()])).unwrap();
-        assert!(response.decisions[0].use_lightweight);
-
         // A free perfect estimator is always bought: escalate.
-        let mut config = RouterConfig::default();
-        config.voi = Some(VoiGateConfig {
-            value_of_success: 1.0,
-            latency_price: 0.0,
-            escalation: EstimatorSpec {
-                cost: 0.0,
-                latency_us: 0.0,
-                noise_std: 0.0,
-            },
-        });
-        let router = Router::new(config).unwrap();
+        let router = gated_router(0.0, 0.0);
         let response = router.route(request(vec![candidate])).unwrap();
         assert!(!response.decisions[0].use_lightweight);
+    }
+
+    #[test]
+    fn voi_gate_is_escalate_only_not_fail_open() {
+        // Regression: reading VoiDecision::Route as "use lightweight" made
+        // the gate fail open, voiding confidence_threshold and
+        // max_uncertainty on the gated path. An unpurchasable escalation
+        // must leave the legacy rule exactly as it was.
+        let router = gated_router(1e9, 0.0);
+        let config = router.config();
+        for &(score, uncertainty) in &[
+            (0.10f32, 0.05f32), // far below threshold — must escalate
+            (0.90, 0.90),       // confident but 6x over max_uncertainty
+            (0.90, 0.05),       // genuinely safe for the cheap model
+            (0.85, 0.15),       // exactly on both boundaries
+            (0.84, 0.15),       // a hair under the confidence threshold
+        ] {
+            let gate = config.voi.as_ref().unwrap();
+            let gated = router
+                .voi_use_lightweight(gate, score, uncertainty)
+                .unwrap();
+            assert_eq!(
+                gated,
+                legacy_lightweight(config, score, uncertainty),
+                "gated path diverged from legacy at score={score} uncertainty={uncertainty}"
+            );
+        }
+    }
+
+    #[test]
+    fn voi_gate_escalates_the_low_confidence_tail() {
+        // The three audited scenarios: each must escalate (use_lightweight
+        // == false), whatever the escalation is priced at.
+        let cases = [
+            // (cost, noise_std, score, uncertainty)
+            (0.01, 0.1, 0.10f32, 0.05f32), // cheap escalation, unconfident
+            (0.0, 0.0, 0.10, 0.05),        // free perfect oracle, unconfident
+            (0.50, 0.1, 0.90, 0.90),       // pricey escalation, over-uncertain
+        ];
+        for &(cost, noise_std, score, uncertainty) in &cases {
+            let router = gated_router(cost, noise_std);
+            let gate = router.config().voi.as_ref().unwrap();
+            assert!(
+                !router.voi_use_lightweight(gate, score, uncertainty).unwrap(),
+                "failed to escalate: cost={cost} noise={noise_std} score={score} uncertainty={uncertainty}"
+            );
+        }
+    }
+
+    #[test]
+    fn voi_gate_rejects_non_finite_model_output() {
+        // Fail loud rather than resolving NaN to a route in either direction.
+        let router = gated_router(0.01, 0.1);
+        let gate = router.config().voi.as_ref().unwrap();
+        assert!(router.voi_use_lightweight(gate, f32::NAN, 0.05).is_err());
+        assert!(router.voi_use_lightweight(gate, 0.5, f32::NAN).is_err());
+        assert!(router
+            .voi_use_lightweight(gate, f32::INFINITY, 0.05)
+            .is_err());
     }
 
     #[test]

@@ -36,6 +36,16 @@
 //! `VoI` is maximized at `a = μ`, giving the upper bound `s·φ(0) = s/√(2π)` —
 //! no estimator purchase can ever be worth more than that in utility units.
 //!
+//! # Calibrating `value_of_success`
+//!
+//! That bound is roughly `0.4σ`, so on a `[0, 1]`-scale utility with a
+//! typical `σ ≈ 0.05` an estimator is worth at most `value_of_success × 0.02`.
+//! Leaving `value_of_success` at a nominal `1.0` therefore makes any
+//! estimator costing more than about two cents permanently unpurchasable, and
+//! a gate built on it degenerates into a never-buy switch that still looks
+//! configured. Express `value_of_success` as the currency value of a correct
+//! decision, and sanity-check with [`voi_upper_bound`].
+//!
 //! # Intended call sites
 //!
 //! [`decide`] is a standalone pure function so the same primitive can gate
@@ -84,7 +94,8 @@ fn norm_cdf(x: f64) -> f64 {
     let t = 1.0 / (1.0 + 0.327_591_1 * z);
     let poly = t
         * (0.254_829_592
-            + t * (-0.284_496_736 + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
+            + t * (-0.284_496_736
+                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
     let erf = sign * (1.0 - poly * (-z * z).exp());
     0.5 * (1.0 + erf)
 }
@@ -103,7 +114,9 @@ impl Belief {
         require_finite("belief mean", mean)?;
         require_finite("belief std_dev", std_dev)?;
         if std_dev <= 0.0 {
-            return Err(invalid(format!("belief std_dev must be > 0, got {std_dev}")));
+            return Err(invalid(format!(
+                "belief std_dev must be > 0, got {std_dev}"
+            )));
         }
         Ok(Self { mean, std_dev })
     }
@@ -201,9 +214,18 @@ pub enum VoiDecision {
 /// Standard deviation `s` of the prior-predictive posterior mean:
 /// `s² = σ⁴/(σ² + τ²)`. `τ = 0` gives `s = σ` (a perfect estimator reveals
 /// the full prior uncertainty).
+///
+/// Evaluated as `σ / √(1 + (τ/σ)²)` rather than literally: the σ⁴ form
+/// underflows to `0/0 = NaN` for small-but-legal σ (σ = 1e-200 squares to
+/// zero), and a NaN ceiling silently defeats every `cost > bound` check
+/// downstream. The ratio form is exact for the same inputs and degrades to
+/// `0` — "this estimator reveals nothing" — when τ/σ overflows.
 fn predictive_mean_std(sigma: f64, tau: f64) -> f64 {
-    let s2 = sigma * sigma;
-    (s2 * s2 / (s2 + tau * tau)).sqrt()
+    if tau == 0.0 {
+        return sigma;
+    }
+    let ratio = tau / sigma;
+    sigma / (1.0 + ratio * ratio).sqrt()
 }
 
 /// `E[max(X, alt)]` for `X ~ N(mean, std²)`.
@@ -214,7 +236,22 @@ fn expected_max(mean: f64, std: f64, alt: f64) -> f64 {
 
 /// Value of information (utility units) of purchasing one observation with
 /// noise `noise_std`, given `belief` and a known outside option `alternative`.
-/// Non-negative by construction; clamped at 0 to absorb approximation error.
+///
+/// Guaranteed finite and non-negative: negatives (approximation error) and
+/// non-finite intermediates both clamp to `0`, i.e. "not worth buying" — the
+/// safe direction, since a clamped value can only suppress a purchase.
+///
+/// # Precision
+///
+/// [`norm_cdf`] uses the Abramowitz–Stegun 7.1.26 rational approximation
+/// (absolute error ≤ 1.5e-7). In [`expected_max`] that error is scaled by
+/// `mean`, so for utilities of large magnitude the deep tail (`|z|` large,
+/// true VoI near zero) can be overestimated by orders of magnitude relative
+/// to a vanishing true value. The bias is one-directional — it can trigger a
+/// worthless purchase, never suppress a worthwhile one — and is immaterial
+/// for `[0, 1]`-scale utilities like this router's scores. Callers reusing
+/// this primitive with large-magnitude utilities should either rescale to
+/// unit range or substitute a higher-precision cdf.
 pub fn value_of_information(belief: Belief, alternative: f64, noise_std: f64) -> Result<f64> {
     require_finite("alternative", alternative)?;
     require_finite("noise_std", noise_std)?;
@@ -223,17 +260,28 @@ pub fn value_of_information(belief: Belief, alternative: f64, noise_std: f64) ->
     }
     let s = predictive_mean_std(belief.std_dev, noise_std);
     let voi = expected_max(belief.mean, s, alternative) - belief.mean.max(alternative);
-    Ok(voi.max(0.0))
+    Ok(if voi.is_finite() { voi.max(0.0) } else { 0.0 })
 }
 
 /// Upper bound on [`value_of_information`] over every possible `alternative`:
-/// `s·φ(0) = s/√(2π)`, attained at `alternative = mean`.
+/// `s·φ(0) = s/√(2π)`, attained at `alternative = mean`. No estimator
+/// purchase can be worth more than this, so it is the natural sanity check
+/// for a cost model (`if cost > bound { never purchasable }`).
+///
+/// Guaranteed finite and non-negative: a non-finite intermediate is clamped
+/// to `0`, which reports "nothing is purchasable" rather than handing a
+/// caller a NaN ceiling that makes every `cost > bound` comparison false.
 pub fn voi_upper_bound(belief: Belief, noise_std: f64) -> Result<f64> {
     require_finite("noise_std", noise_std)?;
     if noise_std < 0.0 {
         return Err(invalid(format!("noise_std must be >= 0, got {noise_std}")));
     }
-    Ok(predictive_mean_std(belief.std_dev, noise_std) * INV_SQRT_2PI)
+    let bound = predictive_mean_std(belief.std_dev, noise_std) * INV_SQRT_2PI;
+    Ok(if bound.is_finite() {
+        bound.max(0.0)
+    } else {
+        0.0
+    })
 }
 
 /// One greedy step of the index policy: evaluate every estimator's net value
@@ -245,9 +293,29 @@ pub fn voi_upper_bound(belief: Belief, noise_std: f64) -> Result<f64> {
 /// the policy routes rather than buys.
 ///
 /// The caller purchases the returned estimator, feeds its observation through
-/// [`observe`], and calls `decide` again — the posterior tightens each round
-/// (see [`observe`]), so the loop terminates: VoI shrinks toward zero while
-/// costs stay fixed.
+/// [`observe`], and calls `decide` again; the posterior tightens each round
+/// (see [`observe`]), so VoI decays toward zero while costs stay fixed.
+///
+/// # Termination
+///
+/// That decay guarantees termination **only when every estimator has strictly
+/// positive monetized cost**. [`EstimatorSpec::validate`] permits `cost == 0`
+/// and `latency_us == 0`, and a free estimator is bought for as long as VoI
+/// stays strictly positive — which, decaying geometrically, it does
+/// indefinitely (a probe ran 100,000 rounds against a free estimator and was
+/// still returning `Buy`). A caller driving the repeated-purchase protocol
+/// must therefore either require `cost > 0` or impose its own round cap. This
+/// crate's router integration is unaffected: it makes a single bounded
+/// `decide` call over a one-element ladder and never loops.
+///
+/// # Noiseless estimators
+///
+/// `decide` may return [`VoiDecision::Buy`] for a spec with `noise_std == 0`,
+/// which [`observe`] deliberately refuses — a noiseless observation *is* the
+/// exact utility, so there is no posterior left to represent. That case exits
+/// the protocol rather than continuing it: purchase the oracle, take its
+/// value as ground truth, and route on it directly without calling
+/// [`observe`].
 pub fn decide(
     belief: Belief,
     alternative: f64,
@@ -372,7 +440,9 @@ mod tests {
         #[test]
         fn voi_respects_its_upper_bound(
             mean in -10.0f64..10.0,
-            sigma in 0.01f64..5.0,
+            // Range reaches into the subnormal-σ regime that made the
+            // literal σ⁴/(σ²+τ²) form return NaN.
+            sigma in prop::sample::select(vec![1e-300f64, 1e-200, 1e-8, 0.01, 0.5, 5.0]),
             alt in -10.0f64..10.0,
             tau in 0.0f64..5.0,
         ) {
@@ -464,6 +534,22 @@ mod tests {
             decide(b, 0.5, &[slow], &config).unwrap(),
             VoiDecision::Route
         );
+    }
+
+    #[test]
+    fn tiny_sigma_never_yields_a_nan_ceiling() {
+        // Regression: the literal σ⁴/(σ²+τ²) form underflowed to 0/0 here,
+        // and a NaN bound makes every `cost > bound` guard false — the
+        // caller then buys unconditionally.
+        for sigma in [1e-300, 1e-200, 1e-160, 1e-8] {
+            let b = Belief::new(0.0, sigma).unwrap();
+            for tau in [0.0, 1e-200, 1.0] {
+                let bound = voi_upper_bound(b, tau).unwrap();
+                assert!(bound.is_finite() && bound >= 0.0, "sigma={sigma} tau={tau}");
+                let voi = value_of_information(b, 0.0, tau).unwrap();
+                assert!(voi.is_finite() && voi >= 0.0, "sigma={sigma} tau={tau}");
+            }
+        }
     }
 
     #[test]
