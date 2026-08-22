@@ -58,6 +58,25 @@ pub enum ContextIndexError {
     /// Another live handle already holds the exclusive lock on this index root.
     #[error("context index root is already locked by another handle")]
     RootLocked,
+    /// The root lock path is not a regular file, for example a symlink.
+    ///
+    /// Following it would let whoever planted it choose which file this index
+    /// opens for writing, and which lock the single-handle guarantee rests on.
+    #[error("context index root lock is not a regular file")]
+    UnsafeRootLock,
+    /// This scope's shard name is occupied by a quarantined file.
+    ///
+    /// Reported instead of "no such scope" so a corrupted or planted file is
+    /// never mistaken for an absent tenant. Clear it with
+    /// `ScopedContextIndex::discard_quarantined`.
+    #[error("context scope shard {0} is quarantined")]
+    ScopeQuarantined(String),
+    /// A quarantined file turned out to be a valid shard for the named scope.
+    ///
+    /// Raised when the file changed between open time and the discard, so a
+    /// live shard is never deleted by a remediation call.
+    #[error("quarantined file {0} is a valid shard for this scope")]
+    ShardNotDiscardable(String),
     /// A shared index lock was poisoned by a panicking caller.
     #[error("context index lock poisoned")]
     LockPoisoned,

@@ -103,6 +103,16 @@ fn shard_files(root: &Path) -> Vec<PathBuf> {
     found
 }
 
+/// The opaque filename `target` hashes to, learned from a throwaway root.
+fn shard_filename_of(engine: Engine, root: &Path, target: &ContextScope) -> String {
+    isolated_shard(engine, root, target, "probe")
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string()
+}
+
 /// Build a shard for `target` in a throwaway root and return its file path.
 fn isolated_shard(engine: Engine, root: &Path, target: &ContextScope, id: &str) -> PathBuf {
     let index = ScopedContextIndex::open(root, options(engine, 8)).unwrap();
@@ -311,10 +321,9 @@ engine_tests! {
         // bound to the attacker's scope and is quarantined, not adopted.
         drop(index);
         let restarted = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
-        assert_eq!(
-            restarted.quarantined_shards(),
-            &[victim_filename.to_str().unwrap().to_string()]
-        );
+        let quarantined = restarted.quarantined_shards().unwrap();
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(Some(quarantined[0].filename.as_str()), victim_filename.to_str());
         assert_eq!(restarted.scope_count().unwrap(), 0);
         assert!(restarted
             .search(&victim, &[1.0, 0.0, 0.0], 8)
@@ -343,7 +352,7 @@ engine_tests! {
         std::fs::write(temp.path().join(".lock"), b"").unwrap();
 
         let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
-        assert!(index.quarantined_shards().is_empty());
+        assert!(index.quarantined_shards().unwrap().is_empty());
         let target = scope("acme", &["after-crash"]);
         index
             .insert(&target, point("row", [1.0, 0.0, 0.0]))
@@ -364,10 +373,53 @@ engine_tests! {
         std::fs::write(temp.path().join(&junk_name), b"not a vector database").unwrap();
 
         let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
-        assert_eq!(index.quarantined_shards(), &[junk_name]);
+        let quarantined = index.quarantined_shards().unwrap();
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(quarantined[0].filename, junk_name);
+        assert!(!quarantined[0].reason.is_empty());
         assert_eq!(index.scope_count().unwrap(), 1);
         let matches = index.search(&good, &[1.0, 0.0, 0.0], 1).unwrap();
         assert_eq!(matches[0].id, "healthy-row");
+    }
+
+    fn quarantined_scope_fails_loudly_and_can_be_discarded(engine: Engine) {
+        let target = scope("acme", &["quarantined"]);
+        let probe = tempfile::tempdir().unwrap();
+        let filename = shard_filename_of(engine, probe.path(), &target);
+
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join(&filename), b"not a vector database").unwrap();
+        let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
+
+        let listed = index.quarantined_shards().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].filename, filename);
+        assert!(!listed[0].reason.is_empty(), "reason must be diagnosable");
+
+        // Every per-scope operation says "quarantined", never "absent". In
+        // particular erase must not report a false negative.
+        assert!(matches!(
+            index.insert(&target, point("blocked", [1.0, 0.0, 0.0])),
+            Err(ContextIndexError::ScopeQuarantined(_))
+        ));
+        assert!(matches!(
+            index.scope_stats(&target),
+            Err(ContextIndexError::ScopeQuarantined(_))
+        ));
+        assert!(matches!(
+            index.erase_scope(&target),
+            Err(ContextIndexError::ScopeQuarantined(_))
+        ));
+
+        assert!(index.discard_quarantined(&target).unwrap());
+        assert!(index.quarantined_shards().unwrap().is_empty());
+        assert!(!index.discard_quarantined(&target).unwrap());
+
+        index
+            .insert(&target, point("fresh", [1.0, 0.0, 0.0]))
+            .unwrap();
+        let matches = index.search(&target, &[1.0, 0.0, 0.0], 1).unwrap();
+        assert_eq!(matches[0].id, "fresh");
     }
 
     fn unbounded_max_results_is_refused_instead_of_panicking(engine: Engine) {
@@ -416,4 +468,158 @@ fn failed_shard_unlink_does_not_report_a_phantom_erase() {
     let matches = index.search(&target, &[1.0, 0.0, 0.0], 1).unwrap();
     assert_eq!(matches[0].id, "gdpr-erase-me");
     assert_eq!(shard_files(temp.path()).len(), 1);
+}
+
+/// A shard built with an HNSW graph must not be adopted by an index that asked
+/// for a flat engine. It binds correctly to its own filename, so only a full
+/// engine-configuration comparison catches it.
+#[test]
+fn adopted_shard_cannot_dictate_engine_parameters() {
+    let target = scope("acme", &["engine"]);
+    let probe = tempfile::tempdir().unwrap();
+    let decoy = isolated_shard(Engine::Hnsw, probe.path(), &target, "probe");
+    let filename = decoy.file_name().unwrap().to_str().unwrap().to_string();
+
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::copy(&decoy, temp.path().join(&filename)).unwrap();
+    let index = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).unwrap();
+
+    let quarantined = index.quarantined_shards().unwrap();
+    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined[0].filename, filename);
+    assert!(matches!(
+        index.scope_stats(&target),
+        Err(ContextIndexError::ScopeQuarantined(_))
+    ));
+}
+
+/// Symlink attacks are Unix-shaped: on Windows creating one needs a privilege
+/// the attacker model here does not assume.
+#[cfg(unix)]
+mod symlink {
+    use super::*;
+
+    fn plant(link: &Path, target: &Path) {
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    /// `try_exists` follows symlinks, so a DANGLING one reports "nothing here"
+    /// and a stat-then-create would build the victim's shard at the link
+    /// target, outside the index root.
+    #[test]
+    fn dangling_symlink_at_a_shard_path_cannot_redirect_a_tenants_vectors() {
+        let victim = scope("victim", &["docs"]);
+        let probe = tempfile::tempdir().unwrap();
+        let filename = shard_filename_of(Engine::Flat, probe.path(), &victim);
+
+        let outside = tempfile::tempdir().unwrap();
+        let exfiltrated = outside.path().join("exfiltrated.redb");
+        let temp = tempfile::tempdir().unwrap();
+        let index = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).unwrap();
+        plant(&temp.path().join(&filename), &exfiltrated);
+
+        let refused = index.insert(&victim, point("victim-secret", [1.0, 0.0, 0.0]));
+        assert!(
+            matches!(refused, Err(ContextIndexError::ShardAdoption(_))),
+            "insert walked past the planted symlink: {refused:?}"
+        );
+        assert!(
+            !exfiltrated.exists(),
+            "vectors were written outside the index root"
+        );
+        assert_eq!(index.scope_count().unwrap(), 0);
+        assert!(index
+            .search(&victim, &[1.0, 0.0, 0.0], 8)
+            .unwrap()
+            .is_empty());
+
+        // And the phantom erase that followed from it: nothing to erase, and
+        // the report says quarantined rather than "no such scope".
+        drop(index);
+        let restarted = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).unwrap();
+        assert!(matches!(
+            restarted.erase_scope(&victim),
+            Err(ContextIndexError::ScopeQuarantined(_))
+        ));
+    }
+
+    /// `open()` must not hand a symlinked entry to the engine either: doing so
+    /// creates the backing database at the link target before the entry is
+    /// ever judged.
+    #[test]
+    fn open_never_opens_a_symlinked_shard_entry() {
+        let victim = scope("victim", &["docs"]);
+        let probe = tempfile::tempdir().unwrap();
+        let filename = shard_filename_of(Engine::Flat, probe.path(), &victim);
+
+        let outside = tempfile::tempdir().unwrap();
+        let exfiltrated = outside.path().join("exfiltrated.redb");
+        let temp = tempfile::tempdir().unwrap();
+        plant(&temp.path().join(&filename), &exfiltrated);
+
+        let index = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).unwrap();
+        // Assert the harm before the bookkeeping: quarantining the entry after
+        // the engine already materialised a database at the link target is not
+        // a fix, it is the exfiltration plus a log line.
+        assert!(
+            !exfiltrated.exists(),
+            "open() created a database through a planted symlink"
+        );
+        let quarantined = index.quarantined_shards().unwrap();
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(quarantined[0].filename, filename);
+        assert!(
+            quarantined[0].reason.contains("symlink"),
+            "reason should name the cause: {}",
+            quarantined[0].reason
+        );
+    }
+
+    #[test]
+    fn symlinked_root_lock_is_refused() {
+        let outside = tempfile::tempdir().unwrap();
+        let hijacked = outside.path().join("hijacked.lock");
+        let temp = tempfile::tempdir().unwrap();
+        plant(&temp.path().join(".lock"), &hijacked);
+
+        let opened = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).err();
+        assert!(
+            matches!(opened, Some(ContextIndexError::UnsafeRootLock)),
+            "opened through a symlinked lock: {opened:?}"
+        );
+        assert!(!hijacked.exists(), "lock file created outside the root");
+    }
+
+    /// Discard must never delete a file that IS the named scope's shard, even
+    /// though quarantine said otherwise when the index was opened.
+    #[test]
+    fn discard_refuses_a_file_that_is_a_valid_shard_for_the_scope() {
+        let target = scope("acme", &["revived"]);
+        let probe = tempfile::tempdir().unwrap();
+        let valid = isolated_shard(Engine::Flat, probe.path(), &target, "still-here");
+        let filename = valid.file_name().unwrap().to_str().unwrap().to_string();
+
+        let outside = tempfile::tempdir().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        plant(
+            &temp.path().join(&filename),
+            &outside.path().join("missing.redb"),
+        );
+        let index = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).unwrap();
+        assert_eq!(index.quarantined_shards().unwrap().len(), 1);
+
+        // The name now holds this scope's real shard, changed after open.
+        std::fs::remove_file(temp.path().join(&filename)).unwrap();
+        std::fs::copy(&valid, temp.path().join(&filename)).unwrap();
+
+        let discarded = index.discard_quarantined(&target);
+        assert!(
+            matches!(discarded, Err(ContextIndexError::ShardNotDiscardable(_))),
+            "a live shard was discardable: {discarded:?}"
+        );
+        assert!(
+            temp.path().join(&filename).exists(),
+            "a valid shard was deleted by remediation"
+        );
+    }
 }

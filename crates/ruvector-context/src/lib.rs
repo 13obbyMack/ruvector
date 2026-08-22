@@ -25,12 +25,13 @@
 
 mod error;
 mod index;
+mod options;
+mod quarantine;
 mod scope;
 mod shard;
 
 pub use error::{ContextIndexError, Result};
-pub use index::{
-    ContextIndexOptions, ContextMatch, ContextPoint, ScopeStats, ScopedContextIndex,
-    MAX_RESULT_LIMIT,
-};
+pub use index::{ContextMatch, ContextPoint, ScopeStats, ScopedContextIndex};
+pub use options::{ContextIndexOptions, MAX_RESULT_LIMIT};
+pub use quarantine::QuarantinedShard;
 pub use scope::{ContextNamespace, ContextScope};

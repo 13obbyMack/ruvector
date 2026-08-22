@@ -1,8 +1,10 @@
 //! Persistent scope-sharded vector index.
 
-use crate::shard::{acquire_root_lock, create_shard, load_shard, shard_name, Shard};
-use crate::{ContextIndexError, ContextNamespace, ContextScope, Result};
-use ruvector_core::types::DbOptions;
+use crate::quarantine::{Quarantine, QuarantineList, QuarantinedShard};
+use crate::shard::{
+    acquire_root_lock, create_shard, is_scratch_name, is_shard_name, load_shard, Shard,
+};
+use crate::{ContextIndexError, ContextIndexOptions, ContextNamespace, ContextScope, Result};
 use ruvector_core::{SearchQuery, VectorEntry};
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -11,48 +13,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 const MAX_POINT_ID_BYTES: usize = 512;
-
-/// Hard ceiling on [`ContextIndexOptions::max_results`].
-///
-/// Top K bounds a caller-driven allocation, so an unbounded "unlimited"
-/// spelling such as `usize::MAX` must be rejected by configuration validation
-/// rather than reaching the allocator.
-pub const MAX_RESULT_LIMIT: usize = 4_096;
-
-/// Resource and vector-engine configuration for a scoped context index.
-#[derive(Debug, Clone)]
-pub struct ContextIndexOptions {
-    /// Base configuration copied into every exact-scope vector shard.
-    pub vector: DbOptions,
-    /// Maximum exact-scope shards this process may open or create.
-    pub max_scopes: usize,
-    /// Maximum descendant shards one search may touch.
-    pub max_search_shards: usize,
-    /// Maximum top K accepted from a caller, capped at [`MAX_RESULT_LIMIT`].
-    pub max_results: usize,
-}
-
-impl ContextIndexOptions {
-    /// Validate resource bounds before opening persistent state.
-    pub fn validate(&self) -> Result<()> {
-        if self.vector.dimensions == 0 {
-            return Err(ContextIndexError::InvalidConfiguration(
-                "vector dimensions must be nonzero",
-            ));
-        }
-        if self.max_scopes == 0 || self.max_search_shards == 0 || self.max_results == 0 {
-            return Err(ContextIndexError::InvalidConfiguration(
-                "resource limits must be nonzero",
-            ));
-        }
-        if self.max_results > MAX_RESULT_LIMIT {
-            return Err(ContextIndexError::InvalidConfiguration(
-                "max_results exceeds the supported ceiling",
-            ));
-        }
-        Ok(())
-    }
-}
 
 /// Immutable point registered in one exact context scope.
 #[derive(Debug, Clone, PartialEq)]
@@ -99,11 +59,23 @@ type NamespaceShards = BTreeMap<ContextNamespace, PathShards>;
 /// takes an advisory lock on the root directory, so a second handle over the
 /// same root fails with [`ContextIndexError::RootLocked`] instead of silently
 /// diverging from the first.
+///
+/// # Lock portability
+///
+/// The exclusive root lock is `flock`-based, which is per open file
+/// description: two handles in one process conflict, which is the case it
+/// exists to catch. Two platforms degrade that to per-process locking, where a
+/// second handle in the same process would silently succeed:
+///
+/// - Solaris and illumos, where the backing crate falls back to `fcntl`.
+/// - Linux over NFS, where `flock` is emulated with POSIX record locks.
+///
+/// Do not rely on the single-handle guarantee there.
 pub struct ScopedContextIndex {
     root: PathBuf,
     options: ContextIndexOptions,
     shards: RwLock<NamespaceShards>,
-    quarantined: Vec<String>,
+    quarantined: QuarantineList,
     _lock: File,
 }
 
@@ -124,28 +96,54 @@ impl ScopedContextIndex {
         std::fs::create_dir_all(&root)?;
         let lock = acquire_root_lock(&root)?;
         let mut shards: NamespaceShards = BTreeMap::new();
-        let mut quarantined = Vec::new();
+        let mut quarantined = Quarantine::new();
         for entry in std::fs::read_dir(&root)? {
-            let path = entry?.path();
-            let Some(filename) = shard_name(&path) else {
+            let entry = entry?;
+            let Some(filename) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
-            match load_shard(&path, &filename, &options) {
+            if entry.file_type()?.is_symlink() {
+                // Never hand a symlink to the vector engine. Its API is
+                // path-based and it creates the backing file at whatever the
+                // path resolves to, so opening one writes a tenant's shard
+                // outside this root, at a location the attacker chose.
+                if is_shard_name(&filename) {
+                    quarantined.insert(filename, "shard path is a symlink".to_string());
+                }
+                continue;
+            }
+            if is_scratch_name(&filename) {
+                // Left by a create that did not finish. This handle holds the
+                // root lock, so no live writer owns it.
+                let _ = std::fs::remove_file(entry.path());
+                continue;
+            }
+            if !is_shard_name(&filename) {
+                continue;
+            }
+            match load_shard(&entry.path(), &filename, &options) {
                 Ok((scope, shard)) if filename == scope.shard_filename() => {
                     shards
                         .entry(scope.namespace().clone())
                         .or_default()
                         .insert(scope.path().to_vec(), Arc::new(shard));
                 }
-                _ => quarantined.push(filename),
+                Ok(_) => {
+                    quarantined.insert(
+                        filename,
+                        "manifest scope does not hash to this filename".to_string(),
+                    );
+                }
+                Err(error) => {
+                    quarantined.insert(filename, error.to_string());
+                }
             }
         }
-        quarantined.sort_unstable();
         let index = Self {
             root,
             options,
             shards: RwLock::new(shards),
-            quarantined,
+            quarantined: QuarantineList::new(quarantined),
             _lock: lock,
         };
         if index.scope_count()? > index.options.max_scopes {
@@ -166,6 +164,7 @@ impl ScopedContextIndex {
     /// principal.
     pub fn insert(&self, scope: &ContextScope, point: ContextPoint) -> Result<()> {
         validate_point(&point, self.options.vector.dimensions)?;
+        self.quarantined.ensure_absent(scope)?;
         let mut all = self
             .shards
             .write()
@@ -245,7 +244,7 @@ impl ScopedContextIndex {
                 maximum: self.options.max_search_shards,
             });
         }
-        let mut matches = Vec::with_capacity(k.min(MAX_RESULT_LIMIT));
+        let mut matches = Vec::with_capacity(k.min(crate::MAX_RESULT_LIMIT));
         for (path, shard) in selected {
             let results = shard.ann_search(SearchQuery {
                 vector: vector.to_vec(),
@@ -295,9 +294,17 @@ impl ScopedContextIndex {
     /// failure to unlink is reported as an error with the scope still present
     /// rather than as a phantom erase.
     ///
+    /// This ordering relies on POSIX semantics, where a file can be unlinked
+    /// while it is still open. On Windows the shard is still open at this
+    /// point and the unlink fails, so erasure there needs the engine handle
+    /// closed first — at the cost of the guarantee above.
+    ///
     /// The caller must already have authorized `scope` for the requesting
     /// principal.
     pub fn erase_scope(&self, scope: &ContextScope) -> Result<bool> {
+        // A quarantined file still holds this scope's name on disk. Reporting
+        // "nothing to erase" would be a false negative on an erasure request.
+        self.quarantined.ensure_absent(scope)?;
         let mut all = self
             .shards
             .write()
@@ -327,6 +334,7 @@ impl ScopedContextIndex {
     /// counts, so the caller must already have authorized `scope` for the
     /// requesting principal exactly as it would for a read.
     pub fn scope_stats(&self, scope: &ContextScope) -> Result<Option<ScopeStats>> {
+        self.quarantined.ensure_absent(scope)?;
         let all = self
             .shards
             .read()
@@ -352,14 +360,27 @@ impl ScopedContextIndex {
         Ok(count_scopes(&all))
     }
 
-    /// Shard filenames skipped at open time because they failed to load or
-    /// were not bound to their own filename.
+    /// Shard files skipped at open time, each with the reason it was skipped.
     ///
-    /// Operations on the scopes those files claim fail rather than silently
-    /// serving or overwriting unverified data.
-    #[must_use]
-    pub fn quarantined_shards(&self) -> &[String] {
-        &self.quarantined
+    /// Operations naming a quarantined scope fail with
+    /// [`ContextIndexError::ScopeQuarantined`] rather than silently reporting
+    /// the scope as absent.
+    pub fn quarantined_shards(&self) -> Result<Vec<QuarantinedShard>> {
+        self.quarantined.list()
+    }
+
+    /// Discard the quarantined file occupying one scope's shard name.
+    ///
+    /// Returns `false` when that name is not quarantined. Without this, one
+    /// corrupted file denies its tenant every operation permanently, with no
+    /// route back short of filesystem surgery. A file that turns out to be a
+    /// valid shard for `scope` is never deleted; see
+    /// [`ContextIndexError::ShardNotDiscardable`].
+    ///
+    /// The caller must already have authorized `scope` for the requesting
+    /// principal.
+    pub fn discard_quarantined(&self, scope: &ContextScope) -> Result<bool> {
+        self.quarantined.discard(&self.root, scope, &self.options)
     }
 }
 
@@ -414,27 +435,5 @@ fn push_top_match(matches: &mut Vec<ContextMatch>, limit: usize, candidate: Cont
         .map_or(0, |(index, _)| index);
     if compare_matches(&candidate, &matches[worst]).is_lt() {
         matches[worst] = candidate;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unbounded_max_results_is_rejected_by_validation() {
-        let options = ContextIndexOptions {
-            vector: DbOptions {
-                dimensions: 3,
-                ..DbOptions::default()
-            },
-            max_scopes: 1,
-            max_search_shards: 1,
-            max_results: usize::MAX,
-        };
-        assert!(matches!(
-            options.validate(),
-            Err(ContextIndexError::InvalidConfiguration(_))
-        ));
     }
 }
