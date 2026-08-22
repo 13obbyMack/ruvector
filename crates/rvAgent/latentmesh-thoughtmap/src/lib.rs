@@ -59,14 +59,10 @@ pub mod transport;
 mod vecmath;
 
 pub use capability::{CapabilityVector, LocalView, PeerId, PeerProfile, PeerSelection, Query};
-pub use causal::{
-    CausalVerdict, CausalVerifier, ControlledReplacementVerifier, RejectReason,
-};
+pub use causal::{CausalVerdict, CausalVerifier, ControlledReplacementVerifier, RejectReason};
 pub use engine::{Incorporation, ReasoningEngine, RejectionKind, ROOT_STEP};
 pub use quarantine::{Anomaly, PeerReputation, Quarantine};
-pub use thoughtmap::{
-    StepId, ThoughtEdge, ThoughtGraphBackend, ThoughtMap, ThoughtNode,
-};
+pub use thoughtmap::{StepId, ThoughtEdge, ThoughtGraphBackend, ThoughtMap, ThoughtNode};
 pub use topology::{DeadEndPolicy, TopologyCause, TopologyChange};
 pub use transport::{
     integrity_tag, CausalTag, InProcessTransport, LatentMessage, LatentState, LatentTransport,

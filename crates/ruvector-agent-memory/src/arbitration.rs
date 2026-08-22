@@ -304,7 +304,9 @@ pub fn arbitrate(
 ) -> Result<ArbitrationOutcome, ArbitrationError> {
     // ── Config choke point ──────────────────────────────────────────────────
     if config.half_life_ns == 0 {
-        return Err(ArbitrationError::InvalidConfig("half_life_ns must be non-zero"));
+        return Err(ArbitrationError::InvalidConfig(
+            "half_life_ns must be non-zero",
+        ));
     }
     config.reliability.validate()?;
 
@@ -350,7 +352,9 @@ pub fn arbitrate(
                 .ok_or(ArbitrationError::UnknownObservation(*atomic))?;
             let c = obs.confidence as f64;
             if !c.is_finite() || !(0.0..=1.0).contains(&c) {
-                return Err(ArbitrationError::ConfidenceInvalid(NodeRef::Observation(*atomic)));
+                return Err(ArbitrationError::ConfidenceInvalid(NodeRef::Observation(
+                    *atomic,
+                )));
             }
             reliability = reliability.min(config.reliability.for_code(obs.source.kind.code()));
             freshness = freshness.min(freshness_of(obs.time_ns, config));
@@ -456,10 +460,7 @@ pub fn arbitrate(
     // `!(arbitrated <= bound)` sends NaN into the error path instead.
     #[allow(clippy::neg_cmp_op_on_partial_ord)]
     if !(arbitrated <= naive + 1e-9) {
-        return Err(ArbitrationError::DowngradeInvariantViolated {
-            naive,
-            arbitrated,
-        });
+        return Err(ArbitrationError::DowngradeInvariantViolated { naive, arbitrated });
     }
 
     let verdict = ArbitrationVerdict {
@@ -492,10 +493,7 @@ fn freshness_of(time_ns: u64, config: &ArbitrationConfig) -> f64 {
     (0.5f64).powf(age / config.half_life_ns as f64)
 }
 
-fn node_confidence(
-    graph: &CausalEpisodicGraph,
-    node: NodeRef,
-) -> Result<f64, ArbitrationError> {
+fn node_confidence(graph: &CausalEpisodicGraph, node: NodeRef) -> Result<f64, ArbitrationError> {
     match node {
         NodeRef::Observation(id) => graph
             .observation(id)

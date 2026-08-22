@@ -71,10 +71,10 @@ pub use fusion::{CausalEpisodicGraph, ClusterId, FusedCluster, FusionError, Node
 #[cfg(feature = "proof-gate")]
 pub use ledger::WriteGateAdapter;
 pub use ledger::{replay_history, AlwaysAdmitGate, LedgerEntry, ProofGate, TransactionalLedger};
+pub use memory::{MemoryEntry, MemoryStore, SearchResult};
 pub use observation::{
     AtomicObservation, ObservationError, ObservationId, ObservationSource, SourceKind, Tenant,
 };
-pub use memory::{MemoryEntry, MemoryStore, SearchResult};
 pub use ops::{
     AcceptanceReceipt, EvidenceGrade, LedgerError, LedgerState, LedgerWitnessRecord, MemoryOp,
     MemoryWitnessLog, NoopWitnessSink, TransitionKind, TransitionRecord, WitnessSink,

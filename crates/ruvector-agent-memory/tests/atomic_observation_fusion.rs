@@ -8,11 +8,11 @@
 //! explicitly distinct from the unrelated `memfuse/memfuse` OSS project.
 
 use rand::rngs::OsRng;
+use ruvector_agent_memory::ops::{LedgerState, MemoryWitnessLog};
 use ruvector_agent_memory::{
     AlwaysAdmitGate, AtomicObservation, CausalEpisodicGraph, FusionError, NodeRef, ObservationId,
     ObservationSource, SourceKind, Tenant, TransactionalLedger,
 };
-use ruvector_agent_memory::ops::{LedgerState, MemoryWitnessLog};
 use rvf_types::Ed25519Keypair;
 
 /// Sign an observation from a fresh per-source keypair (each source authenticates
@@ -64,7 +64,14 @@ fn atomic_observation_signature_round_trip() {
 fn multi_source_fusion_into_graph() {
     // Three heterogeneous source kinds converging into one tenant's graph.
     let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
-    let rf = observe(SourceKind::RuViewRf, "rf-antenna-2", "acme", 0.80, vec![], b"rf-burst");
+    let rf = observe(
+        SourceKind::RuViewRf,
+        "rf-antenna-2",
+        "acme",
+        0.80,
+        vec![],
+        b"rf-burst",
+    );
     let net = observe(
         SourceKind::NetworkTelemetry,
         "netprobe-7",
@@ -109,9 +116,30 @@ fn multi_source_fusion_into_graph() {
 fn provenance_resolves_derived_node_to_atomic_sources() {
     let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
 
-    let rf = observe(SourceKind::RuViewRf, "rf-1", "acme", 0.6, vec![], b"rf-evidence");
-    let net = observe(SourceKind::NetworkTelemetry, "net-1", "acme", 0.9, vec![], b"net-evidence");
-    let user = observe(SourceKind::UserActivity, "user-1", "acme", 0.8, vec![], b"user-evidence");
+    let rf = observe(
+        SourceKind::RuViewRf,
+        "rf-1",
+        "acme",
+        0.6,
+        vec![],
+        b"rf-evidence",
+    );
+    let net = observe(
+        SourceKind::NetworkTelemetry,
+        "net-1",
+        "acme",
+        0.9,
+        vec![],
+        b"net-evidence",
+    );
+    let user = observe(
+        SourceKind::UserActivity,
+        "user-1",
+        "acme",
+        0.8,
+        vec![],
+        b"user-evidence",
+    );
 
     let rf_id = graph.ingest(rf).unwrap();
     let net_id = graph.ingest(net).unwrap();
@@ -133,7 +161,9 @@ fn provenance_resolves_derived_node_to_atomic_sources() {
         .unwrap();
 
     // Provenance of the derived node B is exactly the three atomic sources.
-    let provenance = graph.resolve_provenance(NodeRef::Cluster(cluster_b)).unwrap();
+    let provenance = graph
+        .resolve_provenance(NodeRef::Cluster(cluster_b))
+        .unwrap();
     let expected: std::collections::BTreeSet<ObservationId> =
         [rf_id, net_id, user_id].into_iter().collect();
     assert_eq!(
@@ -150,7 +180,9 @@ fn provenance_resolves_derived_node_to_atomic_sources() {
     assert_eq!(graph.observation(rf_id).unwrap().payload, b"rf-evidence");
 
     // Provenance of an intermediate cluster is its two atomic sources only.
-    let prov_a = graph.resolve_provenance(NodeRef::Cluster(cluster_a)).unwrap();
+    let prov_a = graph
+        .resolve_provenance(NodeRef::Cluster(cluster_a))
+        .unwrap();
     assert_eq!(prov_a, [rf_id, net_id].into_iter().collect());
 }
 
@@ -158,7 +190,14 @@ fn provenance_resolves_derived_node_to_atomic_sources() {
 fn confidence_and_tenant_carried_through_fusion() {
     let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
     let a = observe(SourceKind::RuViewRf, "rf", "acme", 0.9, vec![], b"a");
-    let b = observe(SourceKind::NetworkTelemetry, "net", "acme", 0.4, vec![], b"b");
+    let b = observe(
+        SourceKind::NetworkTelemetry,
+        "net",
+        "acme",
+        0.4,
+        vec![],
+        b"b",
+    );
     let c = observe(SourceKind::UserActivity, "user", "acme", 0.7, vec![], b"c");
 
     let a_id = graph.ingest(a).unwrap();
@@ -186,7 +225,14 @@ fn confidence_and_tenant_carried_through_fusion() {
 #[test]
 fn tampered_observation_is_rejected_at_ingest() {
     let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
-    let mut obs = observe(SourceKind::AgentObservation, "a", "acme", 0.9, vec![], b"authentic");
+    let mut obs = observe(
+        SourceKind::AgentObservation,
+        "a",
+        "acme",
+        0.9,
+        vec![],
+        b"authentic",
+    );
     assert!(obs.verify());
 
     // A compromised or malfunctioning source flips the evidence after signing.
@@ -196,7 +242,11 @@ fn tampered_observation_is_rejected_at_ingest() {
         Err(FusionError::SignatureInvalid(_)) => {}
         other => panic!("tampered observation must be rejected, got {other:?}"),
     }
-    assert_eq!(graph.observation_count(), 0, "nothing tampered enters the graph");
+    assert_eq!(
+        graph.observation_count(),
+        0,
+        "nothing tampered enters the graph"
+    );
 }
 
 /// ADR-320 §3 transactional integrity: an observation entering memory is a
@@ -205,9 +255,17 @@ fn tampered_observation_is_rejected_at_ingest() {
 #[test]
 fn governed_ingest_composes_with_wp4_ledger() {
     let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
-    let mut ledger = TransactionalLedger::new(MemoryWitnessLog::default(), AlwaysAdmitGate::default());
+    let mut ledger =
+        TransactionalLedger::new(MemoryWitnessLog::default(), AlwaysAdmitGate::default());
 
-    let parent = observe(SourceKind::RuViewRf, "rf", "acme", 0.9, vec![], b"parent-evidence");
+    let parent = observe(
+        SourceKind::RuViewRf,
+        "rf",
+        "acme",
+        0.9,
+        vec![],
+        b"parent-evidence",
+    );
     let (parent_id, parent_entry) = graph
         .ingest_governed(parent, &mut ledger, "fusion-layer")
         .unwrap();
@@ -232,7 +290,10 @@ fn governed_ingest_composes_with_wp4_ledger() {
     assert_eq!(graph.ledger_id(child_id), Some(child_entry));
 
     // The causal parent became a ledger dependency edge.
-    assert_eq!(ledger.entry(child_entry).unwrap().depends_on, vec![parent_entry]);
+    assert_eq!(
+        ledger.entry(child_entry).unwrap().depends_on,
+        vec![parent_entry]
+    );
 
     // Witness chain over the governed transitions is intact and non-empty.
     assert!(ledger.witness_sink().verify_chain());
@@ -241,7 +302,10 @@ fn governed_ingest_composes_with_wp4_ledger() {
     // Provenance still resolves through the governed graph.
     let cluster = graph
         .fuse(
-            &[NodeRef::Observation(parent_id), NodeRef::Observation(child_id)],
+            &[
+                NodeRef::Observation(parent_id),
+                NodeRef::Observation(child_id),
+            ],
             "lineage",
         )
         .unwrap();
@@ -256,13 +320,22 @@ fn governed_ingest_composes_with_wp4_ledger() {
 #[test]
 fn deep_fuse_chain_provenance_is_depth_safe() {
     let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
-    let obs = observe(SourceKind::RuViewRf, "rf", "acme", 0.5, vec![], b"root-evidence");
+    let obs = observe(
+        SourceKind::RuViewRf,
+        "rf",
+        "acme",
+        0.5,
+        vec![],
+        b"root-evidence",
+    );
     let obs_id = graph.ingest(obs).unwrap();
 
     // 200_000 levels deep — far past what the recursive version could survive,
     // but linear and fast iteratively.
     const DEPTH: usize = 200_000;
-    let mut current = graph.fuse(&[NodeRef::Observation(obs_id)], "level-0").unwrap();
+    let mut current = graph
+        .fuse(&[NodeRef::Observation(obs_id)], "level-0")
+        .unwrap();
     for level in 1..DEPTH {
         current = graph
             .fuse(&[NodeRef::Cluster(current)], format!("level-{level}"))
@@ -280,7 +353,8 @@ fn deep_fuse_chain_provenance_is_depth_safe() {
 #[test]
 fn governed_ingest_rejects_ungoverned_parent() {
     let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
-    let mut ledger = TransactionalLedger::new(MemoryWitnessLog::default(), AlwaysAdmitGate::default());
+    let mut ledger =
+        TransactionalLedger::new(MemoryWitnessLog::default(), AlwaysAdmitGate::default());
 
     // Parent admitted on the pure path (no ledger entry)...
     let parent = observe(SourceKind::RuViewRf, "rf", "acme", 0.9, vec![], b"p");

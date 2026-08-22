@@ -26,7 +26,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::thoughtmap::{ThoughtMap, StepId};
+use crate::thoughtmap::{StepId, ThoughtMap};
 use crate::transport::LatentMessage;
 use crate::vecmath::{cosine, mean};
 
@@ -182,10 +182,16 @@ mod tests {
         let v = ControlledReplacementVerifier::default();
 
         let nan = msg(9, vec![f32::NAN, 0.0, 0.0], a);
-        assert!(!v.verify(&map, &nan).is_accepted(), "NaN must not be accepted");
+        assert!(
+            !v.verify(&map, &nan).is_accepted(),
+            "NaN must not be accepted"
+        );
 
         let inf = msg(9, vec![f32::INFINITY, 0.0, 0.0], a);
-        assert!(!v.verify(&map, &inf).is_accepted(), "inf must not be accepted");
+        assert!(
+            !v.verify(&map, &inf).is_accepted(),
+            "inf must not be accepted"
+        );
     }
 
     #[test]

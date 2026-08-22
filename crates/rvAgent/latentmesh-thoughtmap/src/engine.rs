@@ -65,7 +65,12 @@ pub struct ReasoningEngine<V: CausalVerifier> {
 }
 
 impl<V: CausalVerifier> ReasoningEngine<V> {
-    pub fn new(map: ThoughtMap, verifier: V, quarantine: Quarantine, policy: DeadEndPolicy) -> Self {
+    pub fn new(
+        map: ThoughtMap,
+        verifier: V,
+        quarantine: Quarantine,
+        policy: DeadEndPolicy,
+    ) -> Self {
         Self {
             map,
             quarantine,

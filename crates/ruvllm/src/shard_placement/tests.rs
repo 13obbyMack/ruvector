@@ -47,7 +47,11 @@ fn assert_plan_respects_constraints(
         let node = node_by_id(&a.node);
         // Residency.
         if let Some(zone) = &shard.residency {
-            assert_eq!(&node.residency_zone, zone, "residency respected for {}", a.shard);
+            assert_eq!(
+                &node.residency_zone, zone,
+                "residency respected for {}",
+                a.shard
+            );
         }
         // Trust.
         assert!(
@@ -231,7 +235,8 @@ fn picks_lowest_latency_cost_among_feasible() {
     let shards = vec![ModelShard::new("stage-0", 0, 4000)];
     // Both nodes are fully eligible; they differ only in latency.
     let nodes = vec![
-        FleetNode::new("slow", ResidencyZone::new("us"), TrustTier(5), 8000).with_profile(30.0, 1.0),
+        FleetNode::new("slow", ResidencyZone::new("us"), TrustTier(5), 8000)
+            .with_profile(30.0, 1.0),
         FleetNode::new("fast", ResidencyZone::new("us"), TrustTier(5), 8000).with_profile(5.0, 1.0),
     ];
 
@@ -317,7 +322,10 @@ fn four_node_seventy_b_fits_collectively_not_singly() {
     );
     // Precondition: it DOES fit collectively.
     let fleet_mb: u64 = nodes.iter().map(|n| n.available_memory_mb).sum();
-    assert!(fleet_mb >= total_model_mb, "test premise: fleet holds it jointly");
+    assert!(
+        fleet_mb >= total_model_mb,
+        "test premise: fleet holds it jointly"
+    );
 
     let plan = PlacementPlanner::default().plan(&shards, &nodes).unwrap();
     assert_plan_respects_constraints(&plan, &shards, &nodes);
@@ -447,7 +455,14 @@ fn oversized_request_is_rejected_before_search() {
     // One node over the node cap with a single shard.
     let one_shard = vec![ModelShard::new("stage-0", 0, 1)];
     let too_many_nodes: Vec<FleetNode> = (0..=MAX_NODES)
-        .map(|i| FleetNode::new(format!("n{i}"), ResidencyZone::new("us"), TrustTier(9), 1000))
+        .map(|i| {
+            FleetNode::new(
+                format!("n{i}"),
+                ResidencyZone::new("us"),
+                TrustTier(9),
+                1000,
+            )
+        })
         .collect();
     match PlacementPlanner::default()
         .plan(&one_shard, &too_many_nodes)

@@ -306,7 +306,10 @@ mod tests {
         assert!(obs.verify());
 
         obs.payload = b"forged".to_vec();
-        assert!(!obs.verify(), "post-signing mutation must break the signature");
+        assert!(
+            !obs.verify(),
+            "post-signing mutation must break the signature"
+        );
     }
 
     #[test]

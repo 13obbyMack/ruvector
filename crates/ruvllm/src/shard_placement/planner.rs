@@ -314,8 +314,7 @@ impl PlacementPlanner {
             None => {
                 // Every shard is individually placeable, but cumulative
                 // capacity cannot hold them all — reject, do not overcommit.
-                let fleet_available_mb: u64 =
-                    nodes.iter().map(|n| n.available_memory_mb).sum();
+                let fleet_available_mb: u64 = nodes.iter().map(|n| n.available_memory_mb).sum();
                 let stuck = &shards[deepest.min(shards.len() - 1)];
                 return Err(PlacementRejection::CapacityExhausted {
                     shard: stuck.id.clone(),
