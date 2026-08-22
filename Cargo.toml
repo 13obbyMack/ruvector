@@ -58,6 +58,7 @@ members = [
     "crates/ruvector-turboquant",
     "crates/ruvector-rulake",
     "crates/ruvector-core",
+    "crates/ruvector-context",
     "crates/ruvector-node",
     "crates/ruvector-wasm",
     "crates/ruvector-cli",
