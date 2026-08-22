@@ -317,6 +317,49 @@ fn invalid_config_and_empty_set_rejected() {
     ));
 }
 
+/// Locks the Known-limitation numbers in the module rustdoc so the honesty
+/// text cannot silently drift from behavior: twenty agents re-asserting one
+/// claim's content **without declaring a parent** mint twenty lineages, and
+/// under the shipped `ReliabilityModel::default()` (0.9) score naive 18.0 vs
+/// arbitrated 16.2 — a reduction that is entirely the reliability multiplier
+/// and reflects zero detected correlation. The diagnostic is the lineage
+/// count equalling the memory count, not the score delta.
+#[test]
+fn content_copying_yields_no_correlation_downgrade_under_default_reliability() {
+    let keypair = kp();
+    let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
+
+    // One genuine origin, then 20 agents asserting the same claim with no
+    // declared derivation — the astroturfing shape the module cannot detect.
+    graph.ingest(signed(&keypair, "origin", "acme", 0.9, 0, vec![], b"rumor")).unwrap();
+    let copies: Vec<NodeRef> = (0..20u8)
+        .map(|i| {
+            NodeRef::Observation(
+                graph
+                    .ingest(signed(&keypair, "copier", "acme", 0.9, 1, vec![], &[i]))
+                    .unwrap(),
+            )
+        })
+        .collect();
+
+    let cfg = ArbitrationConfig {
+        now_ns: 1,
+        half_life_ns: u64::MAX, // freshness 1.0, isolating the reliability factor
+        sufficiency_threshold: 3,
+        reliability: ReliabilityModel::default(), // the SHIPPED default: 0.9
+    };
+    let outcome = arbitrate(&graph, &copies, &cfg).unwrap();
+
+    // Nothing was clustered: lineages == memories is the real diagnostic.
+    let verdict = outcome.verdict();
+    assert_eq!(verdict.independent_lineages(), copies.len());
+    assert!((verdict.naive_confidence - 18.0).abs() < 1e-6);
+    assert!((verdict.arbitrated_confidence - 16.2).abs() < 1e-6);
+    // And the sufficiency gate passes, which is exactly why the docs warn it
+    // is not a trust gate against repeated-claim attacks.
+    assert!(matches!(outcome, ArbitrationOutcome::Sufficient(_)));
+}
+
 /// `fuse()` must reject a non-finite member confidence at the source, rather
 /// than folding it away. `f32::min` returns the non-NaN operand, so the old
 /// `INFINITY`-seeded fold gave a lone-NaN cluster `confidence = +inf` and let

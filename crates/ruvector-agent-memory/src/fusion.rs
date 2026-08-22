@@ -72,7 +72,12 @@ pub struct FusedCluster {
 }
 
 /// Errors from fusion-graph operations.
+///
+/// `#[non_exhaustive]`: new gates get new variants (this enum gained
+/// `MemberConfidenceInvalid` in ADR-330), so external consumers must carry a
+/// wildcard arm rather than have a future gate break their build.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum FusionError {
     /// The observation's signature did not verify (per-observation gate).
     SignatureInvalid(ObservationId),

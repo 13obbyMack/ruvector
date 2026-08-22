@@ -22,9 +22,21 @@
 //! content.** A memory that copies another memory's *content* while declaring
 //! no parent is, to this module, a fresh root — it mints an independent
 //! lineage. Twenty agents that each re-assert one rumor's content without
-//! citing it therefore arbitrate to twenty lineages with **zero downgrade**
-//! against the naive vote, and a sufficiency check at any threshold ≤ 20
-//! returns [`ArbitrationOutcome::Sufficient`].
+//! citing it therefore arbitrate to twenty lineages with **no *correlation*
+//! downgrade** against the naive vote, and a sufficiency check at any
+//! threshold ≤ 20 returns [`ArbitrationOutcome::Sufficient`].
+//!
+//! **Do not read a smaller arbitrated score as correlation having been
+//! caught.** Any reduction observed with a reliability or freshness factor
+//! below `1.0` comes from *those multipliers*, which carry no correlation
+//! information whatsoever. Concretely, under the shipped
+//! [`ReliabilityModel::default`] (`0.9`) that same twenty-agent astroturfed
+//! set scores naive `18.0` vs arbitrated `16.2` — a ~10% reduction that is
+//! entirely the reliability multiplier and reflects *zero* detected
+//! correlation. **The diagnostic to watch is the lineage count, not the score
+//! delta**: [`ArbitrationVerdict::independent_lineages`] equalling the number
+//! of arbitrated memories means nothing was clustered, whatever the score
+//! says.
 //!
 //! The shipped scope deliberately **under-detects** correlation rather than
 //! pretending otherwise (ADR-330, Negative consequences). The consequences
@@ -368,13 +380,23 @@ pub fn arbitrate(
         .collect();
     let root_index: BTreeMap<ObservationId, usize> =
         all_roots.iter().enumerate().map(|(i, r)| (*r, i)).collect();
+    // `root_index` is built from exactly these root sets a few lines above, so
+    // every lookup below is present by construction; they still resolve
+    // through `ok_or` so this module has no panic sites at all.
+    let index_of = |root: &ObservationId, node: NodeRef| {
+        root_index
+            .get(root)
+            .copied()
+            .ok_or(ArbitrationError::ProvenanceRootMissing(node))
+    };
     let mut uf = UnionFind::new(all_roots.len());
     for f in &facts {
         let mut iter = f.roots.iter();
         if let Some(first) = iter.next() {
-            let a = root_index[first];
+            let a = index_of(first, f.node)?;
             for other in iter {
-                uf.union(a, root_index[other]);
+                let b = index_of(other, f.node)?;
+                uf.union(a, b);
             }
         }
     }
@@ -405,7 +427,7 @@ pub fn arbitrate(
             .iter()
             .next()
             .ok_or(ArbitrationError::ProvenanceRootMissing(f.node))?;
-        let comp = uf.find(root_index[first_root]);
+        let comp = uf.find(index_of(first_root, f.node)?);
         let lineage = by_component
             .get_mut(&comp)
             .ok_or(ArbitrationError::ProvenanceRootMissing(f.node))?;
