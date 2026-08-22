@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use rand::rngs::OsRng;
 use ruvector_agent_memory::{
     arbitrate, ArbitrationConfig, ArbitrationError, ArbitrationOutcome, AtomicObservation,
-    CausalEpisodicGraph, NodeRef, ObservationId, ObservationSource, ReliabilityModel, SourceKind,
-    Tenant,
+    CausalEpisodicGraph, FusionError, NodeRef, ObservationId, ObservationSource, ReliabilityModel,
+    SourceKind, Tenant,
 };
 use rvf_types::{ed25519_sign, Ed25519Keypair};
 
@@ -315,6 +315,37 @@ fn invalid_config_and_empty_set_rejected() {
         arbitrate(&graph, &[], &config()),
         Err(ArbitrationError::EmptyMemorySet)
     ));
+}
+
+/// `fuse()` must reject a non-finite member confidence at the source, rather
+/// than folding it away. `f32::min` returns the non-NaN operand, so the old
+/// `INFINITY`-seeded fold gave a lone-NaN cluster `confidence = +inf` and let
+/// a NaN in `[NaN, 0.9]` vanish into `0.9` — both violating the documented
+/// weakest-link `[0, 1]` contract on a public field.
+#[test]
+fn fuse_rejects_non_finite_member_confidence() {
+    let keypair = kp();
+    let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
+
+    let mut poisoned = signed(&keypair, "evil", "acme", 0.5, 0, vec![], b"nan");
+    poisoned.confidence = f32::NAN;
+    poisoned.signature = ed25519_sign(&keypair.secret_key(), &poisoned.id().0);
+    let bad = graph.ingest(poisoned).expect("ingest does not range-check confidence");
+    let good = graph.ingest(signed(&keypair, "ok", "acme", 0.9, 0, vec![], b"ok")).unwrap();
+
+    // Lone NaN member: must not become +inf.
+    assert!(matches!(
+        graph.fuse(&[NodeRef::Observation(bad)], "lone"),
+        Err(FusionError::MemberConfidenceInvalid(_))
+    ));
+    // NaN alongside a valid member: must not silently vanish into 0.9.
+    assert!(matches!(
+        graph.fuse(&[NodeRef::Observation(bad), NodeRef::Observation(good)], "mixed"),
+        Err(FusionError::MemberConfidenceInvalid(_))
+    ));
+    // A well-formed fusion still succeeds and keeps the weakest link.
+    let ok = graph.fuse(&[NodeRef::Observation(good)], "fine").unwrap();
+    assert!((graph.cluster(ok).unwrap().confidence - 0.9).abs() < 1e-6);
 }
 
 /// Clusters participate as memories: a fused cluster resolves to its atomic

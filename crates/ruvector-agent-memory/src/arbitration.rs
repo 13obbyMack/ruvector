@@ -7,13 +7,44 @@
 //!
 //! # Memory Correlation Bias
 //!
-//! N retrieved memories that all derive from one original source are **one
-//! observation repeated N times, not N independent observations**. A naive
-//! confidence vote (`sum of supporting memories`) lets twenty agents repeating
-//! one rumor outvote three genuinely independent witnesses. This module
-//! arbitrates a retrieved memory set by clustering it into **evidence
-//! lineages** using the causal provenance the ADR-320 layer already records,
-//! then scoring effective evidence per *lineage*, not per memory.
+//! N retrieved memories that all **declare** derivation from one original
+//! source are **one observation repeated N times, not N independent
+//! observations**. A naive confidence vote (`sum of supporting memories`) lets
+//! twenty agents relaying one rumor outvote three genuinely independent
+//! witnesses. This module arbitrates a retrieved memory set by clustering it
+//! into **evidence lineages** using the causal provenance the ADR-320 layer
+//! already records, then scoring effective evidence per *lineage*, not per
+//! memory.
+//!
+//! # Known limitation: declared derivation only (READ BEFORE USE)
+//!
+//! **Correlation is detected from declared `causal_parents`, never from
+//! content.** A memory that copies another memory's *content* while declaring
+//! no parent is, to this module, a fresh root — it mints an independent
+//! lineage. Twenty agents that each re-assert one rumor's content without
+//! citing it therefore arbitrate to twenty lineages with **zero downgrade**
+//! against the naive vote, and a sufficiency check at any threshold ≤ 20
+//! returns [`ArbitrationOutcome::Sufficient`].
+//!
+//! The shipped scope deliberately **under-detects** correlation rather than
+//! pretending otherwise (ADR-330, Negative consequences). The consequences
+//! for an integrator:
+//!
+//! - [`ArbitrationConfig::sufficiency_threshold`] and
+//!   [`ArbitrationOutcome::InsufficientIndependentEvidence`] are **not a trust
+//!   gate against repeated-claim or sybil attacks**. They answer "how many
+//!   *declared-independent* lineages support this?", which is a corroboration
+//!   signal under cooperative provenance, not an adversarial one.
+//!   Wiring them as an anti-astroturfing control is materially wrong.
+//! - The guarantee holds only as far as provenance discipline holds upstream.
+//!   Deployments that need adversarial robustness must pair this with content-
+//!   level near-duplicate detection or authenticated citation at ingest, so
+//!   that copied content cannot enter as a parentless observation.
+//!
+//! The bench in `agent-memory-bench` (900 derived memories collapsing to 100
+//! origin lineages) exercises **declared-parent chains — the mechanism's best
+//! case** — and is a demonstration of the clustering math, not evidence of
+//! adversarial robustness.
 //!
 //! # The lineage-sharing rule (precise definition)
 //!
@@ -52,6 +83,17 @@
 //! Arbitration operates on one tenant-bound [`CausalEpisodicGraph`]; a node id
 //! from another tenant's graph is simply unknown here and is a hard error.
 //! Cross-tenant lineage clustering is impossible by construction.
+//!
+//! # Input sizing (caller's responsibility)
+//!
+//! [`arbitrate`] bounds neither the memory-set size nor total ancestry-
+//! traversal work: cost scales with the retrieved set and the size of its
+//! ancestry closure. Traversal is iterative and heap-bounded (no stack
+//! overflow on deep chains — a 10 000-deep chain measures ~35 ms, a
+//! 1 000-root/2 000-derived merge ~27 ms, union-find memory O(distinct
+//! roots)), so this is a throughput consideration, not a crash risk. A service
+//! that arbitrates per retrieval should still impose its own cap on the number
+//! of memories admitted to one call.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -196,6 +238,13 @@ pub enum ArbitrationError {
     /// The downgrade-only invariant was violated — a bug, surfaced loudly
     /// rather than clamped silently.
     DowngradeInvariantViolated { naive: f64, arbitrated: f64 },
+    /// A memory resolved to no provenance root, or to a root with no lineage
+    /// component. Unreachable while the ADR-320 layer's guarantees hold;
+    /// refused rather than panicked so a future change degrades safely.
+    ProvenanceRootMissing(NodeRef),
+    /// Ancestry traversal exceeded its cycle/size guard — the `causal_parents`
+    /// relation is not the DAG the fusion layer guarantees.
+    AncestryNotAcyclic(ObservationId),
     /// Provenance resolution failed inside the graph.
     Graph(FusionError),
 }
@@ -215,6 +264,14 @@ impl std::fmt::Display for ArbitrationError {
             ArbitrationError::DowngradeInvariantViolated { naive, arbitrated } => write!(
                 f,
                 "downgrade-only invariant violated: arbitrated {arbitrated} > naive {naive}"
+            ),
+            ArbitrationError::ProvenanceRootMissing(node) => {
+                write!(f, "memory {node:?} resolved to no provenance root")
+            }
+            ArbitrationError::AncestryNotAcyclic(id) => write!(
+                f,
+                "ancestry traversal from {} exceeded its acyclicity guard",
+                id.to_hex()
             ),
             ArbitrationError::Graph(e) => write!(f, "provenance resolution failed: {e}"),
         }
@@ -264,8 +321,14 @@ pub fn arbitrate(
             return Err(ArbitrationError::ConfidenceInvalid(*node));
         }
 
-        // Weakest-link reliability and freshness over the node's atomic set;
-        // per-atomic confidences also pass the choke point here.
+        // Weakest-link reliability and freshness over the node's atomic set.
+        // The per-atomic confidence check below is NOT redundant with the
+        // node-level check above: for a `NodeRef::Cluster` the node-level value
+        // is `FusedCluster::confidence`, a *folded* number. `fuse()` now
+        // rejects non-finite members at the source, but `confidence` is a
+        // public field on a public struct, so a cluster carrying a laundered
+        // NaN can still be constructed or mutated outside that constructor.
+        // This loop is the last check between such a value and the score.
         let mut reliability = 1.0f64;
         let mut freshness = 1.0f64;
         let mut roots: BTreeSet<ObservationId> = BTreeSet::new();
@@ -333,9 +396,19 @@ pub fn arbitrate(
     let mut naive = 0.0f64;
     for f in &facts {
         naive += f.confidence;
-        // Any root works: the memory's whole root set is one component.
-        let comp = uf.find(root_index[f.roots.iter().next().expect("non-empty root set")]);
-        let lineage = by_component.get_mut(&comp).expect("component exists");
+        // Any root works: the memory's whole root set is one component. An
+        // empty root set is unreachable (every resolved atomic contributes at
+        // least itself), but this returns an error rather than panicking so a
+        // future change to the provenance layer degrades to a refusal.
+        let first_root = f
+            .roots
+            .iter()
+            .next()
+            .ok_or(ArbitrationError::ProvenanceRootMissing(f.node))?;
+        let comp = uf.find(root_index[first_root]);
+        let lineage = by_component
+            .get_mut(&comp)
+            .ok_or(ArbitrationError::ProvenanceRootMissing(f.node))?;
         lineage.members.push(f.node);
         lineage.weight = lineage.weight.max(f.weight);
     }
@@ -348,7 +421,10 @@ pub fn arbitrate(
         l.members.sort_unstable();
         l.members.dedup();
     }
-    lineages.sort_by_key(|l| l.roots[0]);
+    // Deterministic order by minimal root. Every retained lineage has at least
+    // one root by construction; `first()` keeps that from being a panic if the
+    // construction above ever changes.
+    lineages.sort_by_key(|l| l.roots.first().copied());
 
     let arbitrated: f64 = lineages.iter().map(|l| l.weight).sum();
 
@@ -410,15 +486,23 @@ fn node_confidence(
     }
 }
 
-/// Memoized, iterative root-set computation over `causal_parents` (the graph
-/// guarantees parents pre-exist and are acyclic; iteration keeps deep chains
-/// off the call stack, same posture as `resolve_provenance`).
+/// Memoized, iterative root-set computation over `causal_parents`. Iteration
+/// keeps deep chains off the call stack, same posture as `resolve_provenance`.
+///
+/// The fusion layer guarantees the parent relation is a DAG (parents must
+/// pre-exist at ingest, and content addressing makes a cycle cryptographically
+/// infeasible to mint), and `resolve_provenance` nonetheless carries its own
+/// `visited` guard — this walk matches that posture rather than resting on the
+/// invariant: a node whose parents are *still* unresolved after it has already
+/// been expanded once can only mean a cycle, and is refused as
+/// [`ArbitrationError::AncestryNotAcyclic`] instead of spinning forever.
 fn root_set(
     graph: &CausalEpisodicGraph,
     id: ObservationId,
     memo: &mut BTreeMap<ObservationId, BTreeSet<ObservationId>>,
 ) -> Result<BTreeSet<ObservationId>, ArbitrationError> {
     let mut stack = vec![id];
+    let mut expanded: BTreeSet<ObservationId> = BTreeSet::new();
     while let Some(top) = stack.last().copied() {
         if memo.contains_key(&top) {
             stack.pop();
@@ -441,15 +525,24 @@ fn root_set(
         if unresolved.is_empty() {
             let mut roots = BTreeSet::new();
             for p in &obs.causal_parents {
-                roots.extend(memo[p].iter().copied());
+                let parent_roots = memo
+                    .get(p)
+                    .ok_or(ArbitrationError::UnknownObservation(*p))?;
+                roots.extend(parent_roots.iter().copied());
             }
             memo.insert(top, roots);
             stack.pop();
+        } else if !expanded.insert(top) {
+            // Second visit with parents still unresolved ⇒ the walk is going in
+            // a circle: this node is (transitively) its own ancestor.
+            return Err(ArbitrationError::AncestryNotAcyclic(top));
         } else {
             stack.extend(unresolved);
         }
     }
-    Ok(memo[&id].clone())
+    memo.get(&id)
+        .cloned()
+        .ok_or(ArbitrationError::UnknownObservation(id))
 }
 
 /// Minimal union-find with path compression + union by size.

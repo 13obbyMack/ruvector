@@ -334,6 +334,11 @@ fn main() {
 /// assertion — arbitration collapses the 1 000 memories to exactly the 100
 /// origin lineages, at a score no higher than the naive vote — is checked
 /// here as well as in the test suite.
+///
+/// Every derived memory here **declares** its parent, so this measures the
+/// clustering math on the mechanism's best case. It is not an adversarial
+/// benchmark: content-copying memories that declare no parent mint their own
+/// lineages by design (see `arbitration`'s "Known limitation" docs).
 fn run_arbitration_bench() {
     use rand::rngs::OsRng;
     use ruvector_agent_memory::{
@@ -416,7 +421,10 @@ fn run_arbitration_bench() {
     );
     assert_eq!(verdict.independent_lineages(), N_ROOTS);
     assert!(verdict.arbitrated_confidence <= verdict.naive_confidence + 1e-9);
-    println!("  → {} correlated memories collapse to {} independent evidence lineages", N_DERIVED, N_ROOTS);
+    println!(
+        "  → {N_DERIVED} declared-derivation memories collapse to {N_ROOTS} independent lineages"
+    );
+    println!("    (declared-parent chains — the mechanism's best case, not an adversarial test)");
 }
 
 fn rustc_version_string() -> String {
