@@ -33,6 +33,25 @@ jobs:
       - name: Check crates/ for orphan crates (PIR #859)
         run: node scripts/workspace-check.mjs
 
+  adr-numbering:
+    name: ADR numbering guard
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+
+      # scripts/adr-index.mjs has always exited 1 on a duplicate ADR number,
+      # but nothing invoked it, so duplicates reached review green. See
+      # ADR-316 for the numbering policy.
+      - name: Check docs/adr/ for duplicate ADR numbers (ADR-316)
+        run: node scripts/adr-index.mjs --check
+
   frozen-weights:
     name: Frozen-weights structural gate
     runs-on: ubuntu-22.04
