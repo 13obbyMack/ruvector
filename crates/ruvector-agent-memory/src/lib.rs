@@ -33,12 +33,20 @@
 //! SHA-256/Ed25519 for content addressing and per-observation signatures — no
 //! new hash or signature scheme is introduced.
 //!
+//! The `arbitration` module adds correlation-aware memory arbitration
+//! (ADR-330, PIR WP27), informed by CAMA (arXiv:2608.19701): retrieved
+//! memories are clustered into independent evidence lineages by causal
+//! ancestry, and effective confidence is scored per lineage
+//! (downgrade-only relative to a naive per-memory vote), so N memories
+//! repeating one origin count as one observation, not N.
+//!
 //! - Park et al. 2023, "Generative Agents" (arXiv:2304.03442)
 //! - Zhong et al. 2023, "MemoryBank" (arXiv:2305.10250)
 //! - Xu 2026, "Self-Aware Vector Embeddings for RAG" (arXiv:2604.20598)
 //! - Karhade 2026, "Not All Memories Age the Same" (arXiv:2604.26970)
 //! - Survey 2026, "From Storage to Experience" (arXiv:2605.06716)
 
+pub mod arbitration;
 pub mod compaction;
 pub mod diagnostic;
 pub mod fusion;
@@ -48,6 +56,10 @@ pub mod observation;
 pub mod ops;
 pub mod scoring;
 
+pub use arbitration::{
+    arbitrate, ArbitrationConfig, ArbitrationError, ArbitrationOutcome, ArbitrationVerdict,
+    EvidenceLineage, ReliabilityModel,
+};
 pub use compaction::{CoherencePolicy, CoherenceWeights, CompactionPolicy, LfuPolicy, LruPolicy};
 pub use diagnostic::{
     apply_gated_promotion, diagnostic_coverage, evaluate_promotion, gate_and_apply,
