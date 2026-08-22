@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
 import { readFile } from "node:fs/promises";
+import {
+  assertAi4aiMutation,
+  assertAi4aiTaskManifest,
+  commandAi4aiExecutor,
+  runAi4aiLineage,
+} from "./ai4aiBench.js";
 import type { BenchmarkSuiteItem } from "./benchmark.js";
 import { capabilityStatus } from "./capabilities.js";
 import { runRuvectorDarwin, runRuvectorGepa } from "./darwin.js";
@@ -96,7 +102,43 @@ async function main(): Promise<void> {
     }, null, 2)}\n`);
     return;
   }
-  throw new Error("usage: ruvector-metaharness <doctor|flywheel|darwin|darwin-ann> [options]");
+  if (command === "darwin-ai4ai") {
+    // AI4AI-Bench (arXiv:2608.20318) lineage run against an injected external
+    // evaluator entrypoint. The real evaluator needs Docker + datacenter GPU
+    // hardware; --executor points at whatever entrypoint the caller pins
+    // (a fixture locally, the real evaluator on capable hardware).
+    const manifestPath = value("--manifest");
+    const mutationsPath = value("--mutations");
+    const executorPath = value("--executor");
+    if (!manifestPath || !mutationsPath || !executorPath) {
+      throw new Error("darwin-ai4ai requires --manifest, --mutations, and --executor");
+    }
+    const manifest = JSON.parse(await readFile(resolve(manifestPath), "utf8")) as unknown;
+    assertAi4aiTaskManifest(manifest);
+    const mutations = JSON.parse(await readFile(resolve(mutationsPath), "utf8")) as unknown;
+    if (!Array.isArray(mutations)) throw new Error("--mutations must be a JSON array");
+    for (const mutation of mutations) assertAi4aiMutation(mutation);
+    // JS entrypoints (fixtures, node-based wrappers) are run via this node;
+    // anything else must be directly executable.
+    const resolvedExecutor = resolve(executorPath);
+    const records = await runAi4aiLineage(
+      manifest,
+      mutations,
+      commandAi4aiExecutor({
+        executorPath: resolvedExecutor,
+        ...(/\.(mjs|cjs|js)$/.test(resolvedExecutor)
+          ? { commandPrefixArgs: [process.execPath] }
+          : {}),
+      }),
+    );
+    process.stdout.write(`${JSON.stringify({
+      task: manifest.taskId,
+      records,
+      bestScore: Math.max(...records.map((record) => record.evaluation.score)),
+    }, null, 2)}\n`);
+    return;
+  }
+  throw new Error("usage: ruvector-metaharness <doctor|flywheel|darwin|darwin-ann|darwin-ai4ai> [options]");
 }
 
 main().catch((error: unknown) => {
