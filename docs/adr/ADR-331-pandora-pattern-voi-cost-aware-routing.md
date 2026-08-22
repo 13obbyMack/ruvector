@@ -94,6 +94,29 @@ Add a value-of-information module (`voi.rs`) to
    index computation (Wave-3 #888 lesson); degenerate variances clamp to
    documented bounds; the function is total — it returns a decision or a
    typed error, never NaN.
+6. **Escalate-only invariant (blocking, mirrors ADR-330's downgrade-only
+   rule).** **The VoI gate may only convert a would-be-lightweight route
+   into an escalation; it must never rescue a below-threshold or
+   over-uncertain candidate into the cheap path.** The primitive's
+   "decide on the current belief" arm (`VoiDecision::Route` — no purchase
+   has positive expected value) is *not* a routing verdict and must never
+   be read as "use the lightweight model": it falls back to the legacy
+   rule, so `confidence_threshold` and `max_uncertainty` are consulted on
+   every path, gated or not. This is the routing analog of ADR-330's
+   downgrade-only confidence bound — the failure direction is
+   conservative by construction, and the gate can only ever spend *more*
+   than the legacy rule would, never less. Corollary for numeric hygiene:
+   any non-finite value surviving the primitive's `max(0.0)` clamp must
+   resolve toward **escalation**, never toward the lightweight path — a
+   NaN must not be able to buy a cheap route.
+
+   *Provenance*: the WP28 audit (PR #893, HIGH) found exactly this
+   fail-open — the router wiring read the `Route` arm as "use the
+   lightweight model," so a 0.10 score against a 0.85
+   `confidence_threshold` routed to the cheap model and `max_uncertainty`
+   was void whenever escalation happened to be priced above the VoI. The
+   invariant is stated here so the contract survives independently of the
+   wiring that violated it.
 
 ## Consequences
 
@@ -115,16 +138,44 @@ Add a value-of-information module (`voi.rs`) to
   config gate + research-gate evaluation before default-on.
 - `value_of_success` and cost parameters are caller-supplied policy;
   garbage in, garbage out. The module documents units and provides
-  conservative defaults but cannot validate a caller's economics.
+  conservative defaults but cannot validate a caller's economics. See
+  the calibration hazard below — this is not a theoretical concern.
+
+### Operational note — the `value_of_success` calibration hazard
+
+**A misconfigured `value_of_success` degenerates the gate into a
+permanent never-escalate switch that still looks like it is working.**
+The closed-form VoI of a Gaussian signal is bounded by roughly `0.4σ`.
+In this router σ is a **conformal uncertainty on a [0, 1] score**, so a
+typical σ ≈ 0.05 caps VoI at ≈ 0.02 *in score units*. With
+`value_of_success = 1.0`, the expected gain is therefore ≈ $0.02, and
+**no escalation costing more than about two cents is ever purchasable at
+any score** — the gate silently answers "don't buy" every time while
+metrics, tracing, and decision records all look healthy.
+
+Operators must express `value_of_success` as **the currency value of a
+correct route** — the business value of getting this request right —
+which is typically orders of magnitude above 1, not as a normalized
+score weight. This "looks healthy while inert" failure mode is recorded
+here, not only in rustdoc, because a reader of the config has no local
+signal that the gate has stopped doing anything.
 - No reference implementation or paper figures exist to calibrate
   against; validation is entirely this program's own benchmarks
   (routing-inference bench gains a VoI suite).
 
 ## Security / Validation Gates
 
+- **Escalate-only invariant** (blocking, Decision §6) — the gate may
+  only turn a lightweight route into an escalation; `confidence_threshold`
+  and `max_uncertainty` are consulted on every path, and the "decide on
+  current belief" arm falls back to the legacy rule rather than
+  short-circuiting to the cheap model. Regression-tested with a
+  below-threshold candidate and an over-uncertain candidate on the gated
+  path.
 - **Non-finite rejection at the choke point** (blocking) — inputs and
   the computed index; a non-finite anywhere is a typed error, never a
-  routing decision.
+  routing decision, and any non-finite that survives a clamp resolves
+  toward escalation, never toward the lightweight path.
 - **Fail-conservative**: on any VoI-computation error the router falls
   back to the pre-VoI path (existing behavior), and the fallback is
   counted in metrics — an error can never silently become a "skip the

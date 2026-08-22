@@ -135,6 +135,16 @@ in `crates/ruvector-agent-memory`:
   one source with no recorded provenance link still count as independent
   until the neural follow-up lands — the ADR is explicit that shipped
   scope under-detects correlation rather than pretending otherwise.
+  **Security corollary: shipped scope detects DECLARED derivation only,
+  so no sufficiency threshold over effective evidence may be relied on
+  as a trust gate against repeated-claim attacks.** An agent that copies
+  content without recording a causal parent mints a fresh independent
+  lineage; the WP28-era audit demonstrated 20 rumor-copying agents
+  yielding 21 lineages and zero downgrade. Arbitration is a correctness
+  mechanism for honest-but-correlated writers, not an adversarial
+  defense — that requires the neural dependency inference (content-level
+  similarity irrespective of declared parentage) plus write-path
+  attestation, both follow-up.
 - Arbitration adds a graph-traversal cost to every evidence-weighted
   retrieval; bounded by episode size in practice but must be benchmarked
   (the agent-memory bench binary gains an arbitration suite).
