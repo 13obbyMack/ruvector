@@ -676,8 +676,8 @@ pub fn gate_and_apply<S: WitnessSink, G: ProofGate>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::{LedgerState, MemoryWitnessLog};
     use crate::ledger::{AlwaysAdmitGate, TransactionalLedger};
+    use crate::ops::{LedgerState, MemoryWitnessLog};
 
     fn stage_policy(stage: MemoryStage, v: u32, strat: &str) -> MemoryPolicy {
         MemoryPolicy::new(stage.as_str(), v, stage, strat, strat.as_bytes())
@@ -706,9 +706,9 @@ mod tests {
 
     /// A trace concentrating the change on one stage (near-1.0 coverage).
     fn localizable_to(stage: MemoryStage) -> DiagnosticTrace {
-        let signals = MemoryStage::ALL.iter().map(|&s| {
-            StageSignal::new(s, if s == stage { 0.90 } else { 0.03 })
-        });
+        let signals = MemoryStage::ALL
+            .iter()
+            .map(|&s| StageSignal::new(s, if s == stage { 0.90 } else { 0.03 }));
         DiagnosticTrace::staged(0.031, signals)
     }
 
@@ -726,8 +726,14 @@ mod tests {
         assert_eq!(base.get(MemoryStage::Retrieval).strategy(), "hnsw");
         // New set carries the superseding artifact; other stages unchanged.
         assert_eq!(mutated.get(MemoryStage::Retrieval).version(), 2);
-        assert_eq!(mutated.get(MemoryStage::Retrieval).strategy(), "graph-traversal");
-        assert_eq!(mutated.get(MemoryStage::Ingestion), base.get(MemoryStage::Ingestion));
+        assert_eq!(
+            mutated.get(MemoryStage::Retrieval).strategy(),
+            "graph-traversal"
+        );
+        assert_eq!(
+            mutated.get(MemoryStage::Ingestion),
+            base.get(MemoryStage::Ingestion)
+        );
         // Distinct content hashes = distinct diagnosable identities.
         assert_ne!(
             base.get(MemoryStage::Retrieval).content_hash(),
@@ -763,7 +769,8 @@ mod tests {
         }
 
         // Governed application: add + proof-gated accept through the WP4 ledger.
-        let mut ledger = TransactionalLedger::new(MemoryWitnessLog::default(), AlwaysAdmitGate::default());
+        let mut ledger =
+            TransactionalLedger::new(MemoryWitnessLog::default(), AlwaysAdmitGate::default());
         let applied = gate_and_apply(
             &mut ledger,
             &candidate,
@@ -774,7 +781,9 @@ mod tests {
         )
         .unwrap();
 
-        let id = applied.ledger_entry.expect("promotion creates a ledger entry");
+        let id = applied
+            .ledger_entry
+            .expect("promotion creates a ledger entry");
         assert!(applied.decision.is_promoted());
         // The promoted artifact is Accepted knowledge.
         assert_eq!(ledger.state_of(id), Some(LedgerState::Accepted));
@@ -866,7 +875,9 @@ mod tests {
     fn result_only_log_is_non_diagnosable_and_blocks() {
         // Even with paired improvement AND no protected regression, a
         // result-only log cannot localize a stage — the paper's 0% baseline.
-        let result_only = DiagnosticTrace::ResultOnly { outcome_delta: 0.031 };
+        let result_only = DiagnosticTrace::ResultOnly {
+            outcome_delta: 0.031,
+        };
         assert_eq!(diagnostic_coverage(&result_only), 0.0);
         assert_eq!(localized_stage(&result_only), None);
 
@@ -880,7 +891,8 @@ mod tests {
         );
 
         let candidate = MemoryPolicy::retrieval(RetrievalStrategy::Temporal, 2, b"temporal");
-        let mut ledger = TransactionalLedger::new(MemoryWitnessLog::default(), AlwaysAdmitGate::default());
+        let mut ledger =
+            TransactionalLedger::new(MemoryWitnessLog::default(), AlwaysAdmitGate::default());
         let applied =
             apply_gated_promotion(&mut ledger, &candidate, decision, "wp22-gate").unwrap();
         assert!(applied.ledger_entry.is_none());
@@ -918,9 +930,10 @@ mod tests {
 
         // Retained Pending (monitored), never accepted.
         let mut ledger = TransactionalLedger::unguarded();
-        let applied =
-            apply_gated_promotion(&mut ledger, &bm25, decision, "wp22-gate").unwrap();
-        let id = applied.ledger_entry.expect("monitored flag is retained as a candidate");
+        let applied = apply_gated_promotion(&mut ledger, &bm25, decision, "wp22-gate").unwrap();
+        let id = applied
+            .ledger_entry
+            .expect("monitored flag is retained as a candidate");
         assert_eq!(ledger.state_of(id), Some(LedgerState::Pending));
         assert!(ledger.entries_in(LedgerState::Accepted).is_empty());
     }
@@ -971,7 +984,11 @@ mod tests {
         let unattributed = DiagnosticTrace::staged(
             0.1,
             [
-                StageSignal { stage: MemoryStage::Ingestion, attributed: false, localization: 5.0 },
+                StageSignal {
+                    stage: MemoryStage::Ingestion,
+                    attributed: false,
+                    localization: 5.0,
+                },
                 StageSignal::new(MemoryStage::Retrieval, 0.9),
             ],
         );

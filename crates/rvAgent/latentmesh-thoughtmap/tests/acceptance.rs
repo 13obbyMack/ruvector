@@ -5,7 +5,7 @@
 
 use latentmesh_thoughtmap::{
     integrity_tag, CausalTag, ControlledReplacementVerifier, DeadEndPolicy, Incorporation,
-    LatentMessage, LocalView, PeerId, PeerProfile, Query, Quarantine, ReasoningEngine,
+    LatentMessage, LocalView, PeerId, PeerProfile, Quarantine, Query, ReasoningEngine,
     RejectReason, RejectionKind, ThoughtGraphBackend, ThoughtMap, ROOT_STEP,
 };
 
@@ -71,8 +71,16 @@ fn local_peer_selection_is_decentralized_and_query_dependent() {
     let pick_a = view.select_peer(&candidates, &q_a, &[]).unwrap();
     let pick_b = view.select_peer(&candidates, &q_b, &[]).unwrap();
 
-    assert_eq!(pick_a.peer, PeerId(10), "query A → specialist A, chosen locally");
-    assert_eq!(pick_b.peer, PeerId(11), "query B → specialist B, chosen locally");
+    assert_eq!(
+        pick_a.peer,
+        PeerId(10),
+        "query A → specialist A, chosen locally"
+    );
+    assert_eq!(
+        pick_b.peer,
+        PeerId(11),
+        "query B → specialist B, chosen locally"
+    );
     assert_ne!(
         pick_a.peer, pick_b.peer,
         "same peers, different query → different specialization (no static role)"
@@ -185,7 +193,11 @@ fn infinite_latent_is_rejected() {
             Incorporation::Rejected(RejectionKind::NonFinite)
         );
     }
-    assert_eq!(engine.map.node_count(), before, "no inf latent may be stored");
+    assert_eq!(
+        engine.map.node_count(),
+        before,
+        "no inf latent may be stored"
+    );
 }
 
 // 3c — CASCADE PROOF: a rejected non-finite injection must NOT poison the
@@ -270,7 +282,10 @@ fn dead_end_continues_from_state_and_is_swappable() {
         .handle_dead_end(d, &view, &candidates, &query, &[], PeerId(1))
         .expect("non-quarantined trigger yields a change");
     assert!(change.continued, "continue, NOT restart");
-    assert_eq!(change.resume_from, d, "resume from current state, not the root");
+    assert_eq!(
+        change.resume_from, d,
+        "resume from current state, not the root"
+    );
     assert_eq!(change.new_peer, Some(PeerId(20)), "re-routed to a new peer");
 
     // Swap the policy → Restart resumes from ROOT and discards progress.
@@ -297,7 +312,10 @@ fn misbehaving_peer_is_quarantined_and_cannot_churn_topology() {
             Incorporation::Rejected(RejectionKind::Causal(_))
         ));
     }
-    assert!(engine.quarantine.is_quarantined(bad), "sustained anomalies quarantine the peer");
+    assert!(
+        engine.quarantine.is_quarantined(bad),
+        "sustained anomalies quarantine the peer"
+    );
 
     let nodes_after_rejects = engine.map.node_count();
 
@@ -305,7 +323,10 @@ fn misbehaving_peer_is_quarantined_and_cannot_churn_topology() {
     // It must be DAMPENED (not incorporated) purely because it is quarantined —
     // a bad actor cannot buy its way back into the map with one good message.
     let good_but_quarantined = signed_msg(bad.0, 0, vec![0.97, 0.03, 0.0], ROOT_STEP);
-    assert_eq!(engine.incorporate(&good_but_quarantined), Incorporation::Dampened);
+    assert_eq!(
+        engine.incorporate(&good_but_quarantined),
+        Incorporation::Dampened
+    );
     assert_eq!(
         engine.map.node_count(),
         nodes_after_rejects,
@@ -316,7 +337,10 @@ fn misbehaving_peer_is_quarantined_and_cannot_churn_topology() {
     let view = LocalView::new(PeerId(1), vec![1.0, 1.0, 1.0], 10);
     let query = Query::new(1, vec![1.0, 0.0, 0.0]);
     let churn = engine.handle_dead_end(ROOT_STEP, &view, &[], &query, &[], bad);
-    assert!(churn.is_none(), "quarantined peer cannot trigger topology churn");
+    assert!(
+        churn.is_none(),
+        "quarantined peer cannot trigger topology churn"
+    );
 }
 
 // 6 — Topology changes remain attributable (every change names its cause + trigger).
@@ -351,11 +375,27 @@ fn rerouting_skips_quarantined_candidates() {
     let view = LocalView::new(PeerId(1), vec![1.0, 1.0, 1.0], 10);
     let query = Query::new(1, vec![1.0, 0.0, 0.0]);
     let candidates = vec![
-        PeerProfile { id: bad, skill: vec![1.0, 0.0, 0.0], trust: 0.9, cost: 1.0, last_active_step: 10 },
-        PeerProfile { id: PeerId(21), skill: vec![1.0, 0.0, 0.0], trust: 0.9, cost: 1.0, last_active_step: 10 },
+        PeerProfile {
+            id: bad,
+            skill: vec![1.0, 0.0, 0.0],
+            trust: 0.9,
+            cost: 1.0,
+            last_active_step: 10,
+        },
+        PeerProfile {
+            id: PeerId(21),
+            skill: vec![1.0, 0.0, 0.0],
+            trust: 0.9,
+            cost: 1.0,
+            last_active_step: 10,
+        },
     ];
     let change = engine
         .handle_dead_end(d, &view, &candidates, &query, &[], PeerId(1))
         .unwrap();
-    assert_eq!(change.new_peer, Some(PeerId(21)), "re-route skips the quarantined peer");
+    assert_eq!(
+        change.new_peer,
+        Some(PeerId(21)),
+        "re-route skips the quarantined peer"
+    );
 }

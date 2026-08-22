@@ -75,7 +75,15 @@ fn ten_memories_one_source_is_one_lineage() {
     for i in 0..10u8 {
         let parents = if i % 2 == 0 { vec![root] } else { vec![prev] };
         let id = graph
-            .ingest(signed(&keypair, "agent", "acme", 0.9, 10 + i as u64, parents, &[i]))
+            .ingest(signed(
+                &keypair,
+                "agent",
+                "acme",
+                0.9,
+                10 + i as u64,
+                parents,
+                &[i],
+            ))
             .unwrap();
         derived.push(NodeRef::Observation(id));
         prev = id;
@@ -100,7 +108,15 @@ fn ten_memories_one_source_is_one_lineage() {
         .map(|i| {
             NodeRef::Observation(
                 graph2
-                    .ingest(signed(&keypair, "witness", "acme", 0.9, 10, vec![], &[i, 0xff]))
+                    .ingest(signed(
+                        &keypair,
+                        "witness",
+                        "acme",
+                        0.9,
+                        10,
+                        vec![],
+                        &[i, 0xff],
+                    ))
                     .unwrap(),
             )
         })
@@ -124,7 +140,11 @@ fn mixed_ancestry_clusters_and_bridges() {
     let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
 
     let roots: Vec<ObservationId> = (0..3u8)
-        .map(|i| graph.ingest(signed(&keypair, "origin", "acme", 0.8, 0, vec![], &[i])).unwrap())
+        .map(|i| {
+            graph
+                .ingest(signed(&keypair, "origin", "acme", 0.8, 0, vec![], &[i]))
+                .unwrap()
+        })
         .collect();
 
     // 4 memories from root 0, 3 from root 1, 3 from root 2.
@@ -132,7 +152,15 @@ fn mixed_ancestry_clusters_and_bridges() {
     for (r, count) in roots.iter().zip([4u8, 3, 3]) {
         for i in 0..count {
             let id = graph
-                .ingest(signed(&keypair, "agent", "acme", 0.8, 5, vec![*r], &[i, r.0[0]]))
+                .ingest(signed(
+                    &keypair,
+                    "agent",
+                    "acme",
+                    0.8,
+                    5,
+                    vec![*r],
+                    &[i, r.0[0]],
+                ))
                 .unwrap();
             memories.push(NodeRef::Observation(id));
         }
@@ -142,7 +170,15 @@ fn mixed_ancestry_clusters_and_bridges() {
 
     // A bridging memory citing roots 0 and 1 merges them into one lineage.
     let bridge = graph
-        .ingest(signed(&keypair, "agent", "acme", 0.8, 6, vec![roots[0], roots[1]], b"bridge"))
+        .ingest(signed(
+            &keypair,
+            "agent",
+            "acme",
+            0.8,
+            6,
+            vec![roots[0], roots[1]],
+            b"bridge",
+        ))
         .unwrap();
     let mut with_bridge = memories.clone();
     with_bridge.push(NodeRef::Observation(bridge));
@@ -230,7 +266,9 @@ fn nan_confidence_rejected_at_choke_point() {
     obs.confidence = f32::NAN;
     // Re-sign the mutated content so it verifies and ingests cleanly.
     obs.signature = ed25519_sign(&keypair.secret_key(), &obs.id().0);
-    let id = graph.ingest(obs).expect("ingest does not range-check confidence");
+    let id = graph
+        .ingest(obs)
+        .expect("ingest does not range-check confidence");
 
     let err = arbitrate(&graph, &[NodeRef::Observation(id)], &config()).unwrap_err();
     match err {
@@ -246,11 +284,19 @@ fn cross_tenant_node_is_unknown() {
     let keypair = kp();
     let mut acme = CausalEpisodicGraph::new(Tenant::new("acme"));
     let mut globex = CausalEpisodicGraph::new(Tenant::new("globex"));
-    let a = acme.ingest(signed(&keypair, "a", "acme", 0.9, 0, vec![], b"a")).unwrap();
-    let g = globex.ingest(signed(&keypair, "g", "globex", 0.9, 0, vec![], b"g")).unwrap();
+    let a = acme
+        .ingest(signed(&keypair, "a", "acme", 0.9, 0, vec![], b"a"))
+        .unwrap();
+    let g = globex
+        .ingest(signed(&keypair, "g", "globex", 0.9, 0, vec![], b"g"))
+        .unwrap();
 
-    let err = arbitrate(&acme, &[NodeRef::Observation(a), NodeRef::Observation(g)], &config())
-        .unwrap_err();
+    let err = arbitrate(
+        &acme,
+        &[NodeRef::Observation(a), NodeRef::Observation(g)],
+        &config(),
+    )
+    .unwrap_err();
     match err {
         ArbitrationError::UnknownObservation(id) => assert_eq!(id, g),
         other => panic!("expected UnknownObservation, got {other:?}"),
@@ -263,11 +309,15 @@ fn cross_tenant_node_is_unknown() {
 fn insufficient_independent_evidence_names_over_represented_roots() {
     let keypair = kp();
     let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
-    let root = graph.ingest(signed(&keypair, "o", "acme", 0.9, 0, vec![], b"r")).unwrap();
+    let root = graph
+        .ingest(signed(&keypair, "o", "acme", 0.9, 0, vec![], b"r"))
+        .unwrap();
     let memories: Vec<NodeRef> = (0..5u8)
         .map(|i| {
             NodeRef::Observation(
-                graph.ingest(signed(&keypair, "a", "acme", 0.9, 1, vec![root], &[i])).unwrap(),
+                graph
+                    .ingest(signed(&keypair, "a", "acme", 0.9, 1, vec![root], &[i]))
+                    .unwrap(),
             )
         })
         .collect();
@@ -294,7 +344,9 @@ fn insufficient_independent_evidence_names_over_represented_roots() {
 fn invalid_config_and_empty_set_rejected() {
     let keypair = kp();
     let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
-    let id = graph.ingest(signed(&keypair, "a", "acme", 0.9, 0, vec![], b"x")).unwrap();
+    let id = graph
+        .ingest(signed(&keypair, "a", "acme", 0.9, 0, vec![], b"x"))
+        .unwrap();
     let node = [NodeRef::Observation(id)];
 
     let mut cfg = config();
@@ -331,7 +383,9 @@ fn content_copying_yields_no_correlation_downgrade_under_default_reliability() {
 
     // One genuine origin, then 20 agents asserting the same claim with no
     // declared derivation — the astroturfing shape the module cannot detect.
-    graph.ingest(signed(&keypair, "origin", "acme", 0.9, 0, vec![], b"rumor")).unwrap();
+    graph
+        .ingest(signed(&keypair, "origin", "acme", 0.9, 0, vec![], b"rumor"))
+        .unwrap();
     let copies: Vec<NodeRef> = (0..20u8)
         .map(|i| {
             NodeRef::Observation(
@@ -373,8 +427,12 @@ fn fuse_rejects_non_finite_member_confidence() {
     let mut poisoned = signed(&keypair, "evil", "acme", 0.5, 0, vec![], b"nan");
     poisoned.confidence = f32::NAN;
     poisoned.signature = ed25519_sign(&keypair.secret_key(), &poisoned.id().0);
-    let bad = graph.ingest(poisoned).expect("ingest does not range-check confidence");
-    let good = graph.ingest(signed(&keypair, "ok", "acme", 0.9, 0, vec![], b"ok")).unwrap();
+    let bad = graph
+        .ingest(poisoned)
+        .expect("ingest does not range-check confidence");
+    let good = graph
+        .ingest(signed(&keypair, "ok", "acme", 0.9, 0, vec![], b"ok"))
+        .unwrap();
 
     // Lone NaN member: must not become +inf.
     assert!(matches!(
@@ -383,7 +441,10 @@ fn fuse_rejects_non_finite_member_confidence() {
     ));
     // NaN alongside a valid member: must not silently vanish into 0.9.
     assert!(matches!(
-        graph.fuse(&[NodeRef::Observation(bad), NodeRef::Observation(good)], "mixed"),
+        graph.fuse(
+            &[NodeRef::Observation(bad), NodeRef::Observation(good)],
+            "mixed"
+        ),
         Err(FusionError::MemberConfidenceInvalid(_))
     ));
     // A well-formed fusion still succeeds and keeps the weakest link.
@@ -397,7 +458,9 @@ fn fuse_rejects_non_finite_member_confidence() {
 fn fused_cluster_shares_lineage_with_its_origins() {
     let keypair = kp();
     let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
-    let root = graph.ingest(signed(&keypair, "o", "acme", 0.9, 0, vec![], b"r")).unwrap();
+    let root = graph
+        .ingest(signed(&keypair, "o", "acme", 0.9, 0, vec![], b"r"))
+        .unwrap();
     let child = graph
         .ingest(signed(&keypair, "a", "acme", 0.8, 1, vec![root], b"c"))
         .unwrap();
