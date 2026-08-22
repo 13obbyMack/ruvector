@@ -72,7 +72,12 @@ pub struct FusedCluster {
 }
 
 /// Errors from fusion-graph operations.
+///
+/// `#[non_exhaustive]`: new gates get new variants (this enum gained
+/// `MemberConfidenceInvalid` in ADR-330), so external consumers must carry a
+/// wildcard arm rather than have a future gate break their build.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum FusionError {
     /// The observation's signature did not verify (per-observation gate).
     SignatureInvalid(ObservationId),
@@ -93,6 +98,10 @@ pub enum FusionError {
     UnknownCluster(ClusterId),
     /// A fusion was requested with no members.
     EmptyCluster,
+    /// A fusion member's confidence was not finite in `[0, 1]`, so the
+    /// weakest-link fold would have produced a value outside this layer's
+    /// documented contract (or silently dropped a NaN).
+    MemberConfidenceInvalid(NodeRef),
     /// A governed ingest referenced a parent that has no ledger entry (it was
     /// not itself admitted through the ledger).
     ParentNotGoverned(ObservationId),
@@ -132,6 +141,10 @@ impl std::fmt::Display for FusionError {
             }
             FusionError::UnknownCluster(id) => write!(f, "unknown cluster {}", id.0),
             FusionError::EmptyCluster => write!(f, "cannot fuse an empty member set"),
+            FusionError::MemberConfidenceInvalid(node) => write!(
+                f,
+                "fusion member {node:?} has non-finite or out-of-range confidence"
+            ),
             FusionError::ParentNotGoverned(id) => write!(
                 f,
                 "governed ingest parent {} has no ledger entry",
@@ -228,8 +241,18 @@ impl CausalEpisodicGraph {
 
     /// Fuse `members` (event-layer observations and/or sub-clusters, all of
     /// this graph's tenant) into a new cluster-layer node. Confidence is the
-    /// weakest-link minimum over members. Rejects an empty set or any member
-    /// not present in the graph.
+    /// weakest-link minimum over members. Rejects an empty set, any member not
+    /// present in the graph, and any member whose confidence is not finite in
+    /// `[0, 1]`.
+    ///
+    /// The finiteness check is load-bearing, not decorative: `f32::min` returns
+    /// the *non-NaN* operand per IEEE 754, so folding with an `INFINITY` seed
+    /// would give a single-NaN-member cluster `confidence = +inf` (violating
+    /// this type's documented `[0, 1]` contract) and would let a NaN member of
+    /// `[NaN, 0.9]` vanish without trace into a `0.9` cluster. Because
+    /// [`AtomicObservation::new_signed`]'s range check can be bypassed — the
+    /// field is public and a signature over a NaN bit-pattern verifies — the
+    /// rejection has to happen here, before the fold.
     pub fn fuse(
         &mut self,
         members: &[NodeRef],
@@ -238,9 +261,15 @@ impl CausalEpisodicGraph {
         if members.is_empty() {
             return Err(FusionError::EmptyCluster);
         }
-        let mut confidence = f32::INFINITY;
+        let mut confidence = 1.0f32;
         for member in members {
-            confidence = confidence.min(self.node_confidence(*member)?);
+            let c = self.node_confidence(*member)?;
+            if !c.is_finite() || !(0.0..=1.0).contains(&c) {
+                return Err(FusionError::MemberConfidenceInvalid(*member));
+            }
+            if c < confidence {
+                confidence = c;
+            }
         }
         let id = ClusterId(self.next_cluster);
         self.next_cluster += 1;
