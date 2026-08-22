@@ -25,12 +25,25 @@
 //! # Guards
 //!
 //! Canonicalization is fail-loud: schemas above the configured size ceiling
-//! are refused, nesting deeper than [`MAX_CANONICAL_DEPTH`] is refused, and
+//! are refused *while encoding* (the encoder bails as soon as the output
+//! exceeds the ceiling, so an oversize schema cannot force a full canonical
+//! allocation before refusal), nesting deeper than [`MAX_CANONICAL_DEPTH`]
+//! is refused, assembly is bounded by a configurable total-bytes ceiling
+//! (so a long order repeating large identities cannot amplify memory), and
 //! assembling with an identity the cache no longer holds (evicted) is an
 //! error rather than a silent recompile — the caller re-inserts and retries,
 //! keeping cache behaviour observable. (Non-finite numbers cannot occur:
 //! `serde_json::Number` cannot represent NaN/infinity, so every number that
 //! reaches canonicalization is finite by construction.)
+//!
+//! # Memory sizing
+//!
+//! Worst-case residency is `capacity × max_schema_bytes` — with the
+//! defaults, 2048 × 256 KiB ≈ **512 MiB**. That is a deliberate
+//! upper bound, not an expected footprint (typical tool schemas are 1–4 KB,
+//! ≈ 8 MiB at full capacity), but wiring this cache into a long-lived
+//! server should size [`SchemaCacheConfig`] consciously rather than
+//! defaulting blindly.
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -49,12 +62,26 @@ pub const DEFAULT_MAX_SCHEMA_BYTES: usize = 256 * 1024;
 /// `ruvector-query-cache` (ADR-301).
 pub const DEFAULT_CAPACITY: usize = 2048;
 
+/// Default ceiling on one assembled context, 64 MiB. Bounds the
+/// amplification a long `order` repeating large identities could otherwise
+/// produce (an unbounded order of 256 KiB blocks grows linearly with its
+/// length).
+pub const DEFAULT_MAX_ASSEMBLED_BYTES: usize = 64 * 1024 * 1024;
+
 /// Errors from canonicalization, compilation, or assembly.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum SchemaCacheError {
     /// The schema's canonical encoding exceeds the configured ceiling.
-    #[error("schema too large: canonical encoding is {actual} bytes, ceiling is {ceiling}")]
+    /// `actual` is the encoded length at the point the encoder bailed — a
+    /// lower bound on the full canonical size, since encoding stops as soon
+    /// as the ceiling is crossed.
+    #[error("schema too large: canonical encoding is at least {actual} bytes, ceiling is {ceiling}")]
     SchemaTooLarge { actual: usize, ceiling: usize },
+    /// The requested assembly would exceed the configured total-bytes
+    /// ceiling (guards against amplification via long orders repeating
+    /// large identities).
+    #[error("assembly too large: {actual} bytes requested, ceiling is {ceiling}")]
+    AssemblyTooLarge { actual: usize, ceiling: usize },
     /// The schema nests deeper than [`MAX_CANONICAL_DEPTH`].
     #[error("schema nesting exceeds maximum depth {0}")]
     DepthExceeded(usize),
@@ -92,19 +119,38 @@ impl fmt::Display for ResourceId {
 /// Recursively write the canonical encoding of `value`: object keys sorted
 /// bytewise, arrays in order, no insignificant whitespace, string/number
 /// atoms rendered by `serde_json` (stable for a given `serde_json` version).
+///
+/// The `ceiling` is enforced *while encoding*: as soon as `out` exceeds it
+/// the encoder bails with [`SchemaCacheError::SchemaTooLarge`], so an
+/// oversize schema cannot force a full canonical allocation before refusal.
 fn write_canonical(
     value: &serde_json::Value,
     out: &mut String,
     depth: usize,
+    ceiling: usize,
 ) -> Result<(), SchemaCacheError> {
     if depth > MAX_CANONICAL_DEPTH {
         return Err(SchemaCacheError::DepthExceeded(MAX_CANONICAL_DEPTH));
+    }
+    if out.len() > ceiling {
+        return Err(SchemaCacheError::SchemaTooLarge {
+            actual: out.len(),
+            ceiling,
+        });
     }
     match value {
         serde_json::Value::Null => out.push_str("null"),
         serde_json::Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         serde_json::Value::Number(n) => out.push_str(&n.to_string()),
         serde_json::Value::String(s) => {
+            // A single string atom can be arbitrarily large: refuse from its
+            // raw length before rendering the (at-least-as-large) quoted form.
+            if out.len().saturating_add(s.len()) > ceiling {
+                return Err(SchemaCacheError::SchemaTooLarge {
+                    actual: out.len().saturating_add(s.len()),
+                    ceiling,
+                });
+            }
             // serde_json string escaping is deterministic.
             let quoted = serde_json::to_string(s)
                 .map_err(|e| SchemaCacheError::NotSerializable(e.to_string()))?;
@@ -116,7 +162,7 @@ fn write_canonical(
                 if i > 0 {
                     out.push(',');
                 }
-                write_canonical(item, out, depth + 1)?;
+                write_canonical(item, out, depth + 1, ceiling)?;
             }
             out.push(']');
         }
@@ -131,11 +177,17 @@ fn write_canonical(
                 if i > 0 {
                     out.push(',');
                 }
+                if out.len().saturating_add(key.len()) > ceiling {
+                    return Err(SchemaCacheError::SchemaTooLarge {
+                        actual: out.len().saturating_add(key.len()),
+                        ceiling,
+                    });
+                }
                 let quoted = serde_json::to_string(key)
                     .map_err(|e| SchemaCacheError::NotSerializable(e.to_string()))?;
                 out.push_str(&quoted);
                 out.push(':');
-                write_canonical(&map[key.as_str()], out, depth + 1)?;
+                write_canonical(&map[key.as_str()], out, depth + 1, ceiling)?;
             }
             out.push('}');
         }
@@ -143,11 +195,27 @@ fn write_canonical(
     Ok(())
 }
 
-/// Canonicalize a JSON value (no size ceiling applied here; the cache applies
-/// its configured ceiling on insert).
+/// Canonicalize a JSON value with no size ceiling (the cache applies its
+/// configured ceiling on insert via [`canonicalize_bounded`]).
 pub fn canonicalize(value: &serde_json::Value) -> Result<String, SchemaCacheError> {
+    canonicalize_bounded(value, usize::MAX)
+}
+
+/// Canonicalize with a streaming size ceiling: encoding bails as soon as the
+/// output exceeds `ceiling`, so an oversize input cannot force a full
+/// canonical allocation before refusal.
+pub fn canonicalize_bounded(
+    value: &serde_json::Value,
+    ceiling: usize,
+) -> Result<String, SchemaCacheError> {
     let mut out = String::new();
-    write_canonical(value, &mut out, 0)?;
+    write_canonical(value, &mut out, 0, ceiling)?;
+    if out.len() > ceiling {
+        return Err(SchemaCacheError::SchemaTooLarge {
+            actual: out.len(),
+            ceiling,
+        });
+    }
     Ok(out)
 }
 
@@ -181,12 +249,19 @@ struct CacheEntry {
 }
 
 /// Configuration for [`SchemaResourceCache`].
+///
+/// Worst-case memory residency is `capacity × max_schema_bytes` — the
+/// defaults bound at 2048 × 256 KiB ≈ 512 MiB. Long-lived servers should
+/// size these consciously (see the module-level "Memory sizing" note).
 #[derive(Debug, Clone)]
 pub struct SchemaCacheConfig {
     /// Maximum resident compiled blocks; least-recently-used is evicted.
     pub capacity: usize,
     /// Per-schema ceiling on canonical encoding size, in bytes.
     pub max_schema_bytes: usize,
+    /// Ceiling on one assembled context, in bytes. Guards against
+    /// amplification via long orders repeating large identities.
+    pub max_assembled_bytes: usize,
 }
 
 impl Default for SchemaCacheConfig {
@@ -194,6 +269,7 @@ impl Default for SchemaCacheConfig {
         Self {
             capacity: DEFAULT_CAPACITY,
             max_schema_bytes: DEFAULT_MAX_SCHEMA_BYTES,
+            max_assembled_bytes: DEFAULT_MAX_ASSEMBLED_BYTES,
         }
     }
 }
@@ -243,13 +319,9 @@ impl SchemaResourceCache {
         if self.config.capacity == 0 {
             return Err(SchemaCacheError::ZeroCapacity);
         }
-        let canonical = canonicalize(value)?;
-        if canonical.len() > self.config.max_schema_bytes {
-            return Err(SchemaCacheError::SchemaTooLarge {
-                actual: canonical.len(),
-                ceiling: self.config.max_schema_bytes,
-            });
-        }
+        // Streaming ceiling: refusal happens during encoding, before a full
+        // canonical allocation for an oversize schema can exist.
+        let canonical = canonicalize_bounded(value, self.config.max_schema_bytes)?;
         let id = ResourceId(Sha256::digest(canonical.as_bytes()).into());
         self.tick += 1;
         if let Some(entry) = self.entries.get_mut(&id) {
@@ -281,15 +353,24 @@ impl SchemaResourceCache {
     /// Assemble a context from resident blocks in the given order. The
     /// result is byte-identical to [`compile_fresh`] over the same ordered
     /// schemas. Errors (rather than silently recompiling) if any identity is
-    /// not resident.
+    /// not resident, and refuses assemblies whose total size would exceed
+    /// `max_assembled_bytes` (a long order repeating large identities would
+    /// otherwise amplify memory linearly with its length).
     pub fn assemble(&mut self, order: &[ResourceId]) -> Result<String, SchemaCacheError> {
-        // Validate residency first so a partial assembly is never observable.
+        // Validate residency and total size first so a partial or oversized
+        // assembly is never observable.
         let mut total = 0usize;
         for id in order {
             match self.entries.get(id) {
-                Some(entry) => total += entry.block.len(),
+                Some(entry) => total = total.saturating_add(entry.block.len()),
                 None => return Err(SchemaCacheError::NotResident(*id)),
             }
+        }
+        if total > self.config.max_assembled_bytes {
+            return Err(SchemaCacheError::AssemblyTooLarge {
+                actual: total,
+                ceiling: self.config.max_assembled_bytes,
+            });
         }
         let mut out = String::with_capacity(total);
         for id in order {
@@ -442,6 +523,68 @@ mod tests {
             other => panic!("expected SchemaTooLarge, got {other:?}"),
         }
         assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn oversize_bails_during_encoding_not_after() {
+        // A schema vastly larger than the ceiling: refusal must report a
+        // bailed-at length near the ceiling, proving the encoder stopped
+        // early rather than canonicalizing the whole value first.
+        let ceiling = 1024;
+        let huge = serde_json::json!({
+            "items": (0..5000)
+                .map(|i| serde_json::json!({ "name": format!("field_{i}"), "blob": "y".repeat(256) }))
+                .collect::<Vec<_>>()
+        });
+        let full_len = canonicalize(&huge).unwrap().len();
+        assert!(full_len > 1_000_000, "fixture should dwarf the ceiling");
+
+        match canonicalize_bounded(&huge, ceiling) {
+            Err(SchemaCacheError::SchemaTooLarge { actual, ceiling: c }) => {
+                assert_eq!(c, ceiling);
+                // Bailed close to the ceiling, nowhere near the full size.
+                assert!(
+                    actual < ceiling * 2,
+                    "expected an early bail near {ceiling}, got {actual}"
+                );
+                assert!(actual * 100 < full_len, "bail was not early");
+            }
+            other => panic!("expected SchemaTooLarge, got {other:?}"),
+        }
+
+        // Same refusal through the cache, and nothing is retained.
+        let mut cache = SchemaResourceCache::with_config(SchemaCacheConfig {
+            max_schema_bytes: ceiling,
+            ..SchemaCacheConfig::default()
+        });
+        assert!(matches!(
+            cache.insert(&huge),
+            Err(SchemaCacheError::SchemaTooLarge { .. })
+        ));
+        assert!(cache.is_empty());
+        assert_eq!(cache.stats().misses, 0);
+    }
+
+    #[test]
+    fn amplified_order_is_refused() {
+        let mut cache = SchemaResourceCache::with_config(SchemaCacheConfig {
+            max_assembled_bytes: 4096,
+            ..SchemaCacheConfig::default()
+        });
+        let id = cache
+            .insert(&serde_json::json!({ "blob": "z".repeat(512) }))
+            .unwrap();
+        // One block is fine.
+        assert!(cache.assemble(&[id]).is_ok());
+        // The same identity repeated far enough exceeds the ceiling.
+        let amplified = vec![id; 512];
+        match cache.assemble(&amplified) {
+            Err(SchemaCacheError::AssemblyTooLarge { actual, ceiling }) => {
+                assert!(actual > ceiling);
+                assert_eq!(ceiling, 4096);
+            }
+            other => panic!("expected AssemblyTooLarge, got {other:?}"),
+        }
     }
 
     #[test]

@@ -59,7 +59,8 @@ pub mod types;
 
 // Re-export main types
 pub use schema_cache::{
-    ResourceId, SchemaCacheConfig, SchemaCacheError, SchemaCacheStats, SchemaResourceCache,
+    canonicalize, canonicalize_bounded, ResourceId, SchemaCacheConfig, SchemaCacheError,
+    SchemaCacheStats, SchemaResourceCache,
 };
 pub use server::{McpGateConfig, McpGateServer, ServerCapabilities, ServerInfo};
 pub use tools::{McpError, McpGateTools};
