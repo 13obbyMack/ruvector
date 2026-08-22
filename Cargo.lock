@@ -9180,6 +9180,7 @@ dependencies = [
 name = "ruvector-context"
 version = "2.3.0"
 dependencies = [
+ "fs2",
  "ruvector-core 2.3.0",
  "serde",
  "serde_json",

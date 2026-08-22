@@ -1,4 +1,4 @@
-# ADR-332: Scope-Sharded Context Vector Index
+# ADR-334: Scope-Sharded Context Vector Index
 
 **Status:** Proposed
 
@@ -52,7 +52,46 @@ does not parse capability handles or infer authority from a URI.
 5. Scope strings never become filesystem path components.
 6. Recovery authenticates the scope-to-filename binding before serving data.
 7. Exact-scope erasure closes and removes the persistent shard while holding
-   the catalog write lock.
+   the catalog write lock. The unlink is ordered before the catalog mutation,
+   so a failed erasure never reports in-memory success over a surviving file.
+8. Shard creation never adopts a pre-existing file. A file already present at
+   the computed filename is refused rather than opened, because
+   `VectorDB::new` on an existing path silently inherits that file's stored
+   config and stored vectors.
+9. One process holds at most one index handle per root directory, enforced by
+   an exclusive advisory lock taken in `open`. Two handles over one root would
+   otherwise share the process-global database pool while maintaining
+   independent in-memory indexes.
+
+### What the manifest binding does and does not prove
+
+Invariant 6 authenticates the scope-to-**filename** binding. It does not
+authenticate shard **contents**: there is no MAC over the stored vectors, and
+`shard_id` is an unkeyed digest over non-secret identifiers, so any party that
+can write the root directory can compute a victim's filename offline and
+author a well-formed shard for it. Invariant 8 is what closes the resulting
+laundering path — without it, a planted file adopted through the create path
+would have its manifest rewritten to the victim scope and would then pass
+invariant 6 forever after.
+
+Treat the root directory as trusted deployment state. Deployments that cannot
+guarantee that should key `shard_id` with a per-deployment secret (HMAC rather
+than bare SHA-256) so filenames are unguessable, and add content
+authentication.
+
+### Explicit non-goals
+
+- **Availability is not isolated.** `max_scopes` is a process-global ceiling
+  with no per-namespace quota, so one tenant exhausting it makes another
+  tenant's first insert fail. Per-tenant quotas are deferred.
+- **Startup cost is proportional to the whole corpus.** `open` materializes
+  every shard before the first query rather than opening shards lazily, so
+  memory and startup scale with total stored vectors across all tenants,
+  bounded only by `max_scopes`.
+- **No authorization is performed here.** Every public method, not only
+  `search`, assumes the caller has already authorized the scope. `scope_stats`
+  in particular answers existence and exact vector count for any nameable
+  scope.
 
 ## Pseudocode
 
@@ -119,3 +158,14 @@ The upstream crate must demonstrate:
    deterministically.
 6. Formatting, unit tests, Clippy, dependency audit, and changed-file secret
    scan pass before merge.
+7. The isolation suite runs against **both** index kinds. A suite configured
+   with `hnsw_config: None` routes every shard to `FlatIndex` and therefore
+   cannot establish claim 1, whose subject is the ANN index.
+8. The per-shard search counter is incremented on a path that cannot be
+   bypassed by construction, rather than by a call site that a future edit
+   could omit while leaving the suite green.
+9. A shard file planted at another scope's computed filename while the index
+   is open is refused, and no restart launders it into the victim scope.
+10. A second index handle on an already-open root fails loudly.
+11. A single unreadable shard-shaped file does not deny `open` to unrelated
+    tenants.

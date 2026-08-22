@@ -11,6 +11,7 @@ keywords = ["vector", "context", "multitenancy", "security"]
 categories = ["database", "data-structures"]
 
 [dependencies]
+fs2 = "0.4"
 ruvector-core = { path = "../ruvector-core", default-features = false, features = ["storage", "hnsw"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -44,8 +44,20 @@ pub enum ContextIndexError {
     #[error("context point ID already exists with different bytes")]
     ImmutableConflict,
     /// A discovered shard lacks a valid, hash-bound scope manifest.
+    ///
+    /// Reports the shard filename only; the absolute path is never disclosed.
     #[error("corrupt context shard: {0}")]
     CorruptShard(String),
+    /// A file already occupies the deterministic path of a scope being created.
+    ///
+    /// The vector engine would adopt that file's stored vectors and relabel
+    /// them as the new scope's data, so creation fails and the file is left
+    /// untouched for quarantine at the next open.
+    #[error("refusing to adopt pre-existing context shard: {0}")]
+    ShardAdoption(String),
+    /// Another live handle already holds the exclusive lock on this index root.
+    #[error("context index root is already locked by another handle")]
+    RootLocked,
     /// A shared index lock was poisoned by a panicking caller.
     #[error("context index lock poisoned")]
     LockPoisoned,

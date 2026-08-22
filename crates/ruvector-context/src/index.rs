@@ -1,15 +1,23 @@
 //! Persistent scope-sharded vector index.
 
+use crate::shard::{acquire_root_lock, create_shard, load_shard, shard_name, Shard};
 use crate::{ContextIndexError, ContextNamespace, ContextScope, Result};
 use ruvector_core::types::DbOptions;
-use ruvector_core::{SearchQuery, VectorDB, VectorEntry};
+use ruvector_core::{SearchQuery, VectorEntry};
 use std::collections::BTreeMap;
+use std::fs::File;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
-const MANIFEST_KEY: &str = "ruvector_context_scope_v1";
 const MAX_POINT_ID_BYTES: usize = 512;
+
+/// Hard ceiling on [`ContextIndexOptions::max_results`].
+///
+/// Top K bounds a caller-driven allocation, so an unbounded "unlimited"
+/// spelling such as `usize::MAX` must be rejected by configuration validation
+/// rather than reaching the allocator.
+pub const MAX_RESULT_LIMIT: usize = 4_096;
 
 /// Resource and vector-engine configuration for a scoped context index.
 #[derive(Debug, Clone)]
@@ -20,7 +28,7 @@ pub struct ContextIndexOptions {
     pub max_scopes: usize,
     /// Maximum descendant shards one search may touch.
     pub max_search_shards: usize,
-    /// Maximum top K accepted from a caller.
+    /// Maximum top K accepted from a caller, capped at [`MAX_RESULT_LIMIT`].
     pub max_results: usize,
 }
 
@@ -35,6 +43,11 @@ impl ContextIndexOptions {
         if self.max_scopes == 0 || self.max_search_shards == 0 || self.max_results == 0 {
             return Err(ContextIndexError::InvalidConfiguration(
                 "resource limits must be nonzero",
+            ));
+        }
+        if self.max_results > MAX_RESULT_LIMIT {
+            return Err(ContextIndexError::InvalidConfiguration(
+                "max_results exceeds the supported ceiling",
             ));
         }
         Ok(())
@@ -70,50 +83,70 @@ pub struct ScopeStats {
     pub searches: u64,
 }
 
-struct Shard {
-    db: VectorDB,
-    searches: AtomicU64,
-}
-
 type PathShards = BTreeMap<Vec<String>, Arc<Shard>>;
 type NamespaceShards = BTreeMap<ContextNamespace, PathShards>;
 
 /// Persistent vector index physically partitioned by exact context scope.
+///
+/// # Caller authorization
+///
+/// This type is a physical isolation mechanism, not an authorization service.
+/// It never decides who may touch a scope: every method assumes the caller has
+/// already authorized the supplied [`ContextScope`] for the requesting
+/// principal. Passing an unauthorized scope yields that scope's data.
+///
+/// One live handle owns an index root exclusively. [`ScopedContextIndex::open`]
+/// takes an advisory lock on the root directory, so a second handle over the
+/// same root fails with [`ContextIndexError::RootLocked`] instead of silently
+/// diverging from the first.
 pub struct ScopedContextIndex {
     root: PathBuf,
     options: ContextIndexOptions,
     shards: RwLock<NamespaceShards>,
+    quarantined: Vec<String>,
+    _lock: File,
 }
 
 impl ScopedContextIndex {
     /// Open an index directory and recover every hash-bound scope shard.
+    ///
+    /// Takes an exclusive advisory lock on `root`; the lock is released when
+    /// the returned handle is dropped, and by the operating system if the
+    /// process exits without dropping it.
+    ///
+    /// Files that match the shard naming convention but fail to load, or whose
+    /// stored manifest does not match their filename, are quarantined and
+    /// skipped rather than failing the whole open. See
+    /// [`ScopedContextIndex::quarantined_shards`].
     pub fn open(root: impl AsRef<Path>, options: ContextIndexOptions) -> Result<Self> {
         options.validate()?;
         let root = root.as_ref().to_path_buf();
         std::fs::create_dir_all(&root)?;
-        let mut shards = BTreeMap::new();
+        let lock = acquire_root_lock(&root)?;
+        let mut shards: NamespaceShards = BTreeMap::new();
+        let mut quarantined = Vec::new();
         for entry in std::fs::read_dir(&root)? {
             let path = entry?.path();
-            if !is_shard_path(&path) {
+            let Some(filename) = shard_name(&path) else {
                 continue;
+            };
+            match load_shard(&path, &filename, &options) {
+                Ok((scope, shard)) if filename == scope.shard_filename() => {
+                    shards
+                        .entry(scope.namespace().clone())
+                        .or_default()
+                        .insert(scope.path().to_vec(), Arc::new(shard));
+                }
+                _ => quarantined.push(filename),
             }
-            let (scope, shard) = load_shard(&path, &options)?;
-            let filename = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
-            if filename != scope.shard_filename() {
-                return Err(ContextIndexError::CorruptShard(filename.to_string()));
-            }
-            shards
-                .entry(scope.namespace().clone())
-                .or_insert_with(BTreeMap::new)
-                .insert(scope.path().to_vec(), Arc::new(shard));
         }
+        quarantined.sort_unstable();
         let index = Self {
             root,
             options,
             shards: RwLock::new(shards),
+            quarantined,
+            _lock: lock,
         };
         if index.scope_count()? > index.options.max_scopes {
             return Err(ContextIndexError::ScopeCapacity {
@@ -123,7 +156,14 @@ impl ScopedContextIndex {
         Ok(index)
     }
 
-    /// Insert an immutable point, returning success for an identical replay.
+    /// Insert a point, returning success for a byte-identical replay.
+    ///
+    /// A point is immutable only while it is present: once
+    /// [`ScopedContextIndex::delete_point`] removes an identifier, the same
+    /// identifier may be inserted again with different bytes.
+    ///
+    /// The caller must already have authorized `scope` for the requesting
+    /// principal.
     pub fn insert(&self, scope: &ContextScope, point: ContextPoint) -> Result<()> {
         validate_point(&point, self.options.vector.dimensions)?;
         let mut all = self
@@ -144,26 +184,28 @@ impl ScopedContextIndex {
             }
             let shard = Arc::new(create_shard(&self.root, scope, &self.options)?);
             all.entry(scope.namespace().clone())
-                .or_insert_with(BTreeMap::new)
+                .or_default()
                 .insert(scope.path().to_vec(), Arc::clone(&shard));
             shard
         };
-        if let Some(existing) = shard.db.get(&point.id)? {
+        if let Some(existing) = shard.get(&point.id)? {
             return if existing.vector == point.vector {
                 Ok(())
             } else {
                 Err(ContextIndexError::ImmutableConflict)
             };
         }
-        shard.db.insert(VectorEntry {
+        shard.insert(VectorEntry {
             id: Some(point.id),
             vector: point.vector,
             metadata: None,
-        })?;
-        Ok(())
+        })
     }
 
     /// Search only exact shards at or below an already authorized root scope.
+    ///
+    /// The caller must already have authorized `root` for the requesting
+    /// principal; every shard in its subtree is considered readable.
     pub fn search(
         &self,
         root: &ContextScope,
@@ -203,10 +245,9 @@ impl ScopedContextIndex {
                 maximum: self.options.max_search_shards,
             });
         }
-        let mut matches = Vec::with_capacity(k);
+        let mut matches = Vec::with_capacity(k.min(MAX_RESULT_LIMIT));
         for (path, shard) in selected {
-            shard.searches.fetch_add(1, Ordering::Relaxed);
-            let results = shard.db.search(SearchQuery {
+            let results = shard.ann_search(SearchQuery {
                 vector: vector.to_vec(),
                 k,
                 filter: None,
@@ -230,6 +271,9 @@ impl ScopedContextIndex {
     }
 
     /// Delete one point from one exact scope.
+    ///
+    /// The caller must already have authorized `scope` for the requesting
+    /// principal.
     pub fn delete_point(&self, scope: &ContextScope, id: &str) -> Result<bool> {
         validate_point_id(id)?;
         let all = self
@@ -242,10 +286,17 @@ impl ScopedContextIndex {
         else {
             return Ok(false);
         };
-        shard.db.delete(id).map_err(Into::into)
+        shard.delete(id)
     }
 
     /// Erase one exact scope and its persistent vector shard.
+    ///
+    /// The shard file is unlinked before any in-memory state changes, so a
+    /// failure to unlink is reported as an error with the scope still present
+    /// rather than as a phantom erase.
+    ///
+    /// The caller must already have authorized `scope` for the requesting
+    /// principal.
     pub fn erase_scope(&self, scope: &ContextScope) -> Result<bool> {
         let mut all = self
             .shards
@@ -254,20 +305,27 @@ impl ScopedContextIndex {
         let Some(paths) = all.get_mut(scope.namespace()) else {
             return Ok(false);
         };
-        let Some(shard) = paths.remove(scope.path()) else {
+        if !paths.contains_key(scope.path()) {
             return Ok(false);
-        };
-        if !paths.is_empty() {
-            drop(shard);
-        } else {
-            all.remove(scope.namespace());
-            drop(shard);
         }
-        std::fs::remove_file(self.root.join(scope.shard_filename()))?;
+        match std::fs::remove_file(self.root.join(scope.shard_filename())) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        drop(paths.remove(scope.path()));
+        let namespace_is_empty = paths.is_empty();
+        if namespace_is_empty {
+            all.remove(scope.namespace());
+        }
         Ok(true)
     }
 
     /// Return counters for one exact scope without exposing other scopes.
+    ///
+    /// This is an existence oracle over exact scopes and reports exact vector
+    /// counts, so the caller must already have authorized `scope` for the
+    /// requesting principal exactly as it would for a read.
     pub fn scope_stats(&self, scope: &ContextScope) -> Result<Option<ScopeStats>> {
         let all = self
             .shards
@@ -280,8 +338,8 @@ impl ScopedContextIndex {
             return Ok(None);
         };
         Ok(Some(ScopeStats {
-            vectors: shard.db.len()?,
-            searches: shard.searches.load(Ordering::Relaxed),
+            vectors: shard.len()?,
+            searches: shard.searches(),
         }))
     }
 
@@ -293,46 +351,16 @@ impl ScopedContextIndex {
             .map_err(|_| ContextIndexError::LockPoisoned)?;
         Ok(count_scopes(&all))
     }
-}
 
-fn create_shard(root: &Path, scope: &ContextScope, options: &ContextIndexOptions) -> Result<Shard> {
-    let path = root.join(scope.shard_filename());
-    let mut vector = options.vector.clone();
-    vector.storage_path = path.to_string_lossy().into_owned();
-    let db = VectorDB::new(vector)?;
-    let manifest = serde_json::to_string(scope)?;
-    if let Err(error) = db.save_config_value(MANIFEST_KEY, &manifest) {
-        drop(db);
-        let _ = std::fs::remove_file(&path);
-        return Err(error.into());
+    /// Shard filenames skipped at open time because they failed to load or
+    /// were not bound to their own filename.
+    ///
+    /// Operations on the scopes those files claim fail rather than silently
+    /// serving or overwriting unverified data.
+    #[must_use]
+    pub fn quarantined_shards(&self) -> &[String] {
+        &self.quarantined
     }
-    Ok(Shard {
-        db,
-        searches: AtomicU64::new(0),
-    })
-}
-
-fn load_shard(path: &Path, options: &ContextIndexOptions) -> Result<(ContextScope, Shard)> {
-    let mut vector = options.vector.clone();
-    vector.storage_path = path.to_string_lossy().into_owned();
-    let db = VectorDB::new(vector)?;
-    if db.options().dimensions != options.vector.dimensions
-        || db.options().distance_metric != options.vector.distance_metric
-    {
-        return Err(ContextIndexError::CorruptShard(path.display().to_string()));
-    }
-    let manifest = db
-        .load_config_value(MANIFEST_KEY)?
-        .ok_or_else(|| ContextIndexError::CorruptShard(path.display().to_string()))?;
-    let scope: ContextScope = serde_json::from_str(&manifest)
-        .map_err(|_| ContextIndexError::CorruptShard(path.display().to_string()))?;
-    Ok((
-        scope,
-        Shard {
-            db,
-            searches: AtomicU64::new(0),
-        },
-    ))
 }
 
 fn validate_point(point: &ContextPoint, dimensions: usize) -> Result<()> {
@@ -366,17 +394,6 @@ fn count_scopes(shards: &NamespaceShards) -> usize {
     shards.values().map(BTreeMap::len).sum()
 }
 
-fn is_shard_path(path: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return false;
-    };
-    name.len() == 69
-        && name.ends_with(".redb")
-        && name[..64]
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
 fn compare_matches(left: &ContextMatch, right: &ContextMatch) -> core::cmp::Ordering {
     left.score
         .partial_cmp(&right.score)
@@ -397,5 +414,27 @@ fn push_top_match(matches: &mut Vec<ContextMatch>, limit: usize, candidate: Cont
         .map_or(0, |(index, _)| index);
     if compare_matches(&candidate, &matches[worst]).is_lt() {
         matches[worst] = candidate;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unbounded_max_results_is_rejected_by_validation() {
+        let options = ContextIndexOptions {
+            vector: DbOptions {
+                dimensions: 3,
+                ..DbOptions::default()
+            },
+            max_scopes: 1,
+            max_search_shards: 1,
+            max_results: usize::MAX,
+        };
+        assert!(matches!(
+            options.validate(),
+            Err(ContextIndexError::InvalidConfiguration(_))
+        ));
     }
 }
