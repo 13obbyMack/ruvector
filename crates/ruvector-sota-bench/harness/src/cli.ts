@@ -6,6 +6,7 @@ import {
   assertAi4aiTaskManifest,
   commandAi4aiExecutor,
   runAi4aiLineage,
+  verifyAi4aiLineage,
 } from "./ai4aiBench.js";
 import type { BenchmarkSuiteItem } from "./benchmark.js";
 import { capabilityStatus } from "./capabilities.js";
@@ -121,11 +122,16 @@ async function main(): Promise<void> {
     // JS entrypoints (fixtures, node-based wrappers) are run via this node;
     // anything else must be directly executable.
     const resolvedExecutor = resolve(executorPath);
-    const records = await runAi4aiLineage(
+    // --wrapper-indirection declares that the pinned entrypoint WRAPS the
+    // evaluator, waiving the evaluator-identity binding. It must be asked for
+    // explicitly and is recorded on every lineage record.
+    const wrapperIndirection = process.argv.includes("--wrapper-indirection");
+    const lineage = await runAi4aiLineage(
       manifest,
       mutations,
       commandAi4aiExecutor({
         executorPath: resolvedExecutor,
+        ...(wrapperIndirection ? { wrapperIndirection: true } : {}),
         ...(/\.(mjs|cjs|js)$/.test(resolvedExecutor)
           ? { commandPrefixArgs: [process.execPath] }
           : {}),
@@ -133,8 +139,10 @@ async function main(): Promise<void> {
     );
     process.stdout.write(`${JSON.stringify({
       task: manifest.taskId,
-      records,
-      bestScore: Math.max(...records.map((record) => record.evaluation.score)),
+      runNonce: lineage.runNonce,
+      records: lineage.records,
+      vetoReasons: verifyAi4aiLineage(manifest, lineage),
+      bestScore: Math.max(...lineage.records.map((record) => record.evaluation.score)),
     }, null, 2)}\n`);
     return;
   }

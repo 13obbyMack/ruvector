@@ -56,10 +56,16 @@
  * repository's learning algorithm is the benchmark's task definition executed
  * by an external evaluator on external hardware — it is not a weight update
  * performed by this harness, and no path in this module persists weights.
+ *
+ * KNOWN LIMITATION (accepted, exact parity with benchmark.ts): the command
+ * executor SIGKILLs only the spawned child, not its process group — an
+ * evaluator that forks can leave orphans past the timeout. Inherited from
+ * benchmark.ts's runner discipline; fixing it belongs to both call sites at
+ * once, not to this adapter alone.
  */
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pairedBootstrapDecision, type PairedDecision } from "./statistics.js";
@@ -216,17 +222,54 @@ export function parseAi4aiEvaluatorOutput(value: unknown): Ai4aiEvaluation {
 
 /**
  * One link in the lineage chain. `parentDigest` is the previous record's
- * digest (the task identity for the root); `digest` commits to everything —
- * task, parent, diff, seed, executor identity, and the evaluation — so the
- * chain is tamper-evident and any run can be re-derived and audited.
+ * digest (the ROOT BINDING for the first record — see `ai4aiRunRoot`, which
+ * mixes a per-run nonce into the task identity so a chain is bound to the run
+ * that produced it and cannot be replayed as a fresh one). `digest` commits to
+ * everything — task, parent, diff, seed, executor identity, whether the
+ * executor was a declared wrapper, and the evaluation — so the chain is
+ * tamper-evident and any run can be re-derived and audited.
  */
 export interface Ai4aiLineageRecord {
   readonly taskIdentity: string;
   readonly parentDigest: string;
   readonly mutation: Ai4aiMutation;
   readonly executorIdentity: string;
+  /**
+   * True only when the caller EXPLICITLY declared that `executorIdentity`
+   * hashes a wrapper rather than the evaluator itself. Default false, so the
+   * evaluator-identity binding below is enforced unless someone opts out on
+   * the record, in the open, where an auditor sees it.
+   */
+  readonly wrapperIndirection: boolean;
   readonly evaluation: Ai4aiEvaluation;
   readonly digest: string;
+}
+
+/**
+ * The root binding a lineage chains from: the frozen task identity mixed with
+ * a per-run nonce. Without this a chain is fully deterministic — the same
+ * mutations against the same task always produce byte-identical records, so an
+ * old chain could be presented as a fresh run. The nonce makes each run's
+ * chain unique and unforgeable-as-fresh; it is carried alongside the records
+ * (see `Ai4aiLineage`) so verification can re-derive the root.
+ */
+export function ai4aiRunRoot(manifest: Ai4aiTaskManifest, runNonce: string): string {
+  if (!HEX64.test(runNonce)) throw new Error("ai4ai run nonce must be 64 lowercase hex chars");
+  return createHash("sha256")
+    .update("ruvector.ai4ai.run-root.v1\0")
+    .update(`${ai4aiTaskIdentity(manifest)}\0${runNonce}`)
+    .digest("hex");
+}
+
+/** Fresh per-run nonce. */
+export function newAi4aiRunNonce(): string {
+  return randomBytes(32).toString("hex");
+}
+
+/** A complete run: the nonce its chain is bound to, plus the records. */
+export interface Ai4aiLineage {
+  readonly runNonce: string;
+  readonly records: readonly Ai4aiLineageRecord[];
 }
 
 function lineageDigest(record: Omit<Ai4aiLineageRecord, "digest">): string {
@@ -250,7 +293,17 @@ function lineageDigest(record: Omit<Ai4aiLineageRecord, "digest">): string {
 export type Ai4aiExecutor = (
   manifest: Ai4aiTaskManifest,
   mutation: Ai4aiMutation,
-) => Promise<{ readonly raw: unknown; readonly executorIdentity: string }>;
+) => Promise<{
+  readonly raw: unknown;
+  readonly executorIdentity: string;
+  /**
+   * Set true ONLY when `executorIdentity` deliberately hashes a wrapper rather
+   * than the pinned evaluator itself. Absent/false means the identity IS
+   * claimed to be the evaluator's, and `runAi4aiMutation` then ENFORCES it
+   * against `manifest.evaluatorSha256`.
+   */
+  readonly wrapperIndirection?: boolean;
+}>;
 
 export interface Ai4aiCommandExecutorOptions {
   /** Absolute path to the evaluator entrypoint to spawn. */
@@ -259,6 +312,14 @@ export interface Ai4aiCommandExecutorOptions {
   readonly commandPrefixArgs?: readonly string[];
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
+  /**
+   * Declare that `executorPath` is a WRAPPER around the pinned evaluator, not
+   * the evaluator itself. Opting out of the evaluator-identity binding must be
+   * explicit and visible: it is recorded on every lineage record
+   * (`wrapperIndirection: true`) and committed to by the record digest, so an
+   * auditor sees exactly which runs waived the check. Default false.
+   */
+  readonly wrapperIndirection?: boolean;
 }
 
 /**
@@ -267,7 +328,10 @@ export interface Ai4aiCommandExecutorOptions {
  * temp workspace removed afterward. The entrypoint receives
  * `--task <manifest.json> --mutation <mutation.json> --output <result.json>`
  * and must write its evaluation JSON to the output path. Executor identity is
- * the SHA-256 of the entrypoint file's bytes, so lineage pins WHAT ran.
+ * the SHA-256 of the entrypoint file's bytes, so lineage pins WHAT ran — and
+ * the entrypoint is RE-HASHED after exit, failing loudly if its bytes changed
+ * between hashing and execution (time-of-check/time-of-use), so the recorded
+ * identity always names the code that actually ran.
  */
 export function commandAi4aiExecutor(options: Ai4aiCommandExecutorOptions): Ai4aiExecutor {
   return async (manifest, mutation) => {
@@ -322,7 +386,30 @@ export function commandAi4aiExecutor(options: Ai4aiCommandExecutorOptions): Ai4a
             : reject(new Error(limitFailure || `ai4ai executor exited ${code}: ${stderr}`));
         });
       });
-      return { raw: JSON.parse(await readFile(outputFile, "utf8")) as unknown, executorIdentity };
+      // TOCTOU: the entrypoint could have been swapped between hashing and
+      // spawning. Re-hash and refuse rather than record an identity for code
+      // that did not run.
+      const afterIdentity = createHash("sha256").update(await readFile(executorPath)).digest("hex");
+      if (afterIdentity !== executorIdentity) {
+        throw new Error(
+          `ai4ai executor bytes changed during the run (${executorIdentity} -> ${afterIdentity})`,
+        );
+      }
+      // The stdout/stderr ceiling does not cover the result file the evaluator
+      // writes; bound it before reading so an oversized artifact cannot be
+      // pulled into memory.
+      const maxOutputBytes = options.maxOutputBytes ?? 10 * 1024 * 1024;
+      const outputStat = await stat(outputFile);
+      if (outputStat.size > maxOutputBytes) {
+        throw new Error(
+          `ai4ai executor result exceeds output limit: ${outputStat.size} > ${maxOutputBytes} bytes`,
+        );
+      }
+      return {
+        raw: JSON.parse(await readFile(outputFile, "utf8")) as unknown,
+        executorIdentity,
+        wrapperIndirection: options.wrapperIndirection ?? false,
+      };
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -339,6 +426,12 @@ export function commandAi4aiExecutor(options: Ai4aiCommandExecutorOptions): Ai4a
  * An executor crash propagates as an error naming the mutation — it is NEVER
  * folded into a score (adapter-crash ≠ result, same discipline as the WP16
  * subprocess binder).
+ *
+ * EVALUATOR-IDENTITY BINDING: `manifest.evaluatorSha256` is not merely
+ * format-checked — unless the executor EXPLICITLY declares wrapper
+ * indirection, the identity of what actually ran must EQUAL it. Otherwise a
+ * lineage could claim evaluator X while running Y, which would make the
+ * manifest's evaluator pin a false safety claim rather than a real binding.
  */
 export async function runAi4aiMutation(
   manifest: Ai4aiTaskManifest,
@@ -360,13 +453,24 @@ export async function runAi4aiMutation(
         error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (!outcome.executorIdentity) throw new Error("ai4ai executor must report a non-empty identity");
+  if (!HEX64.test(outcome.executorIdentity)) {
+    throw new Error("ai4ai executor must report a lowercase SHA-256 identity");
+  }
+  const wrapperIndirection = outcome.wrapperIndirection ?? false;
+  if (!wrapperIndirection && outcome.executorIdentity !== manifest.evaluatorSha256) {
+    throw new Error(
+      `ai4ai executor identity does not match the manifest's pinned evaluator ` +
+      `(${outcome.executorIdentity} != ${manifest.evaluatorSha256}); declare ` +
+      `wrapperIndirection explicitly if the entrypoint wraps the evaluator`,
+    );
+  }
   const evaluation = parseAi4aiEvaluatorOutput(outcome.raw);
   const body = {
     taskIdentity: ai4aiTaskIdentity(manifest),
     parentDigest,
     mutation,
     executorIdentity: outcome.executorIdentity,
+    wrapperIndirection,
     evaluation,
   };
   return Object.freeze({ ...body, digest: lineageDigest(body) });
@@ -382,40 +486,51 @@ export async function runAi4aiLineage(
   manifest: Ai4aiTaskManifest,
   mutations: readonly Ai4aiMutation[],
   executor: Ai4aiExecutor,
-): Promise<readonly Ai4aiLineageRecord[]> {
+  runNonce: string = newAi4aiRunNonce(),
+): Promise<Ai4aiLineage> {
   assertAi4aiTaskManifest(manifest);
   if (mutations.length === 0) throw new Error("ai4ai lineage requires at least one mutation");
   const records: Ai4aiLineageRecord[] = [];
-  let parentDigest = ai4aiTaskIdentity(manifest);
+  let parentDigest = ai4aiRunRoot(manifest, runNonce);
   for (const mutation of mutations) {
     const record = await runAi4aiMutation(manifest, mutation, executor, parentDigest);
     records.push(record);
     parentDigest = record.digest;
   }
-  return Object.freeze(records);
+  return Object.freeze({ runNonce, records: Object.freeze(records) });
 }
 
 /**
- * Re-verify a lineage chain: every record must re-derive its own digest, name
- * the same frozen task, and chain to its predecessor. Returns veto-style
+ * Re-verify a lineage: every record must re-derive its own digest, name the
+ * same frozen task, chain to its predecessor from the run root (task identity
+ * + this run's nonce), and — unless it explicitly declares wrapper
+ * indirection — have run the evaluator the manifest pins. Returns veto-style
  * reasons (empty ⇒ intact). This is what the veto provider below consumes.
  */
 export function verifyAi4aiLineage(
   manifest: Ai4aiTaskManifest,
-  records: readonly Ai4aiLineageRecord[],
+  lineage: Ai4aiLineage,
 ): string[] {
   const reasons: string[] = [];
+  const { runNonce, records } = lineage;
   if (records.length === 0) {
     reasons.push("ai4ai_lineage_empty");
     return reasons;
   }
+  if (!HEX64.test(runNonce)) {
+    reasons.push("ai4ai_lineage_run_nonce_invalid");
+    return [...new Set(reasons)].sort();
+  }
   const taskIdentity = ai4aiTaskIdentity(manifest);
-  let expectedParent = taskIdentity;
+  let expectedParent = ai4aiRunRoot(manifest, runNonce);
   for (const record of records) {
     if (record.taskIdentity !== taskIdentity) reasons.push("ai4ai_lineage_task_mismatch");
     if (record.parentDigest !== expectedParent) reasons.push("ai4ai_lineage_broken_chain");
     const { digest, ...body } = record;
     if (lineageDigest(body) !== digest) reasons.push("ai4ai_lineage_digest_mismatch");
+    if (!record.wrapperIndirection && record.executorIdentity !== manifest.evaluatorSha256) {
+      reasons.push("ai4ai_evaluator_identity_mismatch");
+    }
     expectedParent = record.digest;
   }
   return [...new Set(reasons)].sort();
@@ -456,11 +571,11 @@ export function ai4aiPairedDecision(
 export function ai4aiLineageVetoProvider(
   lineageFor: (context: unknown) => {
     manifest: Ai4aiTaskManifest;
-    records: readonly Ai4aiLineageRecord[];
-  } | Promise<{ manifest: Ai4aiTaskManifest; records: readonly Ai4aiLineageRecord[] }>,
+    lineage: Ai4aiLineage;
+  } | Promise<{ manifest: Ai4aiTaskManifest; lineage: Ai4aiLineage }>,
 ): PromotionVetoProvider {
   return async (context) => {
-    const { manifest, records } = await lineageFor(context);
-    return verifyAi4aiLineage(manifest, records);
+    const { manifest, lineage } = await lineageFor(context);
+    return verifyAi4aiLineage(manifest, lineage);
   };
 }
