@@ -144,6 +144,56 @@ test("a real command run is byte-derived and bound to the pinned evaluator", asy
   );
 });
 
+test("the scored payload cannot be edited after execution", async () => {
+  // The probe: let the genuine command executor run, then overwrite the score
+  // in the result it returned. Object.freeze is shallow, so `raw` used to stay
+  // writable and this landed a fabricated 0.99 in the trusted class.
+  const honest = await runAi4aiLineage(manifest, [mutation("mut-001", 1)], fixtureExecutor);
+  const honestScore = honest.records[0]!.evaluation.score;
+  assert.ok(honestScore < 0.9, "fixture must produce a modest honest score for this probe");
+
+  const tamper: Ai4aiExecutor = async (m, mu) => {
+    const genuine = await fixtureExecutor(m, mu);
+    // Deep-freeze (defense-in-depth) makes this throw in ESM strict mode; if a
+    // refactor ever rebuilds the payload unfrozen, the content digest below is
+    // what still catches it.
+    (genuine.raw as { score: number }).score = 0.99;
+    (genuine.raw as { algorithm_changed: boolean }).algorithm_changed = true;
+    return genuine;
+  };
+  await assert.rejects(
+    runAi4aiLineage(manifest, [mutation("mut-tamper", 1)], tamper),
+    (error: unknown) =>
+      error instanceof TypeError ||
+      /modified after execution|not a score/.test((error as Error).message),
+  );
+
+  // A payload swapped wholesale rides a different object, so it is not
+  // attested at all and can never reach the trusted class.
+  const swap: Ai4aiExecutor = async (m, mu) => ({
+    ...(await fixtureExecutor(m, mu)),
+    raw: { score: 0.99, algorithm_changed: true },
+  });
+  const swapped = await runAi4aiLineage(manifest, [mutation("mut-swap", 1)], swap);
+  assert.equal(swapped.records[0]!.executorClass, "injected");
+  assert.deepEqual(
+    verifyAi4aiLineage(manifest, swapped, { requireEvaluatorBound: true }),
+    ["ai4ai_executor_not_byte_bound"],
+  );
+
+  // And the untouched genuine run records the evaluator's real score.
+  assert.equal(honest.records[0]!.executorClass, "byte-derived-command");
+  assert.equal(honest.records[0]!.evaluation.score, honestScore);
+});
+
+test("an empty lineage is the weakest class, never the strongest", () => {
+  assert.equal(ai4aiEvidenceClass({ runNonce: newAi4aiRunNonce(), records: [] }), "injected");
+  assert.deepEqual(
+    verifyAi4aiLineage(manifest, { runNonce: newAi4aiRunNonce(), records: [] }),
+    ["ai4ai_lineage_empty"],
+  );
+});
+
 test("a declared wrapper is honestly classed and distinguishable under policy", async () => {
   const wrapped: Ai4aiExecutor = async () => ({
     raw: { score: 0.2, algorithm_changed: true },

@@ -57,6 +57,13 @@
  * by an external evaluator on external hardware — it is not a weight update
  * performed by this harness, and no path in this module persists weights.
  *
+ * TRUST SCOPE (binding, stated once here and again on `Ai4aiEvidencePolicy`):
+ * this module provides WITHIN-PROCESS INTEGRITY — a record cannot misreport
+ * what the adapter's own executor produced. It is NOT cross-party
+ * authentication: the lineage digest is unkeyed and nothing is signed, so an
+ * adversary controlling the process can fabricate a chain that verifies.
+ * Signing plus an issued-nonce ledger would close that; both are follow-up.
+ *
  * KNOWN LIMITATION (accepted, exact parity with benchmark.ts): the command
  * executor SIGKILLs only the spawned child, not its process group — an
  * evaluator that forks can leave orphans past the timeout. Inherited from
@@ -321,13 +328,67 @@ function lineageDigest(record: Omit<Ai4aiLineageRecord, "digest">): string {
 export type Ai4aiExecutorClass = "byte-derived-command" | "wrapper-waived" | "injected";
 
 /**
- * Module-private attestation registry: maps the exact result object this
- * module constructed to the identity IT derived from real file bytes. Not
- * exported and not reachable from outside — an arbitrary executor cannot add
- * an entry, and mutating a returned object cannot change the attested value
- * because the adapter reads the identity from here, never off the object.
+ * What this module attests about a result it built itself: the identity it
+ * derived from the entrypoint's real bytes, AND a digest over the evaluator
+ * output as it stood when execution finished.
+ *
+ * The CONTENT digest is the load-bearing half. Attesting only the object
+ * answers "did this come from the command executor?" but not "is this score
+ * what the evaluator produced" — and `Object.freeze` is SHALLOW, so the
+ * parsed `raw` payload the score is read from stays mutable even when the
+ * wrapper object does not. Recomputing this digest at read time closes that
+ * gap by construction, and keeps closing it across refactors that rebuild the
+ * result object, which an enumeration of specific mutation paths would not.
  */
-const BYTE_DERIVED_IDENTITY = new WeakMap<object, string>();
+interface Ai4aiAttestation {
+  readonly identity: string;
+  readonly contentDigest: string;
+}
+
+/**
+ * Module-private attestation registry: maps the exact result object this
+ * module constructed to what it attests about that result. Not exported and
+ * not reachable from outside — an arbitrary executor cannot add an entry, and
+ * mutating a returned object cannot change the attested values because the
+ * adapter reads them from here, never off the object.
+ *
+ * MODULE-INSTANCE SCOPE (see `MODULE_INSTANCE_MARKER`): the registry belongs
+ * to ONE loaded copy of this module. A second instance — a bundler duplicate,
+ * a symlinked path, dist-vs-src — has its own registry, so a result produced
+ * by instance A is unknown to instance B. This is not a laundering path:
+ * cross-instance records degrade to `injected`, never upgrade. It does mean an
+ * honest byte-derived run can silently become `injected` and a strict gate
+ * then rejects GOOD evidence, so the downgrade is made legible rather than
+ * mysterious.
+ */
+const ATTESTATIONS = new WeakMap<object, Ai4aiAttestation>();
+
+/**
+ * Cross-realm-visible marker stamped on every result this module builds.
+ * Its only purpose is diagnostic: if a result carries the marker but is
+ * absent from OUR registry, the result came from a different loaded instance
+ * of this module, and the resulting downgrade to `injected` is explained
+ * instead of appearing arbitrary.
+ */
+const MODULE_INSTANCE_MARKER = Symbol.for("ruvector.ai4ai.module-instance");
+const MODULE_INSTANCE_ID = randomBytes(8).toString("hex");
+
+/** Stable digest over evaluator output, using the module's canonical encoder. */
+function contentDigestOf(raw: unknown): string {
+  return createHash("sha256")
+    .update("ruvector.ai4ai.evaluator-output.v1\0")
+    .update(canonical(raw))
+    .digest("hex");
+}
+
+/** Recursively freeze the evaluator output (defense-in-depth, not the fix). */
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+  }
+  return value;
+}
 
 /**
  * The injected executor: given a pinned task and one mutation, run the real
@@ -463,15 +524,22 @@ export function commandAi4aiExecutor(options: Ai4aiCommandExecutorOptions): Ai4a
       } finally {
         await handle.close();
       }
-      // Attest byte-derived identity on the exact object we return. Only this
-      // module can make this entry; the adapter reads the identity from the
-      // registry, never off the (potentially mutated) object.
+      // Attest the CONTENT as well as the object. The content digest is taken
+      // here, over the output exactly as the evaluator produced it, and is
+      // recomputed at read: that is what makes a post-execution edit of the
+      // scored payload detectable. Deep-freezing `raw` is defense-in-depth on
+      // top (plain Object.freeze is shallow and would leave `raw` writable).
+      deepFreeze(raw);
       const outcome = {
         raw,
         executorIdentity,
         wrapperIndirection: options.wrapperIndirection ?? false,
+        [MODULE_INSTANCE_MARKER]: MODULE_INSTANCE_ID,
       };
-      BYTE_DERIVED_IDENTITY.set(outcome, executorIdentity);
+      ATTESTATIONS.set(outcome, {
+        identity: executorIdentity,
+        contentDigest: contentDigestOf(raw),
+      });
       return Object.freeze(outcome);
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -525,9 +593,32 @@ export async function runAi4aiMutation(
   const wrapperIndirection = outcome.wrapperIndirection ?? false;
   // The ONLY source of a byte-derived identity is this module's own registry.
   // A self-reported string can never reach this variable.
-  const attestedIdentity = typeof outcome === "object" && outcome !== null
-    ? BYTE_DERIVED_IDENTITY.get(outcome)
+  const attestation = typeof outcome === "object" && outcome !== null
+    ? ATTESTATIONS.get(outcome)
     : undefined;
+  if (attestation === undefined && typeof outcome === "object" && outcome !== null &&
+      (outcome as Record<symbol, unknown>)[MODULE_INSTANCE_MARKER] !== undefined) {
+    // Carries our marker but is not in OUR registry: a second loaded copy of
+    // this module produced it. The record still degrades to `injected` (never
+    // upgrades), but say so, or the downgrade looks arbitrary.
+    process.stderr.write(
+      `ai4ai: result produced by a different loaded instance of ai4aiBench ` +
+      `(theirs=${String((outcome as Record<symbol, unknown>)[MODULE_INSTANCE_MARKER])}, ` +
+      `ours=${MODULE_INSTANCE_ID}); classing as injected — load one instance to ` +
+      `keep byte-derived evidence\n`,
+    );
+  }
+  // Content attestation: the scored payload must be what the evaluator
+  // produced. Object.freeze is shallow, so this — not the freeze — is what
+  // makes a post-execution edit of `raw` detectable, and it keeps working if a
+  // future refactor rebuilds the result object.
+  if (attestation !== undefined && contentDigestOf(outcome.raw) !== attestation.contentDigest) {
+    throw new Error(
+      `ai4ai evaluator output was modified after execution for mutation ` +
+      `${mutation.id} (content digest mismatch); a mutated result is not a score`,
+    );
+  }
+  const attestedIdentity = attestation?.identity;
   let executorClass: Ai4aiExecutorClass;
   let executorIdentity: string;
   if (attestedIdentity !== undefined && !wrapperIndirection) {
@@ -590,6 +681,21 @@ export async function runAi4aiLineage(
  * What a caller demands of a lineage's evidence class. Structural integrity
  * (digest, chain, task, nonce) is ALWAYS checked; this governs only the
  * evidence-strength question.
+ *
+ * SCOPE BOUNDARY — read this before building a gate on `requireEvaluatorBound`.
+ * What this slice provides is WITHIN-PROCESS INTEGRITY: a record cannot
+ * misreport what the adapter's own executor produced. It is NOT cross-party
+ * authentication — an adversary who controls the process can still fabricate a
+ * chain, because nothing here is signed. `lineageDigest` is an UNKEYED hash, so
+ * a wholly hand-constructed chain can claim `byte-derived-command` and verify
+ * clean; the attestation registry constrains what THIS module's executor path
+ * will report, not what a hostile process can hand you.
+ *
+ * So `requireEvaluatorBound` defends against honest-but-weak evidence — an
+ * injected stub, a wrapper entrypoint, a stale run — and NOT against an
+ * adversary. Closing that gap requires signing the chain and an issued-nonce
+ * ledger, both scoped as follow-up work, neither present here. A gate that
+ * treats strict mode as proof against a malicious producer is over-trusting it.
  */
 export interface Ai4aiEvidencePolicy {
   /**
@@ -604,8 +710,14 @@ export interface Ai4aiEvidencePolicy {
   readonly requireEvaluatorBound?: boolean;
 }
 
-/** The weakest executor class present — the class of the lineage as a whole. */
+/**
+ * The weakest executor class present — the class of the lineage as a whole.
+ * An EMPTY lineage is `injected`, not the strongest class: zero records is
+ * zero evidence, and falling through to `byte-derived-command` would invert
+ * this function's whole contract on a public surface cli.ts prints.
+ */
 export function ai4aiEvidenceClass(lineage: Ai4aiLineage): Ai4aiExecutorClass {
+  if (lineage.records.length === 0) return "injected";
   if (lineage.records.some((record) => record.executorClass === "injected")) return "injected";
   if (lineage.records.some((record) => record.executorClass === "wrapper-waived")) {
     return "wrapper-waived";
