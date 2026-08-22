@@ -286,7 +286,10 @@ fn degenerate_pairs_in_mixed_validation_score_as_failures() {
     let report = gate.assess(&mapper).unwrap();
     assert_eq!(report.decision, GateDecision::Reprefill);
     let degen = &report.layers[2];
-    assert_eq!(degen.key_cosine, -1.0, "degenerate cosine must be a failure");
+    assert_eq!(
+        degen.key_cosine, -1.0,
+        "degenerate cosine must be a failure"
+    );
     assert_eq!(degen.value_cosine, -1.0);
     assert!(degen.key_relative_error.is_infinite());
     assert!(degen.value_relative_error.is_infinite());
@@ -337,8 +340,7 @@ fn dim_mismatched_validation_is_explicitly_rejected() {
 #[test]
 fn from_flat_dimension_overflow_is_rejected() {
     let flat = vec![0.0f32; 8];
-    let err =
-        LayerKvTensor::from_flat(&flat, &flat, (usize::MAX / 4) + 2, 4).unwrap_err();
+    let err = LayerKvTensor::from_flat(&flat, &flat, (usize::MAX / 4) + 2, 4).unwrap_err();
     assert!(err.to_string().contains("overflow"), "{err}");
 }
 

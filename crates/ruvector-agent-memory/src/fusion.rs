@@ -113,7 +113,11 @@ impl std::fmt::Display for FusionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FusionError::SignatureInvalid(id) => {
-                write!(f, "observation {} failed signature verification", id.to_hex())
+                write!(
+                    f,
+                    "observation {} failed signature verification",
+                    id.to_hex()
+                )
             }
             FusionError::TenantMismatch { expected, got } => write!(
                 f,
@@ -405,7 +409,6 @@ impl CausalEpisodicGraph {
                 .ok_or(FusionError::UnknownCluster(id)),
         }
     }
-
 }
 
 #[cfg(test)]
@@ -444,7 +447,15 @@ mod tests {
     fn cross_tenant_observation_rejected() {
         let kp = Ed25519Keypair::generate(&mut OsRng);
         let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
-        let foreign = signed(&kp, SourceKind::AgentObservation, "a", "globex", 0.9, vec![], b"x");
+        let foreign = signed(
+            &kp,
+            SourceKind::AgentObservation,
+            "a",
+            "globex",
+            0.9,
+            vec![],
+            b"x",
+        );
         match graph.ingest(foreign) {
             Err(FusionError::TenantMismatch { .. }) => {}
             other => panic!("expected TenantMismatch, got {other:?}"),
@@ -456,7 +467,15 @@ mod tests {
         let kp = Ed25519Keypair::generate(&mut OsRng);
         let mut graph = CausalEpisodicGraph::new(Tenant::new("acme"));
         let ghost = ObservationId([9u8; 32]);
-        let child = signed(&kp, SourceKind::AgentObservation, "a", "acme", 0.8, vec![ghost], b"c");
+        let child = signed(
+            &kp,
+            SourceKind::AgentObservation,
+            "a",
+            "acme",
+            0.8,
+            vec![ghost],
+            b"c",
+        );
         match graph.ingest(child) {
             Err(FusionError::UnresolvedParent { .. }) => {}
             other => panic!("expected UnresolvedParent, got {other:?}"),

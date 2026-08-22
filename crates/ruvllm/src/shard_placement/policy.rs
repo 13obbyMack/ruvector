@@ -62,11 +62,7 @@ impl std::fmt::Display for ConstraintViolation {
                 "trust: shard requires tier >= {required} but node is {node_tier}"
             ),
             ConstraintViolation::Capability { missing } => {
-                let list = missing
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let list = missing.iter().cloned().collect::<Vec<_>>().join(", ");
                 write!(f, "capability: node is missing [{list}]")
             }
             ConstraintViolation::Capacity {

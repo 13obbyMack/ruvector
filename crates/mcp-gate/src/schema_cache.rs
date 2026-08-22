@@ -75,7 +75,9 @@ pub enum SchemaCacheError {
     /// `actual` is the encoded length at the point the encoder bailed — a
     /// lower bound on the full canonical size, since encoding stops as soon
     /// as the ceiling is crossed.
-    #[error("schema too large: canonical encoding is at least {actual} bytes, ceiling is {ceiling}")]
+    #[error(
+        "schema too large: canonical encoding is at least {actual} bytes, ceiling is {ceiling}"
+    )]
     SchemaTooLarge { actual: usize, ceiling: usize },
     /// The requested assembly would exceed the configured total-bytes
     /// ceiling (guards against amplification via long orders repeating
@@ -233,9 +235,7 @@ fn compile_block(canonical: &str) -> String {
 /// Compile an ordered set of schemas from scratch, with no cache involved.
 /// This is the reference the cache's assembly must match byte-for-byte, and
 /// the cold baseline in the benchmark.
-pub fn compile_fresh(
-    values: &[&serde_json::Value],
-) -> Result<String, SchemaCacheError> {
+pub fn compile_fresh(values: &[&serde_json::Value]) -> Result<String, SchemaCacheError> {
     let mut out = String::new();
     for value in values {
         out.push_str(&compile_block(&canonicalize(value)?));
@@ -312,10 +312,7 @@ impl SchemaResourceCache {
     /// Canonicalize, identify, and (if new) compile and store the schema.
     /// Idempotent: the same content always yields the same [`ResourceId`],
     /// and a resident identity skips recompilation.
-    pub fn insert(
-        &mut self,
-        value: &serde_json::Value,
-    ) -> Result<ResourceId, SchemaCacheError> {
+    pub fn insert(&mut self, value: &serde_json::Value) -> Result<ResourceId, SchemaCacheError> {
         if self.config.capacity == 0 {
             return Err(SchemaCacheError::ZeroCapacity);
         }
@@ -375,10 +372,7 @@ impl SchemaResourceCache {
         let mut out = String::with_capacity(total);
         for id in order {
             self.tick += 1;
-            let entry = self
-                .entries
-                .get_mut(id)
-                .expect("residency validated above");
+            let entry = self.entries.get_mut(id).expect("residency validated above");
             entry.last_used = self.tick;
             out.push_str(&entry.block);
         }
@@ -446,14 +440,11 @@ mod tests {
     #[test]
     fn identity_stable_under_key_reordering_and_whitespace() {
         // Same content, different textual key order and formatting.
-        let v1: serde_json::Value = serde_json::from_str(
-            r#"{"b": [1, 2], "a": {"y": true, "x": null}}"#,
-        )
-        .unwrap();
-        let v2: serde_json::Value = serde_json::from_str(
-            "{\n  \"a\": {\"x\": null, \"y\": true},\n  \"b\": [1,2]\n}",
-        )
-        .unwrap();
+        let v1: serde_json::Value =
+            serde_json::from_str(r#"{"b": [1, 2], "a": {"y": true, "x": null}}"#).unwrap();
+        let v2: serde_json::Value =
+            serde_json::from_str("{\n  \"a\": {\"x\": null, \"y\": true},\n  \"b\": [1,2]\n}")
+                .unwrap();
         let mut cache = SchemaResourceCache::new();
         let id1 = cache.insert(&v1).unwrap();
         let id2 = cache.insert(&v2).unwrap();
@@ -502,10 +493,7 @@ mod tests {
         assert!(cache.contains(&c));
         // Assembling with the evicted identity is a loud error, not a
         // silent recompile.
-        assert_eq!(
-            cache.assemble(&[b]),
-            Err(SchemaCacheError::NotResident(b))
-        );
+        assert_eq!(cache.assemble(&[b]), Err(SchemaCacheError::NotResident(b)));
     }
 
     #[test]

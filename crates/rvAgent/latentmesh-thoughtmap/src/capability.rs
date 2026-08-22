@@ -252,9 +252,7 @@ mod tests {
             profile(2, vec![1.0, 0.0, 0.0], 1.0, 1.0, 10), // excluded below
             profile(3, vec![0.9, 0.1, 0.0], 0.8, 1.0, 10),
         ];
-        let sel = view
-            .select_peer(&candidates, &query, &[PeerId(2)])
-            .unwrap();
+        let sel = view.select_peer(&candidates, &query, &[PeerId(2)]).unwrap();
         assert_eq!(sel.peer, PeerId(3));
     }
 

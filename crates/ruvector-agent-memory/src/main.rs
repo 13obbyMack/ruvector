@@ -373,7 +373,11 @@ fn run_arbitration_bench() {
     };
 
     let roots: Vec<ObservationId> = (0..N_ROOTS)
-        .map(|i| graph.ingest(sign(&(i as u32).to_le_bytes(), 0, vec![], &keypair)).unwrap())
+        .map(|i| {
+            graph
+                .ingest(sign(&(i as u32).to_le_bytes(), 0, vec![], &keypair))
+                .unwrap()
+        })
         .collect();
     // Per-root latest descendant, so derivation chains deepen over time.
     let mut latest: Vec<ObservationId> = roots.clone();
@@ -382,7 +386,12 @@ fn run_arbitration_bench() {
         let r = rng.gen_range(0..N_ROOTS);
         let parent = latest[r];
         let id = graph
-            .ingest(sign(&(1_000_000 + i as u32).to_le_bytes(), 1 + i as u64, vec![parent], &keypair))
+            .ingest(sign(
+                &(1_000_000 + i as u32).to_le_bytes(),
+                1 + i as u64,
+                vec![parent],
+                &keypair,
+            ))
             .unwrap();
         latest[r] = id;
         memories.push(NodeRef::Observation(id));
@@ -411,7 +420,10 @@ fn run_arbitration_bench() {
     let arb_us = t1.elapsed().as_micros();
     let verdict = outcome.verdict();
 
-    println!("  Memories        : {} ({} origins, {} derived)", N_DERIVED, N_ROOTS, N_DERIVED);
+    println!(
+        "  Memories        : {} ({} origins, {} derived)",
+        N_DERIVED, N_ROOTS, N_DERIVED
+    );
     println!("  Naive vote      : {naive:.1} supporting confidence ({naive_us} µs)");
     println!(
         "  Arbitrated      : {:.1} effective confidence across {} lineages ({} µs)",
