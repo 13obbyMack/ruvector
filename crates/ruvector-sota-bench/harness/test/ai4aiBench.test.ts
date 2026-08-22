@@ -5,11 +5,13 @@ import { resolve } from "node:path";
 import test from "node:test";
 import {
   AI4AI_BENCH_CITATION,
+  ai4aiContentDigest,
   ai4aiEvidenceClass,
   ai4aiLineageVetoProvider,
   ai4aiPairedDecision,
   ai4aiRunRoot,
   ai4aiTaskIdentity,
+  assertAi4aiContentUnchanged,
   assertAi4aiTaskManifest,
   commandAi4aiExecutor,
   newAi4aiRunNonce,
@@ -184,6 +186,55 @@ test("the scored payload cannot be edited after execution", async () => {
   // And the untouched genuine run records the evaluator's real score.
   assert.equal(honest.records[0]!.executorClass, "byte-derived-command");
   assert.equal(honest.records[0]!.evaluation.score, honestScore);
+});
+
+test("content digest detects a mutated payload and the guard actually throws", () => {
+  // DORMANT-GUARD COVERAGE. On every constructible path the deep-freeze stops
+  // an edit before the comparison runs, so without these direct tests someone
+  // could invert `!==` to `===` and leave the whole suite green while
+  // disabling the content guarantee.
+  const honest = { score: 0.12, algorithm_changed: true };
+  const digest = ai4aiContentDigest(honest);
+  assert.match(digest, /^[0-9a-f]{64}$/);
+  assert.equal(ai4aiContentDigest({ ...honest }), digest, "digest must be stable for equal content");
+  assert.notEqual(ai4aiContentDigest({ ...honest, score: 0.99 }), digest);
+  assert.notEqual(ai4aiContentDigest({ ...honest, algorithm_changed: false }), digest);
+  assert.notEqual(ai4aiContentDigest({ ...honest, extra: 1 }), digest);
+
+  // Key order must not change the digest; nested payloads must still differ.
+  assert.equal(
+    ai4aiContentDigest({ algorithm_changed: true, score: 0.12 }),
+    digest,
+    "canonical encoding must be key-order independent",
+  );
+  assert.notEqual(
+    ai4aiContentDigest({ detail: { a: 1 } }),
+    ai4aiContentDigest({ detail: { a: 2 } }),
+  );
+
+  // The detection path itself: passes on match, throws on mismatch.
+  assert.doesNotThrow(() => assertAi4aiContentUnchanged(honest, digest, "mut-001"));
+  assert.throws(
+    () => assertAi4aiContentUnchanged({ ...honest, score: 0.99 }, digest, "mut-001"),
+    /modified after execution.*mut-001.*not a score/s,
+  );
+});
+
+test("canonical key order is locale-independent", () => {
+  // localeCompare would order these differently under sv_SE than en_US, so a
+  // chain could stop verifying across machines with different LANG.
+  const payload = { z_metric: 1, "ä_metric": 2, a_metric: 3 };
+  const expected = ai4aiContentDigest(payload);
+  const original = Intl.Collator;
+  try {
+    // Force any locale-sensitive comparison to disagree with code-unit order.
+    (Intl as { Collator: unknown }).Collator = class {
+      compare = (a: string, b: string) => (a > b ? -1 : a < b ? 1 : 0);
+    };
+    assert.equal(ai4aiContentDigest({ a_metric: 3, "ä_metric": 2, z_metric: 1 }), expected);
+  } finally {
+    (Intl as { Collator: unknown }).Collator = original;
+  }
 });
 
 test("an empty lineage is the weakest class, never the strongest", () => {

@@ -137,11 +137,20 @@ export function assertAi4aiTaskManifest(value: unknown): asserts value is Ai4aiT
   }
 }
 
+/**
+ * Canonical encoding for hashing. Keys sort by CODE UNIT, never by
+ * `localeCompare`: locale collation is locale- and ICU-build-dependent, so
+ * `{ z, ä, a }` orders as a,z,ä under sv_SE but a,ä,z under en_US — the same
+ * payload would digest differently on two machines with different LANG. Code
+ * -unit order is what RFC 8785 (JSON Canonicalization Scheme) specifies, and
+ * it makes cross-process digests reproducible by construction rather than by
+ * accident of which key sets happen to be fixed and ASCII.
+ */
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") {
     return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([key, child]) => `${JSON.stringify(key)}:${canonical(child)}`).join(",")}}`;
   }
   return JSON.stringify(value);
@@ -373,19 +382,55 @@ const ATTESTATIONS = new WeakMap<object, Ai4aiAttestation>();
 const MODULE_INSTANCE_MARKER = Symbol.for("ruvector.ai4ai.module-instance");
 const MODULE_INSTANCE_ID = randomBytes(8).toString("hex");
 
-/** Stable digest over evaluator output, using the module's canonical encoder. */
-function contentDigestOf(raw: unknown): string {
+/**
+ * Stable digest over evaluator output, using the module's canonical encoder.
+ * Exported so the content guarantee is DIRECTLY testable: on every
+ * constructible path the deep-freeze below stops a payload edit first, so the
+ * comparison in `assertAi4aiContentUnchanged` would otherwise never execute in
+ * any test — leaving a guard that could be inverted (`!==` to `===`) with the
+ * whole suite still green. A pure hash with no state and no authority is a
+ * cheap public surface to pay for keeping that guard exercised.
+ */
+export function ai4aiContentDigest(raw: unknown): string {
   return createHash("sha256")
     .update("ruvector.ai4ai.evaluator-output.v1\0")
     .update(canonical(raw))
     .digest("hex");
 }
 
-/** Recursively freeze the evaluator output (defense-in-depth, not the fix). */
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+/**
+ * Refuse evaluator output that no longer matches what was attested at
+ * execution time. Pure and exported for the same dormant-guard reason as
+ * `ai4aiContentDigest`: this is where a content mismatch is DETECTED, and a
+ * detection path that no test can reach is a detection path that can rot.
+ */
+export function assertAi4aiContentUnchanged(
+  raw: unknown,
+  attestedDigest: string,
+  mutationId: string,
+): void {
+  if (ai4aiContentDigest(raw) !== attestedDigest) {
+    throw new Error(
+      `ai4ai evaluator output was modified after execution for mutation ` +
+      `${mutationId} (content digest mismatch); a mutated result is not a score`,
+    );
+  }
+}
+
+/**
+ * Recursively freeze the evaluator output (defense-in-depth, not the fix).
+ * Recursion is NOT gated on the parent's frozen state — an already-frozen
+ * parent can still hold unfrozen children, which the guard would have skipped.
+ * Unreachable for JSON.parse output, wrong if this helper is ever reused. A
+ * `seen` set keeps cycles from recursing forever now that frozen nodes no
+ * longer terminate the walk.
+ */
+function deepFreeze<T>(value: T, seen: WeakSet<object> = new WeakSet()): T {
+  if (value && typeof value === "object") {
+    if (seen.has(value)) return value;
+    seen.add(value);
+    if (!Object.isFrozen(value)) Object.freeze(value);
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child, seen);
   }
   return value;
 }
@@ -524,11 +569,13 @@ export function commandAi4aiExecutor(options: Ai4aiCommandExecutorOptions): Ai4a
       } finally {
         await handle.close();
       }
-      // Attest the CONTENT as well as the object. The content digest is taken
-      // here, over the output exactly as the evaluator produced it, and is
-      // recomputed at read: that is what makes a post-execution edit of the
-      // scored payload detectable. Deep-freezing `raw` is defense-in-depth on
-      // top (plain Object.freeze is shallow and would leave `raw` writable).
+      // Attest the CONTENT as well as the object, and freeze the payload.
+      // On every reachable path the deep-freeze is what BLOCKS a
+      // post-execution edit of the scored payload (plain Object.freeze is
+      // shallow and would leave `raw` writable); the content digest, taken
+      // here over the output exactly as the evaluator produced it and
+      // recomputed at read, is what CATCHES such an edit if a refactor ever
+      // rebuilds the result or drops the freeze.
       deepFreeze(raw);
       const outcome = {
         raw,
@@ -538,7 +585,7 @@ export function commandAi4aiExecutor(options: Ai4aiCommandExecutorOptions): Ai4a
       };
       ATTESTATIONS.set(outcome, {
         identity: executorIdentity,
-        contentDigest: contentDigestOf(raw),
+        contentDigest: ai4aiContentDigest(raw),
       });
       return Object.freeze(outcome);
     } finally {
@@ -598,25 +645,30 @@ export async function runAi4aiMutation(
     : undefined;
   if (attestation === undefined && typeof outcome === "object" && outcome !== null &&
       (outcome as Record<symbol, unknown>)[MODULE_INSTANCE_MARKER] !== undefined) {
-    // Carries our marker but is not in OUR registry: a second loaded copy of
-    // this module produced it. The record still degrades to `injected` (never
-    // upgrades), but say so, or the downgrade looks arbitrary.
+    // Marked but not registry-identical. The record degrades to `injected`
+    // either way (never upgrades); this line only explains WHY, so it must not
+    // send someone hunting the wrong problem — and must not let the very
+    // component being downgraded write arbitrary `ai4ai:`-prefixed log lines.
+    // The marker value is attacker-controlled, so it is JSON-encoded (newlines
+    // escaped) and length-capped before it reaches the log.
+    const theirs = JSON.stringify(
+      String((outcome as Record<symbol, unknown>)[MODULE_INSTANCE_MARKER]).slice(0, 64),
+    );
     process.stderr.write(
-      `ai4ai: result produced by a different loaded instance of ai4aiBench ` +
-      `(theirs=${String((outcome as Record<symbol, unknown>)[MODULE_INSTANCE_MARKER])}, ` +
-      `ours=${MODULE_INSTANCE_ID}); classing as injected — load one instance to ` +
-      `keep byte-derived evidence\n`,
+      theirs === JSON.stringify(MODULE_INSTANCE_ID)
+        ? `ai4ai: result carries this instance's marker (${theirs}) but is not the ` +
+          `object this module registered — wrapped or copied, not a different ` +
+          `instance; classing as injected\n`
+        : `ai4ai: result produced by a different loaded instance of ai4aiBench ` +
+          `(theirs=${theirs}, ours=${JSON.stringify(MODULE_INSTANCE_ID)}); classing ` +
+          `as injected — load one instance to keep byte-derived evidence\n`,
     );
   }
   // Content attestation: the scored payload must be what the evaluator
-  // produced. Object.freeze is shallow, so this — not the freeze — is what
-  // makes a post-execution edit of `raw` detectable, and it keeps working if a
-  // future refactor rebuilds the result object.
-  if (attestation !== undefined && contentDigestOf(outcome.raw) !== attestation.contentDigest) {
-    throw new Error(
-      `ai4ai evaluator output was modified after execution for mutation ` +
-      `${mutation.id} (content digest mismatch); a mutated result is not a score`,
-    );
+  // produced. The deep-freeze blocks an edit on every reachable path; this
+  // catches one if a refactor ever rebuilds the result or drops the freeze.
+  if (attestation !== undefined) {
+    assertAi4aiContentUnchanged(outcome.raw, attestation.contentDigest, mutation.id);
   }
   const attestedIdentity = attestation?.identity;
   let executorClass: Ai4aiExecutorClass;
