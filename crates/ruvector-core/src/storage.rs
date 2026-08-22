@@ -22,7 +22,7 @@ use std::collections::HashMap;
 #[cfg(feature = "storage")]
 use std::path::{Path, PathBuf};
 #[cfg(feature = "storage")]
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 #[cfg(feature = "storage")]
 const VECTORS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("vectors");
@@ -34,7 +34,7 @@ const DB_CONFIG_KEY: &str = "__ruvector_db_config__";
 
 // Global database connection pool to allow multiple VectorDB instances
 // to share the same underlying database file
-static DB_POOL: Lazy<Mutex<HashMap<PathBuf, Arc<Database>>>> =
+static DB_POOL: Lazy<Mutex<HashMap<PathBuf, Weak<Database>>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 /// Storage backend for vector database
@@ -103,9 +103,9 @@ impl VectorStorage {
         let db = {
             let mut pool = DB_POOL.lock();
 
-            if let Some(existing_db) = pool.get(&path_buf) {
+            if let Some(existing_db) = pool.get(&path_buf).and_then(Weak::upgrade) {
                 // Reuse existing database connection
-                Arc::clone(existing_db)
+                existing_db
             } else {
                 // Create new database and add to pool
                 let new_db = Arc::new(Database::create(&path_buf)?);
@@ -119,7 +119,7 @@ impl VectorStorage {
                 }
                 write_txn.commit()?;
 
-                pool.insert(path_buf, Arc::clone(&new_db));
+                pool.insert(path_buf, Arc::downgrade(&new_db));
                 new_db
             }
         };

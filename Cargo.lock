@@ -9177,6 +9177,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ruvector-context"
+version = "2.3.0"
+dependencies = [
+ "ruvector-core 2.3.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ruvector-core"
 version = "0.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
