@@ -54,6 +54,37 @@ macro_rules! engine_tests {
     };
 }
 
+/// A private index root.
+///
+/// `tempfile::tempdir()` creates the directory with the ambient umask applied
+/// — `0755` under the common `022` — and `open` refuses a root other users can
+/// reach, so tests cannot use one directly. This creates a private directory
+/// inside it instead. Tests that need the root not to exist yet, so that
+/// `open` creates it, build their own path.
+struct IndexRoot {
+    _base: tempfile::TempDir,
+    path: PathBuf,
+}
+
+impl IndexRoot {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+fn index_root() -> IndexRoot {
+    let base = tempfile::tempdir().unwrap();
+    let path = base.path().join("index");
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    builder.create(&path).unwrap();
+    IndexRoot { _base: base, path }
+}
+
 fn namespace(tenant: &str) -> ContextNamespace {
     ContextNamespace::new("context.example", tenant, "agent", "reader", "memory").unwrap()
 }
@@ -125,7 +156,7 @@ fn isolated_shard(engine: Engine, root: &Path, target: &ContextScope, id: &str) 
 
 engine_tests! {
     fn cross_tenant_search_never_touches_other_tenant_index(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
         let acme = scope("acme", &["project"]);
         let other = scope("other", &["project"]);
@@ -144,7 +175,7 @@ engine_tests! {
     }
 
     fn path_prefix_selects_descendants_without_touching_siblings(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
         let root = scope("acme", &["project"]);
         let child = scope("acme", &["project", "doc"]);
@@ -169,7 +200,7 @@ engine_tests! {
     }
 
     fn restart_recovers_hash_bound_scope_and_vectors(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let target = scope("acme", &["durable"]);
         {
             let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
@@ -183,7 +214,7 @@ engine_tests! {
     }
 
     fn immutable_replay_is_idempotent_but_conflict_is_refused(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
         let target = scope("acme", &["immutable"]);
         index
@@ -199,7 +230,7 @@ engine_tests! {
     }
 
     fn deleted_point_ids_are_reusable_with_different_bytes(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
         let target = scope("acme", &["reuse"]);
         index
@@ -213,7 +244,7 @@ engine_tests! {
     }
 
     fn fanout_failure_occurs_before_any_shard_search(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let index = ScopedContextIndex::open(temp.path(), options(engine, 1)).unwrap();
         let root = ContextScope::root(namespace("acme"));
         let one = scope("acme", &["one"]);
@@ -232,7 +263,7 @@ engine_tests! {
     }
 
     fn exact_scope_erasure_removes_persistent_shard(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let target = scope("acme", &["erase"]);
         let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
         index
@@ -252,7 +283,7 @@ engine_tests! {
     }
 
     fn erased_scope_recreation_never_reuses_the_unlinked_database(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let target = scope("acme", &["erase-recreate"]);
         let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
         index
@@ -274,7 +305,7 @@ engine_tests! {
     }
 
     fn non_finite_vectors_fail_before_index_access(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
         let target = scope("acme", &["finite"]);
         assert!(matches!(
@@ -293,18 +324,18 @@ engine_tests! {
         let victim = scope("victim", &["docs"]);
 
         // A real, well-formed shard belonging to the attacker's scope.
-        let attacker_root = tempfile::tempdir().unwrap();
+        let attacker_root = index_root();
         let planted =
             isolated_shard(engine, attacker_root.path(), &attacker, "attacker-planted-row");
 
         // The victim scope's opaque filename, learned from a throwaway root.
-        let probe_root = tempfile::tempdir().unwrap();
+        let probe_root = index_root();
         let victim_file = isolated_shard(engine, probe_root.path(), &victim, "probe");
         let victim_filename = victim_file.file_name().unwrap().to_owned();
 
         // Plant it while the victim's index is already open, so the binding
         // check performed at open time never sees the file.
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
         std::fs::copy(&planted, temp.path().join(&victim_filename)).unwrap();
 
@@ -332,7 +363,7 @@ engine_tests! {
     }
 
     fn second_handle_on_one_root_fails_loudly(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
         assert!(matches!(
             ScopedContextIndex::open(temp.path(), options(engine, 8)),
@@ -345,7 +376,7 @@ engine_tests! {
     }
 
     fn lock_file_left_by_a_crashed_process_does_not_brick_the_root(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         // A process that exits without dropping its handle leaves the lock file
         // behind, but the kernel released the advisory lock on exit. The
         // leftover file must be reused, and never mistaken for a shard.
@@ -361,7 +392,7 @@ engine_tests! {
     }
 
     fn unloadable_shard_is_quarantined_without_denying_open(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let good = scope("acme", &["healthy"]);
         {
             let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
@@ -384,10 +415,10 @@ engine_tests! {
 
     fn quarantined_scope_fails_loudly_and_can_be_discarded(engine: Engine) {
         let target = scope("acme", &["quarantined"]);
-        let probe = tempfile::tempdir().unwrap();
+        let probe = index_root();
         let filename = shard_filename_of(engine, probe.path(), &target);
 
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         std::fs::write(temp.path().join(&filename), b"not a vector database").unwrap();
         let index = ScopedContextIndex::open(temp.path(), options(engine, 8)).unwrap();
 
@@ -427,7 +458,7 @@ engine_tests! {
     }
 
     fn unbounded_max_results_is_refused_instead_of_panicking(engine: Engine) {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let mut unbounded = options(engine, 8);
         unbounded.max_results = usize::MAX;
         assert!(matches!(
@@ -446,7 +477,7 @@ engine_tests! {
 fn failed_shard_unlink_does_not_report_a_phantom_erase() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempfile::tempdir().unwrap();
+    let temp = index_root();
     let target = scope("acme", &["erase-fails"]);
     let index = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).unwrap();
     index
@@ -480,11 +511,11 @@ fn failed_shard_unlink_does_not_report_a_phantom_erase() {
 #[test]
 fn adopted_shard_cannot_dictate_engine_parameters() {
     let target = scope("acme", &["engine"]);
-    let probe = tempfile::tempdir().unwrap();
+    let probe = index_root();
     let decoy = isolated_shard(Engine::Hnsw, probe.path(), &target, "probe");
     let filename = decoy.file_name().unwrap().to_str().unwrap().to_string();
 
-    let temp = tempfile::tempdir().unwrap();
+    let temp = index_root();
     std::fs::copy(&decoy, temp.path().join(&filename)).unwrap();
     let index = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).unwrap();
 
@@ -513,12 +544,12 @@ mod symlink {
     #[test]
     fn dangling_symlink_at_a_shard_path_cannot_redirect_a_tenants_vectors() {
         let victim = scope("victim", &["docs"]);
-        let probe = tempfile::tempdir().unwrap();
+        let probe = index_root();
         let filename = shard_filename_of(Engine::Flat, probe.path(), &victim);
 
         let outside = tempfile::tempdir().unwrap();
         let exfiltrated = outside.path().join("exfiltrated.redb");
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let index = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).unwrap();
         plant(&temp.path().join(&filename), &exfiltrated);
 
@@ -553,12 +584,12 @@ mod symlink {
     #[test]
     fn open_never_opens_a_symlinked_shard_entry() {
         let victim = scope("victim", &["docs"]);
-        let probe = tempfile::tempdir().unwrap();
+        let probe = index_root();
         let filename = shard_filename_of(Engine::Flat, probe.path(), &victim);
 
         let outside = tempfile::tempdir().unwrap();
         let exfiltrated = outside.path().join("exfiltrated.redb");
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         plant(&temp.path().join(&filename), &exfiltrated);
 
         let index = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).unwrap();
@@ -583,7 +614,7 @@ mod symlink {
     fn symlinked_root_lock_is_refused() {
         let outside = tempfile::tempdir().unwrap();
         let hijacked = outside.path().join("hijacked.lock");
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         plant(&temp.path().join(".lock"), &hijacked);
 
         let opened = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).err();
@@ -599,12 +630,12 @@ mod symlink {
     #[test]
     fn discard_refuses_a_file_that_is_a_valid_shard_for_the_scope() {
         let target = scope("acme", &["revived"]);
-        let probe = tempfile::tempdir().unwrap();
+        let probe = index_root();
         let valid = isolated_shard(Engine::Flat, probe.path(), &target, "still-here");
         let filename = valid.file_name().unwrap().to_str().unwrap().to_string();
 
         let outside = tempfile::tempdir().unwrap();
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         plant(
             &temp.path().join(&filename),
             &outside.path().join("missing.redb"),
@@ -640,11 +671,19 @@ mod inode {
     use std::sync::Arc;
 
     /// Two directories guaranteed to share a filesystem, so `hard_link` works.
+    ///
+    /// The index root is created private, because `open` now refuses one that
+    /// is not.
     fn same_filesystem_dirs() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        use std::os::unix::fs::DirBuilderExt as _;
+
         let base = tempfile::tempdir().unwrap();
         let root = base.path().join("index");
         let outside = base.path().join("outside");
-        std::fs::create_dir_all(&root).unwrap();
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&root)
+            .unwrap();
         std::fs::create_dir_all(&outside).unwrap();
         (base, root, outside)
     }
@@ -749,7 +788,7 @@ mod inode {
     fn staging_directory_is_private_and_cleaned_up() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let index = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).unwrap();
 
         let staging = reserved_entries(temp.path());
@@ -773,7 +812,7 @@ mod inode {
     /// never be mistaken for index content.
     #[test]
     fn reserved_leftovers_are_swept_at_open() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = index_root();
         let stale_dir = temp.path().join(".staging-deadbeefdeadbeef");
         std::fs::create_dir(&stale_dir).unwrap();
         std::fs::write(stale_dir.join(".create-0123"), b"half-built").unwrap();
@@ -800,7 +839,7 @@ mod inode {
     #[test]
     fn hard_link_alias_is_quarantined_without_clobbering_the_aliased_file() {
         let victim = scope("victim", &["docs"]);
-        let probe = tempfile::tempdir().unwrap();
+        let probe = index_root();
         let filename = shard_filename_of(Engine::Flat, probe.path(), &victim);
 
         let (_base, root, outside) = same_filesystem_dirs();
@@ -833,7 +872,7 @@ mod inode {
     #[test]
     fn hard_link_alias_never_mutates_a_populated_foreign_file() {
         let victim = scope("victim", &["docs"]);
-        let probe = tempfile::tempdir().unwrap();
+        let probe = index_root();
         let filename = shard_filename_of(Engine::Flat, probe.path(), &victim);
 
         let (_base, root, outside) = same_filesystem_dirs();
@@ -845,5 +884,97 @@ mod inode {
         let index = ScopedContextIndex::open(&root, options(Engine::Flat, 8)).unwrap();
         assert_eq!(std::fs::read(&foreign).unwrap(), original);
         assert_eq!(index.quarantined_shards().unwrap().len(), 1);
+    }
+}
+
+/// The root directory is the boundary the crate rests on, so its permissions
+/// and those of everything inside it are asserted directly.
+///
+/// Unix only: no mode enforcement is possible elsewhere.
+#[cfg(unix)]
+mod private_root {
+    use super::*;
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
+    fn mode_of(path: &Path) -> u32 {
+        std::fs::symlink_metadata(path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    fn reachable_by_others(path: &Path) -> bool {
+        mode_of(path) & 0o077 != 0
+    }
+
+    /// A `0600` file and a `0700` directory survive any umask, because a umask
+    /// only clears bits. So this holds whatever the ambient umask is — which
+    /// matters, since under the common `022` the previous defaults published
+    /// shards `0644` inside a `0755` root.
+    #[test]
+    fn nothing_under_the_root_is_reachable_by_other_users() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("index");
+        let index = ScopedContextIndex::open(&root, options(Engine::Flat, 8)).unwrap();
+        let target = scope("acme", &["private"]);
+        index
+            .insert(&target, point("row", [1.0, 0.0, 0.0]))
+            .unwrap();
+
+        assert_eq!(mode_of(&root), 0o700, "root is not private");
+        assert_eq!(mode_of(&root.join(".lock")), 0o600, "lock is not private");
+        for shard in shard_files(&root) {
+            assert_eq!(mode_of(&shard), 0o600, "shard {shard:?} is not private");
+        }
+        for entry in std::fs::read_dir(&root).unwrap() {
+            let path = entry.unwrap().path();
+            assert!(
+                !reachable_by_others(&path),
+                "{path:?} is reachable by other users: {:04o}",
+                mode_of(&path)
+            );
+        }
+
+        // And the shard is still private after a reopen, which is where the
+        // engine rewrites the file.
+        drop(index);
+        let reopened = ScopedContextIndex::open(&root, options(Engine::Flat, 8)).unwrap();
+        assert_eq!(reopened.scope_count().unwrap(), 1);
+        for shard in shard_files(&root) {
+            assert_eq!(mode_of(&shard), 0o600);
+        }
+    }
+
+    #[test]
+    fn a_root_other_users_can_reach_is_refused() {
+        for mode in [0o777, 0o755, 0o750, 0o720, 0o701] {
+            let base = tempfile::tempdir().unwrap();
+            let root = base.path().join("index");
+            std::fs::DirBuilder::new().mode(mode).create(&root).unwrap();
+            // `mkdir` applies the umask, so confirm the case is really testable
+            // before asserting on it.
+            if !reachable_by_others(&root) {
+                continue;
+            }
+            let opened = ScopedContextIndex::open(&root, options(Engine::Flat, 8)).err();
+            assert!(
+                matches!(opened, Some(ContextIndexError::InsecureRoot(_))),
+                "mode {mode:04o} was accepted: {opened:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_private_root_created_by_an_operator_is_accepted_unchanged() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("index");
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&root)
+            .unwrap();
+        let index = ScopedContextIndex::open(&root, options(Engine::Flat, 8)).unwrap();
+        assert_eq!(mode_of(&root), 0o700);
+        drop(index);
     }
 }

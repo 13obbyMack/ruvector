@@ -9,27 +9,15 @@
 //! creates whatever file the path resolves to, so a symlink anywhere on that
 //! path would let an attacker choose where a tenant's vectors are written.
 
+use crate::layout::{file_identity, hard_link_count, scratch_name, FileIdentity};
 use crate::{ContextIndexError, ContextIndexOptions, ContextScope, Result};
-use fs4::TryLockError;
 use ruvector_core::types::DbOptions;
 use ruvector_core::{SearchQuery, SearchResult, VectorDB, VectorEntry};
-use std::fs::File;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const MANIFEST_KEY: &str = "ruvector_context_scope_v1";
-
-/// Name of the exclusive root lock file held for the lifetime of one index.
-///
-/// It is deliberately not a valid shard name, so `is_shard_name` skips it.
-const ROOT_LOCK_FILENAME: &str = ".lock";
-
-/// Prefix of the scratch name a shard is built under before it is published.
-const TEMP_PREFIX: &str = ".create-";
-
-/// Prefix of the private per-handle directory new shards are built inside.
-const STAGING_PREFIX: &str = ".staging-";
 
 /// Handle to the vector engine backing one exact context scope.
 ///
@@ -102,44 +90,6 @@ impl Shard {
         self.searches.fetch_add(1, Ordering::Relaxed);
         Ok(self.db.search(query)?)
     }
-}
-
-/// Open the exclusive root lock, refusing to follow a symlink at its path.
-pub(crate) fn acquire_root_lock(root: &Path) -> Result<File> {
-    let path = root.join(ROOT_LOCK_FILENAME);
-    let file = match lock_open_options().open(&path) {
-        Ok(file) => file,
-        Err(error) => return Err(classify_lock_open_error(&path, error)),
-    };
-    // Called through the trait explicitly: `File` grew an inherent `try_lock`
-    // in Rust 1.89, and letting method resolution pick it would mean this code
-    // locks via std on new toolchains and via fs4 on the 1.77 MSRV.
-    match fs4::FileExt::try_lock(&file) {
-        Ok(()) => Ok(file),
-        Err(TryLockError::WouldBlock) => Err(ContextIndexError::RootLocked),
-        Err(TryLockError::Error(error)) => Err(error.into()),
-    }
-}
-
-fn lock_open_options() -> std::fs::OpenOptions {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        // A symlink planted at the lock path would otherwise let an attacker
-        // choose which file this index opens for writing, and which lock the
-        // single-handle guarantee actually rests on.
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
-    options
-}
-
-fn classify_lock_open_error(path: &Path, error: std::io::Error) -> ContextIndexError {
-    if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
-        return ContextIndexError::UnsafeRootLock;
-    }
-    error.into()
 }
 
 /// Build a new shard for `scope` and publish it under its hash-bound name.
@@ -244,12 +194,17 @@ fn build_shard(path: &Path, scope: &ContextScope, options: &ContextIndexOptions)
 /// that later takes its place.
 fn claim_scratch_path(staging: &Path) -> Result<(PathBuf, FileIdentity)> {
     for _ in 0..16 {
-        let path = staging.join(format!("{TEMP_PREFIX}{}", unique_suffix()));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
+        let path = staging.join(scratch_name());
+        let mut open_options = std::fs::OpenOptions::new();
+        open_options.write(true).create_new(true);
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            // The published shard keeps whatever mode the scratch file was
+            // created with, so this is where a shard's privacy is decided.
+            open_options.mode(0o600);
+        }
+        match open_options.open(&path) {
             Ok(file) => {
                 let identity = file_identity(&file.metadata()?);
                 return Ok((path, identity));
@@ -263,42 +218,6 @@ fn claim_scratch_path(staging: &Path) -> Result<(PathBuf, FileIdentity)> {
         "could not claim a scratch name for a new context shard",
     )
     .into())
-}
-
-/// Create this handle's private staging directory inside `root`.
-///
-/// The name is unique per handle and `mkdir` is atomic, so success proves this
-/// call created it; the mode is applied by `mkdir` itself rather than by a
-/// follow-up `chmod`, leaving no window in which the directory exists while
-/// still writable by others.
-pub(crate) fn create_staging_dir(root: &Path) -> Result<PathBuf> {
-    for _ in 0..16 {
-        let path = root.join(format!("{STAGING_PREFIX}{}", unique_suffix()));
-        let mut builder = std::fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt as _;
-            builder.mode(0o700);
-        }
-        match builder.create(&path) {
-            Ok(()) => return Ok(path),
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Err(std::io::Error::new(
-        ErrorKind::AlreadyExists,
-        "could not claim a staging directory for this context index",
-    )
-    .into())
-}
-
-/// Whether a directory entry is scratch state rather than index content.
-///
-/// Reserved entries are never read, so any of them left by a crashed process —
-/// or planted by someone else — can be swept when a handle takes the root lock.
-pub(crate) fn is_reserved_name(name: &str) -> bool {
-    name.starts_with(TEMP_PREFIX) || name.starts_with(STAGING_PREFIX)
 }
 
 pub(crate) fn load_shard(
@@ -321,17 +240,7 @@ pub(crate) fn load_shard(
     Ok((scope, shard))
 }
 
-/// A name component unlikely to collide, retried under an atomic create.
-fn unique_suffix() -> String {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos() as u64);
-    let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{:016x}{nonce:016x}", stamp ^ u64::from(std::process::id()))
-}
-
-/// Refuse to hand the engine anything but a regular file this index alone names.
+/// Refuse to hand the engine anything but an unaliased regular file.
 ///
 /// The engine opens read-write and initialises whatever the path resolves to,
 /// so this runs before it sees the path. A symlink is rejected by `is_file`; a
@@ -339,6 +248,12 @@ fn unique_suffix() -> String {
 /// rejected by its link count. Every shard this crate publishes settles at one
 /// link, because `create_shard` unlinks the scratch name, and an open
 /// descriptor does not raise the count.
+///
+/// A link count of one is not a statement of trust. It says only that no
+/// second name existed at the instant of the `lstat`, not that the file is
+/// this index's, nor that it will still be unaliased a syscall later. What
+/// keeps an attacker from creating that second name is the private root, not
+/// this check; this is defence in depth against operator error.
 fn require_exclusive_regular_file(path: &Path, filename: &str) -> Result<()> {
     let metadata = std::fs::symlink_metadata(path)?;
     if !metadata.is_file() || hard_link_count(&metadata).is_some_and(|links| links != 1) {
@@ -352,34 +267,6 @@ fn shard_error_name(path: &Path) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or_default()
         .to_string()
-}
-
-/// Stable identity of a file, independent of every name that reaches it.
-///
-/// `None` outside Unix, where the standard library exposes no inode: the
-/// identity comparison then degrades to the file-type check alone.
-type FileIdentity = Option<(u64, u64)>;
-
-#[cfg(unix)]
-fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
-    use std::os::unix::fs::MetadataExt as _;
-    Some((metadata.dev(), metadata.ino()))
-}
-
-#[cfg(not(unix))]
-fn file_identity(_metadata: &std::fs::Metadata) -> FileIdentity {
-    None
-}
-
-#[cfg(unix)]
-fn hard_link_count(metadata: &std::fs::Metadata) -> Option<u64> {
-    use std::os::unix::fs::MetadataExt as _;
-    Some(metadata.nlink())
-}
-
-#[cfg(not(unix))]
-fn hard_link_count(_metadata: &std::fs::Metadata) -> Option<u64> {
-    None
 }
 
 /// Full engine configuration, minus the storage path.
@@ -398,35 +285,10 @@ fn engine_fingerprint(options: &DbOptions) -> Result<String> {
     Ok(serde_json::to_string(&normalized)?)
 }
 
-/// Whether a directory entry is a shard file belonging to this index.
-pub(crate) fn is_shard_name(name: &str) -> bool {
-    // The root lock and reserved scratch state are not shards; their names
-    // cannot collide with one, but the exclusions are stated rather than
-    // inferred from the length check.
-    name != ROOT_LOCK_FILENAME
-        && !is_reserved_name(name)
-        && name.len() == 69
-        && name.ends_with(".redb")
-        && name[..64]
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reserved_names_are_never_mistaken_for_shards() {
-        assert!(!is_shard_name(ROOT_LOCK_FILENAME));
-        assert!(!is_shard_name(&format!("{TEMP_PREFIX}{}", "a".repeat(61))));
-        assert!(!is_shard_name(&format!(
-            "{STAGING_PREFIX}{}",
-            "a".repeat(60)
-        )));
-        assert!(is_shard_name(&format!("{}.redb", "a".repeat(64))));
-        assert!(!is_shard_name(&format!("{}.redb", "g".repeat(64))));
-    }
+    use crate::layout::{create_staging_dir, is_reserved_name, is_shard_name};
 
     #[test]
     fn scratch_names_are_claimed_exclusively_and_distinctly() {

@@ -67,6 +67,15 @@ pub enum ContextIndexError {
     /// overwrite that file.
     #[error("context shard {0} is not an exclusively named regular file")]
     AliasedShardFile(String),
+    /// The index root is reachable by users other than the one running it.
+    ///
+    /// A root that other users can write is the precondition for every
+    /// name-substitution attack this crate defends against, and a root they
+    /// can read exposes every tenant's vectors without any attack at all.
+    /// Opening fails rather than running with that exposure. Unix only: no
+    /// mode enforcement is possible elsewhere.
+    #[error("context index root is not private to this user: {0}")]
+    InsecureRoot(String),
     /// The root lock path is not a regular file, for example a symlink.
     ///
     /// Following it would let whoever planted it choose which file this index

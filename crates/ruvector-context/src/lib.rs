@@ -19,12 +19,51 @@
 //! The scope manifest stored in each shard binds a scope to a *filename*, not
 //! to shard contents; there is no message authentication code over the stored
 //! vectors.
+//!
+//! # The root directory is a private precondition
+//!
+//! The root must be private to the uid running the index.
+//! [`ScopedContextIndex::open`] creates it `0700`, creates shard files and the
+//! lock `0600`, and refuses a root that is group- or other-accessible with
+//! [`ContextIndexError::InsecureRoot`].
+//!
+//! This is the boundary the crate actually rests on. Every name under the root
+//! — shard files, the lock, the staging directory — is re-resolved by the
+//! kernel on each syscall, and this crate holds none of them by descriptor, so
+//! a user who can write the root can substitute any of them between one
+//! syscall and the next. No in-process check closes that; taking away their
+//! write access does. The staging directory, the post-publication inode
+//! identity check, the lone-regular-file requirement, and the reserved-name
+//! sweep are retained as defence in depth against operator error, not as the
+//! boundary itself.
+//!
+//! An attacker running as the *same* uid is conceded: they can read and
+//! rewrite shard files directly, and no permission bit or path check helps.
+//!
+//! # Lock portability
+//!
+//! The exclusive root lock is `flock`-based, which is per open file
+//! description: two handles in one process conflict, which is the case it
+//! exists to catch. Two platforms degrade that to per-process locking, where a
+//! second handle in the same process would silently succeed:
+//!
+//! - Solaris and illumos, where the backing crate falls back to `fcntl`.
+//! - Linux over NFS, where `flock` is emulated with POSIX record locks.
+//!
+//! Do not rely on the single-handle guarantee there.
+//!
+//! None of the mode enforcement above applies off Unix either: the root, the
+//! shards, and the lock are created with whatever the platform defaults to,
+//! and the privacy check is skipped. The `O_NOFOLLOW` that keeps the lock path
+//! from being redirected through a symlink is Unix-only too, so on Windows a
+//! symlink planted at the lock name is unmitigated.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
 mod error;
 mod index;
+mod layout;
 mod options;
 mod quarantine;
 mod scope;

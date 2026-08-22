@@ -62,22 +62,67 @@ does not parse capability handles or infer authority from a URI.
    an exclusive advisory lock taken in `open`. Two handles over one root would
    otherwise share the process-global database pool while maintaining
    independent in-memory indexes.
+10. The root directory is private to the index's uid: created `0700`, shards
+    and the lock created `0600`, and `open` refuses a group- or
+    other-accessible root. Mode enforcement is unix-only.
+
+### The root directory is a private precondition, enforced
+
+**The index root must be private to the uid running the index.** It is created
+`0700`, shard files and the lock are created `0600`, and `open` refuses a root
+that is group- or other-accessible. This is a precondition the crate checks,
+not an assumption it documents and hopes for.
+
+That enforcement is load-bearing, and the reason is worth recording because
+four rounds of security review converged on it the hard way. Every earlier
+attempt defended a **name** in the root: refuse an existing file at the shard
+name; then refuse a symlink at the shard name; then build under a scratch name
+and publish atomically; then move the scratch name inside a private staging
+directory. Each round the review swapped the *next* name — and the staging
+directory itself is a name in the root, so it was swappable too. There is no
+fixed point, because every path component under the root is re-resolved on
+every syscall and this crate holds none of them by descriptor.
+
+Two things actually terminate that regress. The complete answer is
+descriptor-anchored I/O: hold file descriptors on the root and staging and do
+all work with `openat`/`mkdirat`-style relative syscalls, so a swapped name
+cannot redirect anything. That is blocked here by the vector engine's
+path-based API, which would need a descriptor- or directory-relative open —
+an engine-level change, not a change to this crate, and the long-term fix.
+The answer taken instead is to remove the hostile directory from the threat
+model altogether by making the root private and refusing to run when it is
+not.
+
+Everything else the shard layer does — the private staging directory, the
+inode identity check after publication, the lone-regular-file requirement
+before the engine sees a path, the reserved-name sweep — is retained as
+**defence in depth against operator error**, which is the honest description
+of its role. None of it is what stands between a tenant and an attacker.
+
+An attacker running as the **same uid** remains conceded and always did: they
+can read and rewrite the shard files directly, and no permission bit or path
+check helps. Detecting that requires authenticating shard contents, which
+brings us to the next section.
 
 ### What the manifest binding does and does not prove
 
 Invariant 6 authenticates the scope-to-**filename** binding. It does not
 authenticate shard **contents**: there is no MAC over the stored vectors, and
-`shard_id` is an unkeyed digest over non-secret identifiers, so any party that
+`shard_id` is an unkeyed digest over non-secret identifiers, so a party that
 can write the root directory can compute a victim's filename offline and
 author a well-formed shard for it. Invariant 8 is what closes the resulting
 laundering path — without it, a planted file adopted through the create path
 would have its manifest rewritten to the victim scope and would then pass
 invariant 6 forever after.
 
-Treat the root directory as trusted deployment state. Deployments that cannot
-guarantee that should key `shard_id` with a per-deployment secret (HMAC rather
-than bare SHA-256) so filenames are unguessable, and add content
-authentication.
+Under invariant 10 the only principal who can write the root is the index's
+own uid, so this is the same-uid adversary already conceded above rather than
+an open door for anyone on the host. It is nonetheless the residual worth
+naming: a same-uid process can author a valid shard for any scope and this
+layer will serve it. Closing that needs content authentication — a MAC over
+stored vectors, and `shard_id` keyed with a per-deployment secret (HMAC rather
+than bare SHA-256) so filenames are unguessable as well as unforgeable. Both
+are out of scope here.
 
 ### Explicit non-goals
 

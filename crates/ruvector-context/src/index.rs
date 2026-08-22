@@ -1,10 +1,10 @@
 //! Persistent scope-sharded vector index.
 
-use crate::quarantine::{Quarantine, QuarantineList, QuarantinedShard};
-use crate::shard::{
-    acquire_root_lock, create_shard, create_staging_dir, is_reserved_name, is_shard_name,
-    load_shard, Shard,
+use crate::layout::{
+    acquire_root_lock, create_staging_dir, is_reserved_name, is_shard_name, prepare_root,
 };
+use crate::quarantine::{Quarantine, QuarantineList, QuarantinedShard};
+use crate::shard::{create_shard, load_shard, Shard};
 use crate::{ContextIndexError, ContextIndexOptions, ContextNamespace, ContextScope, Result};
 use ruvector_core::{SearchQuery, VectorEntry};
 use std::collections::BTreeMap;
@@ -61,21 +61,9 @@ type NamespaceShards = BTreeMap<ContextNamespace, PathShards>;
 /// same root fails with [`ContextIndexError::RootLocked`] instead of silently
 /// diverging from the first.
 ///
-/// # Lock portability
-///
-/// The exclusive root lock is `flock`-based, which is per open file
-/// description: two handles in one process conflict, which is the case it
-/// exists to catch. Two platforms degrade that to per-process locking, where a
-/// second handle in the same process would silently succeed:
-///
-/// - Solaris and illumos, where the backing crate falls back to `fcntl`.
-/// - Linux over NFS, where `flock` is emulated with POSIX record locks.
-///
-/// Do not rely on the single-handle guarantee there.
-///
-/// The `O_NOFOLLOW` that keeps the lock path from being redirected through a
-/// symlink is also Unix-only, so on Windows a symlink planted at the lock name
-/// is unmitigated.
+/// The root directory must be private to this user, the handle is exclusive,
+/// and neither guarantee is portable off Unix. See the crate documentation for
+/// what those preconditions rest on and where they stop.
 pub struct ScopedContextIndex {
     root: PathBuf,
     staging: PathBuf,
@@ -99,7 +87,7 @@ impl ScopedContextIndex {
     pub fn open(root: impl AsRef<Path>, options: ContextIndexOptions) -> Result<Self> {
         options.validate()?;
         let root = root.as_ref().to_path_buf();
-        std::fs::create_dir_all(&root)?;
+        prepare_root(&root)?;
         let lock = acquire_root_lock(&root)?;
         let mut shards: NamespaceShards = BTreeMap::new();
         let mut quarantined = Quarantine::new();
