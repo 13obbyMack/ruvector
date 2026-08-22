@@ -2,7 +2,8 @@
 
 use crate::quarantine::{Quarantine, QuarantineList, QuarantinedShard};
 use crate::shard::{
-    acquire_root_lock, create_shard, is_scratch_name, is_shard_name, load_shard, Shard,
+    acquire_root_lock, create_shard, create_staging_dir, is_reserved_name, is_shard_name,
+    load_shard, Shard,
 };
 use crate::{ContextIndexError, ContextIndexOptions, ContextNamespace, ContextScope, Result};
 use ruvector_core::{SearchQuery, VectorEntry};
@@ -71,8 +72,13 @@ type NamespaceShards = BTreeMap<ContextNamespace, PathShards>;
 /// - Linux over NFS, where `flock` is emulated with POSIX record locks.
 ///
 /// Do not rely on the single-handle guarantee there.
+///
+/// The `O_NOFOLLOW` that keeps the lock path from being redirected through a
+/// symlink is also Unix-only, so on Windows a symlink planted at the lock name
+/// is unmitigated.
 pub struct ScopedContextIndex {
     root: PathBuf,
+    staging: PathBuf,
     options: ContextIndexOptions,
     shards: RwLock<NamespaceShards>,
     quarantined: QuarantineList,
@@ -102,20 +108,25 @@ impl ScopedContextIndex {
             let Some(filename) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
+            if is_reserved_name(&filename) {
+                // Scratch state from a create or a handle that did not finish,
+                // or planted under a reserved name. This handle holds the root
+                // lock, so no live writer owns it. Swept before the symlink
+                // test so a symlink wearing a reserved name is removed rather
+                // than accumulating.
+                sweep_reserved_entry(&entry.path());
+                continue;
+            }
             if entry.file_type()?.is_symlink() {
                 // Never hand a symlink to the vector engine. Its API is
                 // path-based and it creates the backing file at whatever the
                 // path resolves to, so opening one writes a tenant's shard
                 // outside this root, at a location the attacker chose.
+                // `load_shard` rejects it too; this arm exists to name the
+                // cause in the quarantine reason.
                 if is_shard_name(&filename) {
                     quarantined.insert(filename, "shard path is a symlink".to_string());
                 }
-                continue;
-            }
-            if is_scratch_name(&filename) {
-                // Left by a create that did not finish. This handle holds the
-                // root lock, so no live writer owns it.
-                let _ = std::fs::remove_file(entry.path());
                 continue;
             }
             if !is_shard_name(&filename) {
@@ -139,8 +150,10 @@ impl ScopedContextIndex {
                 }
             }
         }
+        let staging = create_staging_dir(&root)?;
         let index = Self {
             root,
+            staging,
             options,
             shards: RwLock::new(shards),
             quarantined: QuarantineList::new(quarantined),
@@ -181,7 +194,12 @@ impl ScopedContextIndex {
                     maximum: self.options.max_scopes,
                 });
             }
-            let shard = Arc::new(create_shard(&self.root, scope, &self.options)?);
+            let shard = Arc::new(create_shard(
+                &self.root,
+                &self.staging,
+                scope,
+                &self.options,
+            )?);
             all.entry(scope.namespace().clone())
                 .or_default()
                 .insert(scope.path().to_vec(), Arc::clone(&shard));
@@ -205,6 +223,14 @@ impl ScopedContextIndex {
     ///
     /// The caller must already have authorized `root` for the requesting
     /// principal; every shard in its subtree is considered readable.
+    ///
+    /// Results are silently incomplete when a descendant scope is quarantined:
+    /// shard filenames are hashes and cannot be tested for subtree membership,
+    /// so an ancestor-rooted search cannot detect one. Searching the exact
+    /// quarantined scope does fail with
+    /// [`ContextIndexError::ScopeQuarantined`]. Callers that need certainty
+    /// that a subtree was searched whole must consult
+    /// [`ScopedContextIndex::quarantined_shards`].
     pub fn search(
         &self,
         root: &ContextScope,
@@ -275,6 +301,9 @@ impl ScopedContextIndex {
     /// principal.
     pub fn delete_point(&self, scope: &ContextScope, id: &str) -> Result<bool> {
         validate_point_id(id)?;
+        // Without this, deleting from a quarantined scope reports "not
+        // present" while the point's bytes sit in the quarantined file.
+        self.quarantined.ensure_absent(scope)?;
         let all = self
             .shards
             .read()
@@ -381,6 +410,26 @@ impl ScopedContextIndex {
     /// principal.
     pub fn discard_quarantined(&self, scope: &ContextScope) -> Result<bool> {
         self.quarantined.discard(&self.root, scope, &self.options)
+    }
+}
+
+impl Drop for ScopedContextIndex {
+    fn drop(&mut self) {
+        // Best effort: a staging directory left by a crash is swept by the
+        // next handle to take the root lock.
+        let _ = std::fs::remove_dir_all(&self.staging);
+    }
+}
+
+/// Remove one reserved entry, whatever kind of thing occupies the name.
+///
+/// `remove_file` covers regular files and symlinks; a staging directory needs
+/// `remove_dir_all`, which does not follow symlinks out of the tree it is
+/// removing. Nothing under a reserved name is ever read, so a failure here
+/// leaks a file rather than affecting correctness.
+fn sweep_reserved_entry(path: &Path) {
+    if std::fs::remove_file(path).is_err() {
+        let _ = std::fs::remove_dir_all(path);
     }
 }
 

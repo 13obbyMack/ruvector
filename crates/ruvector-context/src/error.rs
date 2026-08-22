@@ -58,6 +58,15 @@ pub enum ContextIndexError {
     /// Another live handle already holds the exclusive lock on this index root.
     #[error("context index root is already locked by another handle")]
     RootLocked,
+    /// A shard path is not a regular file that this index alone names.
+    ///
+    /// Raised for a symlink, a directory, or a hard-link alias to a file
+    /// elsewhere on the filesystem. The vector engine opens read-write and
+    /// initialises whatever a path resolves to, so such a path is never handed
+    /// to it: aliasing a foreign file into a shard name would otherwise
+    /// overwrite that file.
+    #[error("context shard {0} is not an exclusively named regular file")]
+    AliasedShardFile(String),
     /// The root lock path is not a regular file, for example a symlink.
     ///
     /// Following it would let whoever planted it choose which file this index

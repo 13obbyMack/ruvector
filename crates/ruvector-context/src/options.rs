@@ -16,6 +16,9 @@ pub struct ContextIndexOptions {
     /// Base configuration copied into every exact-scope vector shard.
     pub vector: DbOptions,
     /// Maximum exact-scope shards this process may open or create.
+    ///
+    /// Bounds live shard handles, not files on disk: quarantined shards hold
+    /// no handle and are not counted against it.
     pub max_scopes: usize,
     /// Maximum descendant shards one search may touch.
     pub max_search_shards: usize,

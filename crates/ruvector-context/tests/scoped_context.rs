@@ -410,6 +410,10 @@ engine_tests! {
             index.erase_scope(&target),
             Err(ContextIndexError::ScopeQuarantined(_))
         ));
+        assert!(matches!(
+            index.delete_point(&target, "blocked"),
+            Err(ContextIndexError::ScopeQuarantined(_))
+        ));
 
         assert!(index.discard_quarantined(&target).unwrap());
         assert!(index.quarantined_shards().unwrap().is_empty());
@@ -621,5 +625,225 @@ mod symlink {
             temp.path().join(&filename).exists(),
             "a valid shard was deleted by remediation"
         );
+    }
+}
+
+/// Attacks that swap what a name points at, rather than planting a name.
+///
+/// Unix only: both primitives (renaming over a live name, aliasing a foreign
+/// file into the root with a hard link) need filesystem semantics the Windows
+/// attacker model here does not assume.
+#[cfg(unix)]
+mod inode {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    /// Two directories guaranteed to share a filesystem, so `hard_link` works.
+    fn same_filesystem_dirs() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("index");
+        let outside = base.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        (base, root, outside)
+    }
+
+    /// The scratch name is claimed with `O_EXCL`, but an attacker can rename
+    /// something over it while the shard is being built. Publishing must then
+    /// fail rather than link a foreign inode into a tenant's shard name.
+    ///
+    /// The thief races, so a round may simply not be hijacked. The assertions
+    /// never require the hijack to land: they require that whenever `insert`
+    /// reports success, the vector really is there — including after a reopen,
+    /// which is where the orphaned-inode variant loses the data.
+    #[test]
+    fn scratch_name_hijack_never_publishes_a_foreign_inode() {
+        let (_base, root, outside) = same_filesystem_dirs();
+        let stolen = outside.join("stolen.redb");
+        let stop = Arc::new(AtomicBool::new(false));
+        let thief = {
+            let root = root.clone();
+            let stolen = stolen.clone();
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let Ok(entries) = std::fs::read_dir(&root) else {
+                        continue;
+                    };
+                    for entry in entries.flatten() {
+                        let name = entry.file_name();
+                        if name.to_str().is_some_and(|n| n.starts_with(".create-")) {
+                            let path = entry.path();
+                            let _ = std::fs::remove_file(&path);
+                            let _ = std::os::unix::fs::symlink(&stolen, &path);
+                        }
+                    }
+                }
+            })
+        };
+
+        let index = ScopedContextIndex::open(&root, options(Engine::Flat, 8)).unwrap();
+        let mut stored = Vec::new();
+        for round in 0..40 {
+            let target = scope("acme", &[&format!("round-{round}")]);
+            if index.insert(&target, point("row", [1.0, 0.0, 0.0])).is_ok() {
+                stored.push(target);
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        thief.join().unwrap();
+
+        // A reported success must be a real, readable vector.
+        for target in &stored {
+            let matches = index.search(target, &[1.0, 0.0, 0.0], 1).unwrap();
+            assert_eq!(matches.len(), 1, "reported stored but absent in memory");
+        }
+        // Every published shard is a regular file this index alone names.
+        for path in shard_files(&root) {
+            let metadata = std::fs::symlink_metadata(&path).unwrap();
+            assert!(
+                metadata.is_file(),
+                "published shard is not a regular file: {path:?}"
+            );
+        }
+        assert!(!stolen.exists(), "the engine wrote outside the index root");
+
+        // The decisive one: an insert that returned Ok while the engine held an
+        // orphaned inode looks fine until the handle is dropped.
+        drop(index);
+        let reopened = ScopedContextIndex::open(&root, options(Engine::Flat, 8)).unwrap();
+        for target in &stored {
+            let matches = reopened.search(target, &[1.0, 0.0, 0.0], 1).unwrap();
+            assert_eq!(
+                matches.len(),
+                1,
+                "insert reported success but the vector did not survive a reopen"
+            );
+        }
+    }
+
+    fn reserved_entries(root: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with(".staging-") || name.starts_with(".create-")
+                    })
+            })
+            .collect()
+    }
+
+    /// The hijack test above passes because the scratch name is no longer
+    /// somewhere an attacker can reach, so the mode on that directory is the
+    /// control doing the work. Assert it directly, or the other test could
+    /// pass merely because the thief lost track of the name.
+    ///
+    /// This bounds the threat model too: the directory keeps out other users,
+    /// not the user running the index. An attacker with this uid can reach the
+    /// shard files themselves and no permission bit changes that.
+    #[test]
+    fn staging_directory_is_private_and_cleaned_up() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let index = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).unwrap();
+
+        let staging = reserved_entries(temp.path());
+        assert_eq!(staging.len(), 1, "expected exactly one staging directory");
+        let metadata = std::fs::symlink_metadata(&staging[0]).unwrap();
+        assert!(metadata.is_dir());
+        assert_eq!(
+            metadata.permissions().mode() & 0o777,
+            0o700,
+            "staging directory is writable by someone other than this user"
+        );
+
+        drop(index);
+        assert!(
+            reserved_entries(temp.path()).is_empty(),
+            "staging directory outlived its handle"
+        );
+    }
+
+    /// Scratch state left by a crashed handle must not accumulate, and must
+    /// never be mistaken for index content.
+    #[test]
+    fn reserved_leftovers_are_swept_at_open() {
+        let temp = tempfile::tempdir().unwrap();
+        let stale_dir = temp.path().join(".staging-deadbeefdeadbeef");
+        std::fs::create_dir(&stale_dir).unwrap();
+        std::fs::write(stale_dir.join(".create-0123"), b"half-built").unwrap();
+        std::fs::write(temp.path().join(".create-orphan"), b"scratch").unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("nowhere"),
+            temp.path().join(".create-symlink"),
+        )
+        .unwrap();
+
+        let index = ScopedContextIndex::open(temp.path(), options(Engine::Flat, 8)).unwrap();
+        assert!(index.quarantined_shards().unwrap().is_empty());
+        assert!(!stale_dir.exists(), "stale staging directory survived open");
+        assert!(!temp.path().join(".create-orphan").exists());
+        assert!(!temp.path().join(".create-symlink").exists());
+        // Only this handle's own staging directory remains.
+        assert_eq!(reserved_entries(temp.path()).len(), 1);
+    }
+
+    /// A hard-link alias is indistinguishable from a regular file by type, so
+    /// only the link count keeps the engine from opening — and initialising —
+    /// a file that belongs to something else.
+    #[test]
+    fn hard_link_alias_is_quarantined_without_clobbering_the_aliased_file() {
+        let victim = scope("victim", &["docs"]);
+        let probe = tempfile::tempdir().unwrap();
+        let filename = shard_filename_of(Engine::Flat, probe.path(), &victim);
+
+        let (_base, root, outside) = same_filesystem_dirs();
+        let foreign = outside.join("someone-elses.dat");
+        std::fs::write(&foreign, b"").unwrap();
+        std::fs::hard_link(&foreign, root.join(&filename)).unwrap();
+
+        let index = ScopedContextIndex::open(&root, options(Engine::Flat, 8)).unwrap();
+        assert_eq!(
+            std::fs::metadata(&foreign).unwrap().len(),
+            0,
+            "open() initialised a database over an aliased foreign file"
+        );
+
+        let quarantined = index.quarantined_shards().unwrap();
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(quarantined[0].filename, filename);
+        assert!(matches!(
+            index.scope_stats(&victim),
+            Err(ContextIndexError::ScopeQuarantined(_))
+        ));
+
+        // Discarding removes only the alias; the foreign file keeps its data.
+        assert!(index.discard_quarantined(&victim).unwrap());
+        assert!(foreign.exists(), "discard deleted the aliased file itself");
+        assert_eq!(std::fs::metadata(&foreign).unwrap().len(), 0);
+    }
+
+    /// The same alias aimed at a populated file must also be left untouched.
+    #[test]
+    fn hard_link_alias_never_mutates_a_populated_foreign_file() {
+        let victim = scope("victim", &["docs"]);
+        let probe = tempfile::tempdir().unwrap();
+        let filename = shard_filename_of(Engine::Flat, probe.path(), &victim);
+
+        let (_base, root, outside) = same_filesystem_dirs();
+        let foreign = outside.join("ledger.db");
+        let original = b"important bytes that are not a vector database".to_vec();
+        std::fs::write(&foreign, &original).unwrap();
+        std::fs::hard_link(&foreign, root.join(&filename)).unwrap();
+
+        let index = ScopedContextIndex::open(&root, options(Engine::Flat, 8)).unwrap();
+        assert_eq!(std::fs::read(&foreign).unwrap(), original);
+        assert_eq!(index.quarantined_shards().unwrap().len(), 1);
     }
 }

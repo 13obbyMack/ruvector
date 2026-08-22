@@ -28,6 +28,9 @@ const ROOT_LOCK_FILENAME: &str = ".lock";
 /// Prefix of the scratch name a shard is built under before it is published.
 const TEMP_PREFIX: &str = ".create-";
 
+/// Prefix of the private per-handle directory new shards are built inside.
+const STAGING_PREFIX: &str = ".staging-";
+
 /// Handle to the vector engine backing one exact context scope.
 ///
 /// The wrapped [`VectorDB`] is private to this module, so the per-scope
@@ -142,19 +145,36 @@ fn classify_lock_open_error(path: &Path, error: std::io::Error) -> ContextIndexE
 /// Build a new shard for `scope` and publish it under its hash-bound name.
 ///
 /// The shard is built under a scratch name this call claimed with `O_EXCL`,
-/// then linked into place. `link(2)` fails with `EEXIST` against anything
-/// already at the destination — a regular file, a directory, or a symlink,
-/// dangling or not — and never follows it. That is what makes adoption
-/// impossible: there is no stat-then-create window for a planted name to slip
-/// through, and a planted symlink cannot redirect a tenant's vectors to a path
-/// outside the index root.
+/// then linked into place. Two properties make this safe, and neither is a
+/// check on a path:
+///
+/// - `link(2)` fails with `EEXIST` against anything already at the destination
+///   — regular file, directory, or symlink, dangling or not — and never
+///   follows it, so a planted name cannot be adopted or redirected.
+/// - The `(device, inode)` of the scratch file is captured from its own file
+///   descriptor at the instant `O_EXCL` proved the name was ours. After the
+///   link, the published name is required to resolve to *that* inode. An
+///   attacker who renames something over the scratch name mid-build steals
+///   only the name; the published entry is unlinked and the create fails.
+///
+/// The second property is what a path check cannot give: names are re-resolved
+/// on every syscall, so only the inode identity is stable across the build.
+///
+/// The build itself happens inside `staging`, a directory only this user may
+/// write. That is not defence in depth, it is load-bearing: the engine opens
+/// by path, so between claiming a scratch name and the engine opening it,
+/// anyone who can write to the containing directory can rename their own file
+/// over that name and have the engine initialise it — at a location outside
+/// the index root if they aim a symlink there. No check inside this process
+/// can prevent that; only taking away the ability to perform the rename can.
 pub(crate) fn create_shard(
     root: &Path,
+    staging: &Path,
     scope: &ContextScope,
     options: &ContextIndexOptions,
 ) -> Result<Shard> {
     let filename = scope.shard_filename();
-    let scratch = claim_scratch_path(root)?;
+    let (scratch, identity) = claim_scratch_path(staging)?;
     let shard = match build_shard(&scratch, scope, options) {
         Ok(shard) => shard,
         Err(error) => {
@@ -162,7 +182,8 @@ pub(crate) fn create_shard(
             return Err(error);
         }
     };
-    if let Err(error) = std::fs::hard_link(&scratch, root.join(&filename)) {
+    let published = root.join(&filename);
+    if let Err(error) = std::fs::hard_link(&scratch, &published) {
         drop(shard);
         let _ = std::fs::remove_file(&scratch);
         return Err(match error.kind() {
@@ -170,10 +191,30 @@ pub(crate) fn create_shard(
             _ => error.into(),
         });
     }
+    // The scratch name may have been replaced between the claim and the link,
+    // in which case the entry just created names someone else's inode. Unlink
+    // it: this call created that directory entry, so removing it cannot
+    // destroy another scope's shard.
+    if let Err(error) = confirm_published_identity(&published, identity) {
+        drop(shard);
+        let _ = std::fs::remove_file(&published);
+        let _ = std::fs::remove_file(&scratch);
+        return Err(error);
+    }
     // The engine holds the inode open, so dropping the scratch name leaves the
     // shard reachable only under the name its scope hashes to.
     let _ = std::fs::remove_file(&scratch);
     Ok(shard)
+}
+
+/// Require the published name to resolve to the inode this call created.
+fn confirm_published_identity(published: &Path, identity: FileIdentity) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(published)?;
+    let name = shard_error_name(published);
+    if !metadata.is_file() || file_identity(&metadata) != identity {
+        return Err(ContextIndexError::ShardAdoption(name));
+    }
+    Ok(())
 }
 
 fn build_shard(path: &Path, scope: &ContextScope, options: &ContextIndexOptions) -> Result<Shard> {
@@ -193,28 +234,26 @@ fn build_shard(path: &Path, scope: &ContextScope, options: &ContextIndexOptions)
     Ok(shard)
 }
 
-/// Claim an unused scratch name inside `root` with `O_CREAT | O_EXCL`.
+/// Claim an unused scratch name inside `root` with `O_CREAT | O_EXCL`, and
+/// capture the identity of the file that create produced.
 ///
 /// The exclusive create is what matters, not the name's unpredictability: a
 /// pre-planted name — symlink included — fails the create and costs only a
-/// retry, so an attacker cannot steer the build by guessing.
-fn claim_scratch_path(root: &Path) -> Result<PathBuf> {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
+/// retry. The identity comes from the returned descriptor rather than a second
+/// lookup of the name, so it describes the file this call made and nothing
+/// that later takes its place.
+fn claim_scratch_path(staging: &Path) -> Result<(PathBuf, FileIdentity)> {
     for _ in 0..16 {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_nanos() as u64);
-        let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = root.join(format!(
-            "{TEMP_PREFIX}{:016x}{nonce:016x}",
-            stamp ^ u64::from(std::process::id())
-        ));
+        let path = staging.join(format!("{TEMP_PREFIX}{}", unique_suffix()));
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&path)
         {
-            Ok(_) => return Ok(path),
+            Ok(file) => {
+                let identity = file_identity(&file.metadata()?);
+                return Ok((path, identity));
+            }
             Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error.into()),
         }
@@ -226,11 +265,48 @@ fn claim_scratch_path(root: &Path) -> Result<PathBuf> {
     .into())
 }
 
+/// Create this handle's private staging directory inside `root`.
+///
+/// The name is unique per handle and `mkdir` is atomic, so success proves this
+/// call created it; the mode is applied by `mkdir` itself rather than by a
+/// follow-up `chmod`, leaving no window in which the directory exists while
+/// still writable by others.
+pub(crate) fn create_staging_dir(root: &Path) -> Result<PathBuf> {
+    for _ in 0..16 {
+        let path = root.join(format!("{STAGING_PREFIX}{}", unique_suffix()));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt as _;
+            builder.mode(0o700);
+        }
+        match builder.create(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(std::io::Error::new(
+        ErrorKind::AlreadyExists,
+        "could not claim a staging directory for this context index",
+    )
+    .into())
+}
+
+/// Whether a directory entry is scratch state rather than index content.
+///
+/// Reserved entries are never read, so any of them left by a crashed process —
+/// or planted by someone else — can be swept when a handle takes the root lock.
+pub(crate) fn is_reserved_name(name: &str) -> bool {
+    name.starts_with(TEMP_PREFIX) || name.starts_with(STAGING_PREFIX)
+}
+
 pub(crate) fn load_shard(
     path: &Path,
     filename: &str,
     options: &ContextIndexOptions,
 ) -> Result<(ContextScope, Shard)> {
+    require_exclusive_regular_file(path, filename)?;
     let mut vector = options.vector.clone();
     vector.storage_path = path.to_string_lossy().into_owned();
     let shard = Shard::new(VectorDB::new(vector)?);
@@ -243,6 +319,67 @@ pub(crate) fn load_shard(
     let scope: ContextScope = serde_json::from_str(&manifest)
         .map_err(|_| ContextIndexError::CorruptShard(filename.to_string()))?;
     Ok((scope, shard))
+}
+
+/// A name component unlikely to collide, retried under an atomic create.
+fn unique_suffix() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos() as u64);
+    let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{:016x}{nonce:016x}", stamp ^ u64::from(std::process::id()))
+}
+
+/// Refuse to hand the engine anything but a regular file this index alone names.
+///
+/// The engine opens read-write and initialises whatever the path resolves to,
+/// so this runs before it sees the path. A symlink is rejected by `is_file`; a
+/// hard-link alias — indistinguishable from a regular file by type alone — is
+/// rejected by its link count. Every shard this crate publishes settles at one
+/// link, because `create_shard` unlinks the scratch name, and an open
+/// descriptor does not raise the count.
+fn require_exclusive_regular_file(path: &Path, filename: &str) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_file() || hard_link_count(&metadata).is_some_and(|links| links != 1) {
+        return Err(ContextIndexError::AliasedShardFile(filename.to_string()));
+    }
+    Ok(())
+}
+
+fn shard_error_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// Stable identity of a file, independent of every name that reaches it.
+///
+/// `None` outside Unix, where the standard library exposes no inode: the
+/// identity comparison then degrades to the file-type check alone.
+type FileIdentity = Option<(u64, u64)>;
+
+#[cfg(unix)]
+fn file_identity(metadata: &std::fs::Metadata) -> FileIdentity {
+    use std::os::unix::fs::MetadataExt as _;
+    Some((metadata.dev(), metadata.ino()))
+}
+
+#[cfg(not(unix))]
+fn file_identity(_metadata: &std::fs::Metadata) -> FileIdentity {
+    None
+}
+
+#[cfg(unix)]
+fn hard_link_count(metadata: &std::fs::Metadata) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt as _;
+    Some(metadata.nlink())
+}
+
+#[cfg(not(unix))]
+fn hard_link_count(_metadata: &std::fs::Metadata) -> Option<u64> {
+    None
 }
 
 /// Full engine configuration, minus the storage path.
@@ -263,21 +400,16 @@ fn engine_fingerprint(options: &DbOptions) -> Result<String> {
 
 /// Whether a directory entry is a shard file belonging to this index.
 pub(crate) fn is_shard_name(name: &str) -> bool {
-    // The root lock and scratch files are not shards; their names cannot
-    // collide with one, but the exclusions are stated rather than inferred
-    // from the length check.
+    // The root lock and reserved scratch state are not shards; their names
+    // cannot collide with one, but the exclusions are stated rather than
+    // inferred from the length check.
     name != ROOT_LOCK_FILENAME
-        && !is_scratch_name(name)
+        && !is_reserved_name(name)
         && name.len() == 69
         && name.ends_with(".redb")
         && name[..64]
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
-/// Whether a directory entry is a scratch file from an unfinished create.
-pub(crate) fn is_scratch_name(name: &str) -> bool {
-    name.starts_with(TEMP_PREFIX)
 }
 
 #[cfg(test)]
@@ -288,6 +420,10 @@ mod tests {
     fn reserved_names_are_never_mistaken_for_shards() {
         assert!(!is_shard_name(ROOT_LOCK_FILENAME));
         assert!(!is_shard_name(&format!("{TEMP_PREFIX}{}", "a".repeat(61))));
+        assert!(!is_shard_name(&format!(
+            "{STAGING_PREFIX}{}",
+            "a".repeat(60)
+        )));
         assert!(is_shard_name(&format!("{}.redb", "a".repeat(64))));
         assert!(!is_shard_name(&format!("{}.redb", "g".repeat(64))));
     }
@@ -295,13 +431,48 @@ mod tests {
     #[test]
     fn scratch_names_are_claimed_exclusively_and_distinctly() {
         let root = tempfile::tempdir().unwrap();
-        let first = claim_scratch_path(root.path()).unwrap();
-        let second = claim_scratch_path(root.path()).unwrap();
+        let staging = create_staging_dir(root.path()).unwrap();
+        let (first, first_id) = claim_scratch_path(&staging).unwrap();
+        let (second, second_id) = claim_scratch_path(&staging).unwrap();
         assert_ne!(first, second);
         for path in [&first, &second] {
             let name = path.file_name().unwrap().to_str().unwrap();
-            assert!(is_scratch_name(name));
+            assert!(is_reserved_name(name));
             assert!(!is_shard_name(name));
         }
+        if cfg!(unix) {
+            assert!(first_id.is_some(), "unix must capture an inode identity");
+            assert_ne!(first_id, second_id, "distinct files, distinct inodes");
+        }
+    }
+
+    /// The `nlink == 1` rule in `require_exclusive_regular_file` is only sound
+    /// if every shard this crate publishes actually settles at one link.
+    #[test]
+    fn a_published_shard_settles_at_one_hard_link() {
+        let root = tempfile::tempdir().unwrap();
+        let options = ContextIndexOptions {
+            vector: DbOptions {
+                dimensions: 3,
+                ..DbOptions::default()
+            },
+            max_scopes: 4,
+            max_search_shards: 4,
+            max_results: 8,
+        };
+        let namespace =
+            crate::ContextNamespace::new("context.example", "acme", "agent", "reader", "memory")
+                .unwrap();
+        let scope = ContextScope::new(namespace, vec!["links".into()]).unwrap();
+        let staging = create_staging_dir(root.path()).unwrap();
+        let shard = create_shard(root.path(), &staging, &scope, &options).unwrap();
+
+        let path = root.path().join(scope.shard_filename());
+        let held = std::fs::symlink_metadata(&path).unwrap();
+        assert_eq!(hard_link_count(&held), Some(1), "open handle raised nlink");
+        drop(shard);
+        let closed = std::fs::symlink_metadata(&path).unwrap();
+        assert_eq!(hard_link_count(&closed), Some(1));
+        require_exclusive_regular_file(&path, "shard").unwrap();
     }
 }
