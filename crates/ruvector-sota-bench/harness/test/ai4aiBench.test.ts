@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import {
   AI4AI_BENCH_CITATION,
+  ai4aiEvidenceClass,
   ai4aiLineageVetoProvider,
   ai4aiPairedDecision,
   ai4aiRunRoot,
@@ -86,25 +87,64 @@ test("fixture end-to-end lineage chains parent digests from the run root", async
   assert.deepEqual(verifyAi4aiLineage(manifest, lineage), []);
 });
 
-test("executor identity is bound to the manifest's pinned evaluator", async () => {
-  // Run-time: an executor reporting a different identity is refused outright.
-  const impostor: Ai4aiExecutor = async () => ({
-    raw: { score: 0.42, algorithm_changed: true },
-    executorIdentity: hex("some-other-evaluator"),
+test("byte-derived identity cannot be self-reported: the echo-executor probe fails", async () => {
+  // The probe: an executor that runs NOTHING, echoes the manifest's public
+  // pin, and returns a perfect score. It must not be able to mint a lineage
+  // that passes as evaluator-bound evidence.
+  const echo: Ai4aiExecutor = async () => ({
+    raw: { score: 0.99, algorithm_changed: true },
+    executorIdentity: manifest.evaluatorSha256,
   });
+  const minted = await runAi4aiLineage(manifest, [mutation("mut-echo", 1)], echo);
+
+  // It runs and records honestly — but as `injected`, never byte-derived.
+  assert.equal(minted.records[0]!.executorClass, "injected");
+  assert.equal(ai4aiEvidenceClass(minted), "injected");
+  // A gate demanding evaluator-bound evidence gets a distinct, actionable reason
+  // instead of the indistinguishable clean verdict this used to return.
+  assert.deepEqual(
+    verifyAi4aiLineage(manifest, minted, { requireEvaluatorBound: true }),
+    ["ai4ai_executor_not_byte_bound"],
+  );
+  const strict = ai4aiLineageVetoProvider(
+    () => ({ manifest, lineage: minted }),
+    { requireEvaluatorBound: true },
+  );
+  assert.deepEqual(
+    await strict({ policy: {}, suite: { id: "s", items: [] }, observations: [] } as never),
+    ["ai4ai_executor_not_byte_bound"],
+  );
+  // The class is inside the digest body, so it cannot be flipped after the fact.
+  const forged = {
+    runNonce: minted.runNonce,
+    records: [{ ...minted.records[0]!, executorClass: "byte-derived-command" as const }],
+  };
+  assert.ok(verifyAi4aiLineage(manifest, forged).includes("ai4ai_lineage_digest_mismatch"));
+});
+
+test("a real command run is byte-derived and bound to the pinned evaluator", async () => {
+  const lineage = await runAi4aiLineage(manifest, [mutation("mut-001", 3)], fixtureExecutor);
+  assert.equal(lineage.records[0]!.executorClass, "byte-derived-command");
+  assert.equal(lineage.records[0]!.executorIdentity, evaluatorSha256);
+  assert.equal(ai4aiEvidenceClass(lineage), "byte-derived-command");
+  // Passes even under the strictest policy — this is what real evidence looks like.
+  assert.deepEqual(verifyAi4aiLineage(manifest, lineage, { requireEvaluatorBound: true }), []);
+
+  // A manifest pinning a different evaluator is refused at run time, because
+  // here the module itself knows what ran.
+  const wrongManifest: Ai4aiTaskManifest = { ...manifest, evaluatorSha256: hex("declared-but-not-run") };
   await assert.rejects(
-    runAi4aiMutation(manifest, mutation("mut-x", 1), impostor, ai4aiRunRoot(manifest, newAi4aiRunNonce())),
+    runAi4aiMutation(
+      wrongManifest,
+      mutation("mut-x", 1),
+      fixtureExecutor,
+      ai4aiRunRoot(wrongManifest, newAi4aiRunNonce()),
+    ),
     /does not match the manifest's pinned evaluator/,
   );
+});
 
-  // Verification: a record claiming evaluator X while running Y is vetoed.
-  const lineage = await runAi4aiLineage(manifest, [mutation("mut-001", 3)], okExecutor);
-  const wrongManifest: Ai4aiTaskManifest = { ...manifest, evaluatorSha256: hex("declared-but-not-run") };
-  assert.ok(
-    verifyAi4aiLineage(wrongManifest, lineage).includes("ai4ai_evaluator_identity_mismatch"),
-  );
-
-  // The escape hatch must be explicitly declared, and is visible on the record.
+test("a declared wrapper is honestly classed and distinguishable under policy", async () => {
   const wrapped: Ai4aiExecutor = async () => ({
     raw: { score: 0.2, algorithm_changed: true },
     executorIdentity: hex("a-declared-wrapper"),
@@ -112,14 +152,24 @@ test("executor identity is bound to the manifest's pinned evaluator", async () =
   });
   const wrappedLineage = await runAi4aiLineage(manifest, [mutation("mut-w", 2)], wrapped);
   assert.equal(wrappedLineage.records[0]!.wrapperIndirection, true);
+  assert.equal(wrappedLineage.records[0]!.executorClass, "wrapper-waived");
+  // Not blocked by default — real Docker/GPU runs legitimately wrap.
   assert.deepEqual(verifyAi4aiLineage(manifest, wrappedLineage), []);
+  // But a gate that needs evaluator-bound evidence can tell it apart.
+  assert.deepEqual(
+    verifyAi4aiLineage(manifest, wrappedLineage, { requireEvaluatorBound: true }),
+    ["ai4ai_evaluator_identity_waived"],
+  );
+  assert.equal(ai4aiEvidenceClass(wrappedLineage), "wrapper-waived");
 });
 
-test("run nonce binds a chain to its run so it cannot replay as fresh", async () => {
+test("run nonce distinguishes runs: identical inputs cannot be byte-identical", async () => {
   const nonce = newAi4aiRunNonce();
   const first = await runAi4aiLineage(manifest, [mutation("mut-001", 3)], okExecutor, nonce);
   const replay = await runAi4aiLineage(manifest, [mutation("mut-001", 3)], okExecutor);
-  // Identical inputs, different runs: digests must differ.
+  // Identical inputs, different runs: digests must differ. This is a run
+  // DISTINGUISHER only — re-presenting a whole {runNonce, records} pair still
+  // verifies; anti-replay is out of scope for this slice.
   assert.notEqual(first.records[0]!.digest, replay.records[0]!.digest);
   // A chain presented under someone else's nonce does not verify.
   assert.ok(

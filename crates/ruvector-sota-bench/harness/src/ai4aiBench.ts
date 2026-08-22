@@ -65,7 +65,7 @@
  */
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pairedBootstrapDecision, type PairedDecision } from "./statistics.js";
@@ -235,10 +235,14 @@ export interface Ai4aiLineageRecord {
   readonly mutation: Ai4aiMutation;
   readonly executorIdentity: string;
   /**
+   * HOW `executorIdentity` was established (see `Ai4aiExecutorClass`). Inside
+   * the digest body, exactly like `wrapperIndirection`, so it cannot be
+   * flipped after the fact.
+   */
+  readonly executorClass: Ai4aiExecutorClass;
+  /**
    * True only when the caller EXPLICITLY declared that `executorIdentity`
-   * hashes a wrapper rather than the evaluator itself. Default false, so the
-   * evaluator-identity binding below is enforced unless someone opts out on
-   * the record, in the open, where an auditor sees it.
+   * hashes a wrapper rather than the evaluator itself.
    */
   readonly wrapperIndirection: boolean;
   readonly evaluation: Ai4aiEvaluation;
@@ -246,12 +250,18 @@ export interface Ai4aiLineageRecord {
 }
 
 /**
- * The root binding a lineage chains from: the frozen task identity mixed with
- * a per-run nonce. Without this a chain is fully deterministic — the same
- * mutations against the same task always produce byte-identical records, so an
- * old chain could be presented as a fresh run. The nonce makes each run's
- * chain unique and unforgeable-as-fresh; it is carried alongside the records
- * (see `Ai4aiLineage`) so verification can re-derive the root.
+ * The root a lineage chains from: the frozen task identity mixed with a
+ * per-run nonce.
+ *
+ * WHAT THE NONCE DELIVERS — and only this: two runs over identical inputs
+ * cannot produce byte-identical records, so runs are DISTINGUISHABLE. It is a
+ * run distinguisher, NOT anti-replay and NOT anti-forgery. There is no
+ * signature over the chain and no external record of issued nonces, so
+ * re-presenting a whole `{ runNonce, records }` pair still verifies, and
+ * `runAi4aiLineage` accepts a caller-supplied nonce whose FORMAT is validated
+ * but whose freshness is not. Chain forgery and replay detection are out of
+ * scope for this slice; they need a signing authority and an issued-nonce
+ * ledger, neither of which exists here.
  */
 export function ai4aiRunRoot(manifest: Ai4aiTaskManifest, runNonce: string): string {
   if (!HEX64.test(runNonce)) throw new Error("ai4ai run nonce must be 64 lowercase hex chars");
@@ -281,7 +291,43 @@ function lineageDigest(record: Omit<Ai4aiLineageRecord, "digest">): string {
 
 // ---------------------------------------------------------------------------
 // EXECUTOR SEAM — injected, never run in-repo (no GPU, no Docker here).
+//
+// TRUST IS ESTABLISHED, NEVER ASSUMED. A lineage defaults to "NOT
+// evaluator-bound evidence"; only this module's own construction can upgrade
+// it. `executorIdentity` alone is a self-reported string, and
+// `manifest.evaluatorSha256` is PUBLIC — it sits in the manifest every caller
+// already holds — so comparing the two proves nothing about what ran: an
+// executor that runs nothing, echoes the pinned hash, and returns a perfect
+// score would otherwise mint a clean-verifying lineage. Byte-derived identity
+// is therefore attested through a module-private registry (below) that only
+// `commandAi4aiExecutor` can write to, and the attestation is keyed on the
+// exact result object the adapter itself built, so a self-reported identity
+// from an arbitrary injected executor CANNOT be presented as byte-derived.
+// An injected executor may still run — it simply cannot claim byte-derived
+// identity, and its records say so.
 // ---------------------------------------------------------------------------
+
+/**
+ * How a record's `executorIdentity` was established:
+ *   - `byte-derived-command` — this module hashed the entrypoint's real bytes
+ *     and the hash equals the manifest's pinned evaluator. The only class that
+ *     is evidence OF THE EVALUATOR.
+ *   - `wrapper-waived` — the caller explicitly declared the entrypoint wraps
+ *     the evaluator, waiving the binding. Honest, but the identity names the
+ *     wrapper, not the pinned evaluator.
+ *   - `injected` — a caller-supplied executor self-reported an identity this
+ *     module cannot corroborate. Runnable, never evaluator-bound.
+ */
+export type Ai4aiExecutorClass = "byte-derived-command" | "wrapper-waived" | "injected";
+
+/**
+ * Module-private attestation registry: maps the exact result object this
+ * module constructed to the identity IT derived from real file bytes. Not
+ * exported and not reachable from outside — an arbitrary executor cannot add
+ * an entry, and mutating a returned object cannot change the attested value
+ * because the adapter reads the identity from here, never off the object.
+ */
+const BYTE_DERIVED_IDENTITY = new WeakMap<object, string>();
 
 /**
  * The injected executor: given a pinned task and one mutation, run the real
@@ -289,6 +335,10 @@ function lineageDigest(record: Omit<Ai4aiLineageRecord, "digest">): string {
  * return its RAW output plus a stable identity for the executor itself (so
  * lineage records name what produced each score). A crash must propagate —
  * the adapter re-throws with context and never scores a crash as a result.
+ *
+ * A self-reported `executorIdentity` is recorded but classed `injected`: this
+ * module cannot corroborate it, so it is never treated as evidence about the
+ * evaluator.
  */
 export type Ai4aiExecutor = (
   manifest: Ai4aiTaskManifest,
@@ -396,20 +446,33 @@ export function commandAi4aiExecutor(options: Ai4aiCommandExecutorOptions): Ai4a
         );
       }
       // The stdout/stderr ceiling does not cover the result file the evaluator
-      // writes; bound it before reading so an oversized artifact cannot be
-      // pulled into memory.
+      // writes. Bound it on the SAME open handle we then read from: a
+      // stat-then-read pair lets the child (same user, and both calls follow
+      // symlinks) swap the file in between and defeat the cap.
       const maxOutputBytes = options.maxOutputBytes ?? 10 * 1024 * 1024;
-      const outputStat = await stat(outputFile);
-      if (outputStat.size > maxOutputBytes) {
-        throw new Error(
-          `ai4ai executor result exceeds output limit: ${outputStat.size} > ${maxOutputBytes} bytes`,
-        );
+      const handle = await open(outputFile, "r");
+      let raw: unknown;
+      try {
+        const handleStat = await handle.stat();
+        if (handleStat.size > maxOutputBytes) {
+          throw new Error(
+            `ai4ai executor result exceeds output limit: ${handleStat.size} > ${maxOutputBytes} bytes`,
+          );
+        }
+        raw = JSON.parse(await handle.readFile("utf8")) as unknown;
+      } finally {
+        await handle.close();
       }
-      return {
-        raw: JSON.parse(await readFile(outputFile, "utf8")) as unknown,
+      // Attest byte-derived identity on the exact object we return. Only this
+      // module can make this entry; the adapter reads the identity from the
+      // registry, never off the (potentially mutated) object.
+      const outcome = {
+        raw,
         executorIdentity,
         wrapperIndirection: options.wrapperIndirection ?? false,
       };
+      BYTE_DERIVED_IDENTITY.set(outcome, executorIdentity);
+      return Object.freeze(outcome);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -427,11 +490,14 @@ export function commandAi4aiExecutor(options: Ai4aiCommandExecutorOptions): Ai4a
  * folded into a score (adapter-crash ≠ result, same discipline as the WP16
  * subprocess binder).
  *
- * EVALUATOR-IDENTITY BINDING: `manifest.evaluatorSha256` is not merely
- * format-checked — unless the executor EXPLICITLY declares wrapper
- * indirection, the identity of what actually ran must EQUAL it. Otherwise a
- * lineage could claim evaluator X while running Y, which would make the
- * manifest's evaluator pin a false safety claim rather than a real binding.
+ * EVALUATOR-IDENTITY BINDING, established not assumed: a record is
+ * `byte-derived-command` ONLY when this module itself hashed the entrypoint's
+ * bytes (attested via the module-private registry) AND that hash equals
+ * `manifest.evaluatorSha256` — a mismatch there throws, because the module
+ * knows what actually ran. A caller-supplied executor's self-reported identity
+ * is recorded and classed `injected`; it is never checked against the public
+ * pin, because passing that check proves only that the caller can read the
+ * manifest. An explicitly declared wrapper is classed `wrapper-waived`.
  */
 export async function runAi4aiMutation(
   manifest: Ai4aiTaskManifest,
@@ -457,19 +523,39 @@ export async function runAi4aiMutation(
     throw new Error("ai4ai executor must report a lowercase SHA-256 identity");
   }
   const wrapperIndirection = outcome.wrapperIndirection ?? false;
-  if (!wrapperIndirection && outcome.executorIdentity !== manifest.evaluatorSha256) {
-    throw new Error(
-      `ai4ai executor identity does not match the manifest's pinned evaluator ` +
-      `(${outcome.executorIdentity} != ${manifest.evaluatorSha256}); declare ` +
-      `wrapperIndirection explicitly if the entrypoint wraps the evaluator`,
-    );
+  // The ONLY source of a byte-derived identity is this module's own registry.
+  // A self-reported string can never reach this variable.
+  const attestedIdentity = typeof outcome === "object" && outcome !== null
+    ? BYTE_DERIVED_IDENTITY.get(outcome)
+    : undefined;
+  let executorClass: Ai4aiExecutorClass;
+  let executorIdentity: string;
+  if (attestedIdentity !== undefined && !wrapperIndirection) {
+    // This module hashed real bytes: the pin is now a meaningful binding.
+    if (attestedIdentity !== manifest.evaluatorSha256) {
+      throw new Error(
+        `ai4ai executor identity does not match the manifest's pinned evaluator ` +
+        `(${attestedIdentity} != ${manifest.evaluatorSha256}); declare ` +
+        `wrapperIndirection explicitly if the entrypoint wraps the evaluator`,
+      );
+    }
+    executorClass = "byte-derived-command";
+    executorIdentity = attestedIdentity;
+  } else if (wrapperIndirection) {
+    executorClass = "wrapper-waived";
+    executorIdentity = attestedIdentity ?? outcome.executorIdentity;
+  } else {
+    // Self-reported and uncorroborated. Recorded honestly, never bound.
+    executorClass = "injected";
+    executorIdentity = outcome.executorIdentity;
   }
   const evaluation = parseAi4aiEvaluatorOutput(outcome.raw);
   const body = {
     taskIdentity: ai4aiTaskIdentity(manifest),
     parentDigest,
     mutation,
-    executorIdentity: outcome.executorIdentity,
+    executorIdentity,
+    executorClass,
     wrapperIndirection,
     evaluation,
   };
@@ -501,15 +587,43 @@ export async function runAi4aiLineage(
 }
 
 /**
+ * What a caller demands of a lineage's evidence class. Structural integrity
+ * (digest, chain, task, nonce) is ALWAYS checked; this governs only the
+ * evidence-strength question.
+ */
+export interface Ai4aiEvidencePolicy {
+  /**
+   * Demand that EVERY record be `byte-derived-command`. Off by default: real
+   * Docker/GPU runs legitimately use a wrapper entrypoint, and hard-blocking
+   * those would break them. A caller that needs evaluator-bound evidence turns
+   * this on and receives `ai4ai_evaluator_identity_waived` (wrapper) or
+   * `ai4ai_executor_not_byte_bound` (injected) — distinct reasons, so an
+   * automated gate can tell a bound run from a waived or uncorroborated one
+   * instead of seeing an indistinguishable clean verdict.
+   */
+  readonly requireEvaluatorBound?: boolean;
+}
+
+/** The weakest executor class present — the class of the lineage as a whole. */
+export function ai4aiEvidenceClass(lineage: Ai4aiLineage): Ai4aiExecutorClass {
+  if (lineage.records.some((record) => record.executorClass === "injected")) return "injected";
+  if (lineage.records.some((record) => record.executorClass === "wrapper-waived")) {
+    return "wrapper-waived";
+  }
+  return "byte-derived-command";
+}
+
+/**
  * Re-verify a lineage: every record must re-derive its own digest, name the
- * same frozen task, chain to its predecessor from the run root (task identity
- * + this run's nonce), and — unless it explicitly declares wrapper
- * indirection — have run the evaluator the manifest pins. Returns veto-style
+ * same frozen task, and chain to its predecessor from the run root (task
+ * identity + this run's nonce). Under `policy.requireEvaluatorBound`, records
+ * that are not byte-derived also draw a distinct reason. Returns veto-style
  * reasons (empty ⇒ intact). This is what the veto provider below consumes.
  */
 export function verifyAi4aiLineage(
   manifest: Ai4aiTaskManifest,
   lineage: Ai4aiLineage,
+  policy: Ai4aiEvidencePolicy = {},
 ): string[] {
   const reasons: string[] = [];
   const { runNonce, records } = lineage;
@@ -528,8 +642,18 @@ export function verifyAi4aiLineage(
     if (record.parentDigest !== expectedParent) reasons.push("ai4ai_lineage_broken_chain");
     const { digest, ...body } = record;
     if (lineageDigest(body) !== digest) reasons.push("ai4ai_lineage_digest_mismatch");
-    if (!record.wrapperIndirection && record.executorIdentity !== manifest.evaluatorSha256) {
+    // A byte-derived record is the only one whose identity this module
+    // established; for it, disagreement with the pin is a real mismatch.
+    if (record.executorClass === "byte-derived-command" &&
+        record.executorIdentity !== manifest.evaluatorSha256) {
       reasons.push("ai4ai_evaluator_identity_mismatch");
+    }
+    if (policy.requireEvaluatorBound) {
+      if (record.executorClass === "wrapper-waived") {
+        reasons.push("ai4ai_evaluator_identity_waived");
+      } else if (record.executorClass === "injected") {
+        reasons.push("ai4ai_executor_not_byte_bound");
+      }
     }
     expectedParent = record.digest;
   }
@@ -563,19 +687,23 @@ export function ai4aiPairedDecision(
 
 /**
  * A vetoes.ts-composable provider that REJECTS promotion when the lineage
- * chain behind a candidate does not verify. Conjunctive like every provider:
- * it can only object, never rescue. `lineageFor` maps the veto context to the
- * manifest + records under evaluation, mirroring the `candidateFor` /
- * `environmentFor` seams of the dream-machine and ADR-324 providers.
+ * behind a candidate does not verify. Conjunctive like every provider: it can
+ * only object, never rescue. `lineageFor` maps the veto context to the
+ * manifest + lineage under evaluation, mirroring the `candidateFor` /
+ * `environmentFor` seams of the dream-machine and ADR-324 providers. Pass
+ * `{ requireEvaluatorBound: true }` to also reject lineages that are not
+ * byte-derived — off by default so legitimate wrapper-entrypoint runs are not
+ * blocked, on when a gate needs evaluator-bound evidence specifically.
  */
 export function ai4aiLineageVetoProvider(
   lineageFor: (context: unknown) => {
     manifest: Ai4aiTaskManifest;
     lineage: Ai4aiLineage;
   } | Promise<{ manifest: Ai4aiTaskManifest; lineage: Ai4aiLineage }>,
+  policy: Ai4aiEvidencePolicy = {},
 ): PromotionVetoProvider {
   return async (context) => {
     const { manifest, lineage } = await lineageFor(context);
-    return verifyAi4aiLineage(manifest, lineage);
+    return verifyAi4aiLineage(manifest, lineage, policy);
   };
 }

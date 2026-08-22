@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import {
+  ai4aiEvidenceClass,
   assertAi4aiMutation,
   assertAi4aiTaskManifest,
   commandAi4aiExecutor,
@@ -137,13 +138,20 @@ async function main(): Promise<void> {
           : {}),
       }),
     );
+    // --require-evaluator-bound demands byte-derived evidence for every record.
+    const vetoReasons = verifyAi4aiLineage(manifest, lineage, {
+      requireEvaluatorBound: process.argv.includes("--require-evaluator-bound"),
+    });
     process.stdout.write(`${JSON.stringify({
       task: manifest.taskId,
       runNonce: lineage.runNonce,
+      evidenceClass: ai4aiEvidenceClass(lineage),
       records: lineage.records,
-      vetoReasons: verifyAi4aiLineage(manifest, lineage),
+      vetoReasons,
       bestScore: Math.max(...lineage.records.map((record) => record.evaluation.score)),
     }, null, 2)}\n`);
+    // A vetoed run must not read as success to automation keying on exit status.
+    if (vetoReasons.length > 0) process.exitCode = 1;
     return;
   }
   throw new Error("usage: ruvector-metaharness <doctor|flywheel|darwin|darwin-ann|darwin-ai4ai> [options]");
