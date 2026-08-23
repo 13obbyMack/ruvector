@@ -14,6 +14,15 @@
  * research manifest from it. The manifest is the standing policy; the research
  * manifest is one run under that policy.
  *
+ * STATUS: this module is currently INERT. Nothing in `runRuvectorFlywheel`
+ * loads a manifest, and `declaredObjectives()` has no caller — the promotion
+ * rule uses `DEFAULT_OBJECTIVES` directly. So `promotion.pareto` is a
+ * *declaration* that is checked for self-consistency, not policy that is
+ * enforced at runtime. Registration in `schema_validate.py` is likewise by
+ * directory glob, so naming the schema there is documentation rather than
+ * wiring. Treat a passing manifest as "this repository has stated its intent
+ * coherently", not as "this repository is being optimized under it".
+ *
  * Scope note, deliberately narrow: NVIDIA's skillpack also carries
  * domain-specific optimization *knowledge* (what to try, in what order) and an
  * adversarial-review step performed by a separate agent. This manifest encodes
@@ -23,8 +32,8 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { POLICY_LEVERS } from "./benchmark.js";
-import type { ObjectiveSpec } from "./pareto.js";
+import { POLICY_LEVER_RANGES, POLICY_LEVERS } from "./benchmark.js";
+import { DEFAULT_OBJECTIVES, type ObjectiveSpec } from "./pareto.js";
 
 export interface ManifestObjective {
   name: string;
@@ -145,13 +154,41 @@ export function assertOptimizationManifest(value: unknown): asserts value is Opt
     }
     if (seen.has(name)) throw new Error(`optimization manifest repeats lever ${name}`);
     seen.add(name);
-    if (lever.values !== undefined) requireStringArray(lever.values, `lever ${name} values`);
+    // A declared range or value set must be one the runner can actually
+    // effect. Otherwise a manifest can advertise a lever setting that
+    // `normalizePolicy` rejects at spawn time -- an authorization that looks
+    // real and does nothing.
+    const runnerRange = POLICY_LEVER_RANGES[name];
+    if (lever.values !== undefined) {
+      const values = requireStringArray(lever.values, `lever ${name} values`);
+      if (runnerRange) {
+        for (const raw of values) {
+          const parsed = Number(raw);
+          if (!Number.isSafeInteger(parsed)
+            || parsed < runnerRange.minimum || parsed > runnerRange.maximum) {
+            throw new Error(
+              `optimization manifest lever ${name} declares ${raw}, outside the runner's `
+              + `[${runnerRange.minimum}, ${runnerRange.maximum}]`,
+            );
+          }
+        }
+      }
+    }
     if (lever.bounds !== undefined) {
       const bounds = requireObject(lever.bounds, `lever ${name} bounds`);
       const minimum = requireFinite(bounds.minimum, `lever ${name} bounds.minimum`);
       const maximum = requireFinite(bounds.maximum, `lever ${name} bounds.maximum`);
       if (minimum > maximum) {
         throw new Error(`optimization manifest lever ${name} has minimum above maximum`);
+      }
+      if (!runnerRange) {
+        throw new Error(`optimization manifest lever ${name} takes values, not bounds`);
+      }
+      if (minimum < runnerRange.minimum || maximum > runnerRange.maximum) {
+        throw new Error(
+          `optimization manifest lever ${name} declares [${minimum}, ${maximum}], outside the `
+          + `runner's [${runnerRange.minimum}, ${runnerRange.maximum}]`,
+        );
       }
     }
   }
@@ -182,14 +219,32 @@ export function assertOptimizationManifest(value: unknown): asserts value is Opt
   if (!Array.isArray(pareto.objectives) || pareto.objectives.length === 0) {
     throw new Error("optimization manifest promotion.pareto requires objectives");
   }
+  // Cross-check against the vector the promotion rule actually uses. A
+  // manifest declaring `{primary, minimize}` is harmless only while this
+  // module is inert; the day it is wired in, an inverted direction is a
+  // promotion gate that rewards regressions. Refuse it now, while the cost of
+  // being wrong is a failing test rather than a bad promotion.
+  const gateDirections = new Map(DEFAULT_OBJECTIVES.map((o) => [o.name, o.direction]));
   for (const raw of pareto.objectives) {
     const objectiveSpec = requireObject(raw, "pareto objective");
-    if (typeof objectiveSpec.name !== "string" || !objectiveSpec.name) {
+    const name = objectiveSpec.name;
+    if (typeof name !== "string" || !name) {
       throw new Error("optimization manifest pareto objective requires a name");
     }
     if (objectiveSpec.direction !== "maximize" && objectiveSpec.direction !== "minimize") {
+      throw new Error(`optimization manifest pareto objective ${name} needs a direction`);
+    }
+    const expected = gateDirections.get(name);
+    if (expected === undefined) {
       throw new Error(
-        `optimization manifest pareto objective ${objectiveSpec.name} needs a direction`,
+        `optimization manifest declares pareto objective ${name}, which the promotion gate `
+        + `does not evaluate (it uses ${[...gateDirections.keys()].join(", ")})`,
+      );
+    }
+    if (expected !== objectiveSpec.direction) {
+      throw new Error(
+        `optimization manifest declares ${name} as ${objectiveSpec.direction}, but the promotion `
+        + `gate treats it as ${expected}`,
       );
     }
   }

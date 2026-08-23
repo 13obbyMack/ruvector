@@ -11,6 +11,7 @@ import {
   type OptimizationManifest,
 } from "../src/optimizationManifest.js";
 import { POLICY_LEVERS } from "../src/benchmark.js";
+import { DEFAULT_OBJECTIVES } from "../src/pareto.js";
 
 const repoRoot = resolve(import.meta.dirname, "../../../../..");
 const FIXTURE = resolve(repoRoot, "schemas/fixtures/optimization-manifest-v1.json");
@@ -29,7 +30,7 @@ test("the shipped fixture manifest is accepted", async () => {
   assert.equal(manifest.repository, "ruvnet/ruvector");
   assert.deepEqual(declaredLevers(manifest), ["ef_search", "m", "ef_construction", "runner_set"]);
   assert.deepEqual(declaredObjectives(manifest).map((entry) => entry.name),
-    ["primary", "costPerWin", "p99Us"]);
+    ["primary", "costPerWin"]);
 });
 
 test("a lever the native runner would reject is refused", async () => {
@@ -163,4 +164,53 @@ test("a manifest that is not valid JSON reports the file", async () => {
   await assert.rejects(
     loadOptimizationManifest(resolve(repoRoot, "README.md")),
   );
+});
+
+test("a pareto direction inverted from the real gate is refused", async () => {
+  // Harmless while the module is inert; an inverted promotion gate the day it
+  // is wired in. Refuse it now, while being wrong costs a failing test.
+  const manifest = await fixture();
+  manifest.promotion.pareto.objectives = [
+    { name: "primary", direction: "minimize" },
+    { name: "costPerWin", direction: "minimize" },
+  ];
+  assert.throws(() => assertOptimizationManifest(manifest),
+    /declares primary as minimize, but the promotion gate treats it as maximize/);
+});
+
+test("a pareto objective the gate does not evaluate is refused", async () => {
+  const manifest = await fixture();
+  manifest.promotion.pareto.objectives = [
+    { name: "primary", direction: "maximize" },
+    { name: "p99Us", direction: "minimize" },
+  ];
+  assert.throws(() => assertOptimizationManifest(manifest),
+    /declares pareto objective p99Us, which the promotion gate does not evaluate/);
+});
+
+test("declared objectives match the vector the promotion rule actually uses", async () => {
+  const manifest = await fixture();
+  assert.deepEqual(declaredObjectives(manifest), [...DEFAULT_OBJECTIVES]);
+});
+
+test("a lever range the runner would reject is refused", async () => {
+  // normalizePolicy bounds ef_search to [1, 4096]. A manifest advertising more
+  // would look authoritative and be rejected at spawn time.
+  const manifest = await fixture();
+  manifest.levers[0] = { name: "ef_search", bounds: { minimum: 1, maximum: 999_999 } };
+  assert.throws(() => assertOptimizationManifest(manifest),
+    /declares \[1, 999999\], outside the runner's \[1, 4096\]/);
+});
+
+test("a lever value the runner would reject is refused", async () => {
+  const manifest = await fixture();
+  manifest.levers[0] = { name: "ef_search", values: ["64", "999999"] };
+  assert.throws(() => assertOptimizationManifest(manifest),
+    /declares 999999, outside the runner's \[1, 4096\]/);
+});
+
+test("bounds on an enum lever are refused", async () => {
+  const manifest = await fixture();
+  manifest.levers[3] = { name: "runner_set", bounds: { minimum: 0, maximum: 2 } };
+  assert.throws(() => assertOptimizationManifest(manifest), /takes values, not bounds/);
 });

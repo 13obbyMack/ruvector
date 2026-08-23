@@ -28,6 +28,9 @@ OVERRIDE_SCHEMA = "research-override-v1.json"
 BASE_GATE_SCHEMA = "research-base-gate-v1.json"
 ATTESTATION_SUBJECT_SCHEMA = "research-attestation-subject-v1.json"
 EMBEDDING_IDENTITY_SCHEMA = "embedding-space-identity-v1.json"
+# ADR-335. Registration is by directory glob below, so naming a schema here
+# does not wire it into anything -- it is the argument callers pass to
+# ``validate_document``. No gate stage consumes an optimization manifest yet.
 OPTIMIZATION_MANIFEST_SCHEMA = "optimization-manifest-v1.json"
 
 

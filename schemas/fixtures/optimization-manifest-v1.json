@@ -10,14 +10,43 @@
   },
   "benchmark": {
     "binary": "target/release/sota-all",
-    "runner_sets": ["core", "core-lsm", "all"],
+    "runner_sets": [
+      "core",
+      "core-lsm",
+      "all"
+    ],
     "isolated": true
   },
   "levers": [
-    { "name": "ef_search", "bounds": { "minimum": 1, "maximum": 4096 } },
-    { "name": "m", "bounds": { "minimum": 2, "maximum": 128 } },
-    { "name": "ef_construction", "bounds": { "minimum": 4, "maximum": 4096 } },
-    { "name": "runner_set", "values": ["core", "core-lsm", "all"] }
+    {
+      "name": "ef_search",
+      "bounds": {
+        "minimum": 1,
+        "maximum": 4096
+      }
+    },
+    {
+      "name": "m",
+      "bounds": {
+        "minimum": 2,
+        "maximum": 128
+      }
+    },
+    {
+      "name": "ef_construction",
+      "bounds": {
+        "minimum": 4,
+        "maximum": 4096
+      }
+    },
+    {
+      "name": "runner_set",
+      "values": [
+        "core",
+        "core-lsm",
+        "all"
+      ]
+    }
   ],
   "protected_invariants": {
     "required_veto_providers": [
@@ -48,9 +77,14 @@
     },
     "pareto": {
       "objectives": [
-        { "name": "primary", "direction": "maximize" },
-        { "name": "costPerWin", "direction": "minimize" },
-        { "name": "p99Us", "direction": "minimize" }
+        {
+          "name": "primary",
+          "direction": "maximize"
+        },
+        {
+          "name": "costPerWin",
+          "direction": "minimize"
+        }
       ],
       "require_non_dominated": true
     }

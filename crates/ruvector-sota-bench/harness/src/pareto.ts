@@ -31,16 +31,25 @@ export interface ParetoPoint {
 }
 
 /**
- * The promotion objective vector.
+ * The promotion objective vector: quality against the resource bought with it.
  *
- * `primary` is the aggregate benchmark score (higher is better); `costPerWin`
- * and `p99Us` are the resource and tail-latency axes the promotion rule
- * already reasons about in `ruvectorPromotionRule`.
+ * Deliberately TWO axes, not three. Dominance requires "no worse on every
+ * axis", so each axis added is one more chance for the condition to fail:
+ * more axes can only ever turn *dominated* into *not dominated*, never the
+ * reverse. A Pareto gate therefore gets monotonically weaker as axes are
+ * added, and this gate exists to block trades dressed as wins.
+ *
+ * `p99Us` was on this vector and has been removed, because it is not
+ * independent evidence — it is already a factor of `costPerWin`
+ * (`memoryMb * p99Us / qps`) and a term inside `primary`'s `darwinScore`.
+ * Counting it a third time bought no information and cost real blocking
+ * power: with it present, a candidate burning 10x the memory to halve tail
+ * latency is *not* dominated and clears the gate; with two axes the incumbent
+ * dominates it and the gate fires.
  */
 export const DEFAULT_OBJECTIVES: readonly ObjectiveSpec[] = Object.freeze([
   Object.freeze({ name: "primary", direction: "maximize" as const }),
   Object.freeze({ name: "costPerWin", direction: "minimize" as const }),
-  Object.freeze({ name: "p99Us", direction: "minimize" as const }),
 ]);
 
 function assertObjectives(objectives: readonly ObjectiveSpec[]): void {
@@ -75,6 +84,25 @@ function readObjective(point: ParetoPoint, objective: ObjectiveSpec): number {
   return value;
 }
 
+/**
+ * Read every objective of every point before any of them are compared.
+ *
+ * This must happen as a separate pass. The comparison loop below short-circuits
+ * on the first axis where `a` is worse, so validating inside that loop would
+ * only ever check the axes the loop happens to reach — leaving a non-finite
+ * value on a later axis completely unexamined. That is not a hypothetical: it
+ * is precisely how a NaN reaches a comparison and reads as "not worse" on
+ * every test, which is the failure this module exists to prevent.
+ */
+function assertComparable(
+  points: readonly ParetoPoint[],
+  objectives: readonly ObjectiveSpec[],
+): void {
+  for (const point of points) {
+    for (const objective of objectives) readObjective(point, objective);
+  }
+}
+
 /** True when `a` is at least as good on every objective and strictly better on one. */
 export function dominates(
   a: ParetoPoint,
@@ -82,6 +110,7 @@ export function dominates(
   objectives: readonly ObjectiveSpec[] = DEFAULT_OBJECTIVES,
 ): boolean {
   assertObjectives(objectives);
+  assertComparable([a, b], objectives);
   let strictlyBetterSomewhere = false;
   for (const objective of objectives) {
     const left = readObjective(a, objective);
@@ -107,11 +136,7 @@ export function frontier(
   objectives: readonly ObjectiveSpec[] = DEFAULT_OBJECTIVES,
 ): ParetoPoint[] {
   assertObjectives(objectives);
-  // Read every objective up front so a malformed point fails the whole call
-  // rather than only when comparison order happens to reach it.
-  for (const point of points) {
-    for (const objective of objectives) readObjective(point, objective);
-  }
+  assertComparable(points, objectives);
   return points.filter(
     (candidate) => !points.some((other) => other !== candidate && dominates(other, candidate, objectives)),
   );
@@ -138,6 +163,7 @@ export function admitToFrontier(
   objectives: readonly ObjectiveSpec[] = DEFAULT_OBJECTIVES,
 ): FrontierAdmission {
   assertObjectives(objectives);
+  assertComparable([candidate, ...current], objectives);
   const dominatedBy = current
     .filter((member) => dominates(member, candidate, objectives))
     .map((member) => member.id)

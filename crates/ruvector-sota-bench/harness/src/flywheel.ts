@@ -59,19 +59,20 @@ interface RuvectorScore extends Score {
   peakRssBytes: number;
   vetoReasons: string[];
   observations: BenchmarkObservation[];
-  /**
-   * Frontier the candidate must not be dominated by. Defaults to the incumbent
-   * baseline when a run has no wider frontier to hand.
-   */
-  frontier?: ParetoPoint[];
 }
 
-/** Objective vector for the in-repo Pareto gate (ADR-335). */
+/**
+ * Objective vector for the in-repo Pareto gate (ADR-335).
+ *
+ * The frontier is the incumbent baseline, and deliberately nothing the
+ * candidate can influence. An earlier revision let a score carry its own
+ * `frontier` array, which let the judged object choose its judges: an empty
+ * array admitted everything, silently and without a reason string. Widening
+ * this beyond the incumbent must arrive through the caller's options, never
+ * through the evaluator's score object or a deserialized replay bundle.
+ */
 function paretoPoint(id: string, score: RuvectorScore): ParetoPoint {
-  return {
-    id,
-    values: { primary: score.primary, costPerWin: score.costPerWin, p99Us: score.p99Us },
-  };
+  return { id, values: { primary: score.primary, costPerWin: score.costPerWin } };
 }
 
 export interface RuvectorFlywheelOptions {
@@ -108,15 +109,26 @@ export function ruvectorPromotionRule(evidence: {
   if (evidence.anchor && evidence.anchor.candidate < evidence.anchor.baseline) reasons.push("anchor_regressed");
   // In-repo Pareto gate (ADR-335): a candidate dominated on the objective
   // vector cannot be promoted even when the paired test passes, because a
-  // scalar improvement bought with a strictly worse cost and latency profile
-  // is a trade rather than a win. Non-finite objectives throw here rather than
-  // comparing, since NaN defeats `<` in both directions.
-  const admission = admitToFrontier(
-    paretoPoint("candidate", candidate),
-    candidate.frontier ?? [paretoPoint("baseline", baseline)],
-  );
-  if (!admission.admitted) {
-    reasons.push(`pareto_dominated_by_${admission.dominatedBy.join("_")}`);
+  // scalar improvement bought with a strictly worse resource profile is a
+  // trade rather than a win.
+  //
+  // The pure API throws on a non-finite or missing objective, which is right
+  // for a library but wrong here: `@metaharness/flywheel` calls this rule
+  // without a try/catch from both its generation loop and `verifyReplayBundle`,
+  // so an escaping throw would abort the run in one case and, in the other,
+  // destroy the structured `checks` output that the replay assertion below
+  // depends on. Unusable evidence is a reason to REFUSE the candidate, not to
+  // kill the harness, so it is converted into a blocking reason here.
+  try {
+    const admission = admitToFrontier(
+      paretoPoint("candidate", candidate),
+      [paretoPoint("baseline", baseline)],
+    );
+    if (!admission.admitted) {
+      reasons.push(`pareto_dominated_by_${admission.dominatedBy.join("_")}`);
+    }
+  } catch {
+    reasons.push("non_finite_objective");
   }
   return { promote: reasons.length === 0, reasons };
 }

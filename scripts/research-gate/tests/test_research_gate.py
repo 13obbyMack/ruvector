@@ -465,6 +465,26 @@ class SchemaEnforcementTests(unittest.TestCase):
             # against the offline registry; a network-only $ref would raise here.
             schema_validate._validator(name)
 
+    def test_optimization_manifest_fixture_matches_its_schema(self):
+        # ADR-335. The manifest is not consumed by any gate stage yet, so
+        # without this the schema and the fixture could drift apart unnoticed
+        # and the named constant would be decorative.
+        fixture = (
+            Path(__file__).resolve().parents[3]
+            / "schemas" / "fixtures" / "optimization-manifest-v1.json"
+        )
+        document = json.loads(fixture.read_text(encoding="utf-8"))
+        schema_validate.validate_document(
+            document, schema_validate.OPTIMIZATION_MANIFEST_SCHEMA
+        )
+        # The frontier requirement is a schema constant: a manifest must not be
+        # able to switch the gate off.
+        document["promotion"]["pareto"]["require_non_dominated"] = False
+        with self.assertRaises(schema_validate.SchemaValidationError):
+            schema_validate.validate_document(
+                document, schema_validate.OPTIMIZATION_MANIFEST_SCHEMA
+            )
+
     def test_manifest_violating_schema_only_rule_is_rejected(self):
         # selection_rule is required by the schema and by no hand-rolled check,
         # so this fails only if schema validation actually runs.
