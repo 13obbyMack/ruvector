@@ -55,6 +55,10 @@ interface RuvectorScore extends Score {
   qps: number;
   memoryMb: number;
   peakRssBytes: number;
+  /** The absolute health thresholds this score tripped, itemised. The gate diffs
+   *  candidate against baseline over these; the inherited `regressed` boolean
+   *  cannot express "already true of the baseline". */
+  regressions: string[];
   vetoReasons: string[];
   observations: BenchmarkObservation[];
 }
@@ -76,6 +80,30 @@ function asRuvectorScore(score: Score): RuvectorScore {
   return score as RuvectorScore;
 }
 
+/**
+ * The regressions the candidate introduces that the baseline did not already
+ * carry, as `hard_regression:<name>` reasons.
+ *
+ * `regressions` itemises ABSOLUTE health thresholds (the 0.95 recall floor, the
+ * qps floor), so on any workload sitting under one of them the baseline trips it
+ * too. Gating on the candidate's own flag therefore made `hard_regression` a
+ * permanent no — it fired on 120/120 candidates in issue #920 and identified a
+ * candidate-introduced regression zero times. Only the set difference is
+ * attributable to the candidate; the absolute list stays a reported signal.
+ *
+ * A score that predates the itemised list fails closed on the boolean rather
+ * than opening the gate, and an unknown baseline counts every candidate
+ * regression as new.
+ */
+function candidateIntroducedRegressions(baseline: RuvectorScore, candidate: RuvectorScore): string[] {
+  if (!Array.isArray(candidate.regressions)) return candidate.regressed ? ["hard_regression"] : [];
+  const inherited = new Set(Array.isArray(baseline.regressions) ? baseline.regressions : []);
+  return [...new Set(candidate.regressions)]
+    .filter((name) => !inherited.has(name))
+    .sort()
+    .map((name) => `hard_regression:${name}`);
+}
+
 export function ruvectorPromotionRule(evidence: {
   baseline: Score;
   candidate: Score;
@@ -88,7 +116,7 @@ export function ruvectorPromotionRule(evidence: {
   if (decision.outcome !== "pass") reasons.push(`paired_confirmation_${decision.outcome}`);
   if (candidate.recallAt10 < baseline.recallAt10) reasons.push("recall_regressed");
   if (candidate.costPerWin > baseline.costPerWin * 1.05) reasons.push("resource_cost_worsened");
-  if (candidate.regressed) reasons.push("hard_regression");
+  reasons.push(...candidateIntroducedRegressions(baseline, candidate));
   reasons.push(...candidate.vetoReasons);
   if (evidence.anchor && evidence.anchor.candidate < evidence.anchor.baseline) reasons.push("anchor_regressed");
   return { promote: reasons.length === 0, reasons };
@@ -149,6 +177,7 @@ async function toScore(
     memoryMb: aggregate.memoryMb,
     peakRssBytes: Math.max(...observations.map((observation) => observation.resources.processPeakRssBytes)),
     costPerWin: aggregate.memoryMb * Math.max(aggregate.p99Us, 1) / Math.max(aggregate.qps, 1),
+    regressions: aggregate.regressions,
     regressed: aggregate.regressions.length > 0 || vetoReasons.length > 0,
     vetoReasons,
     observations,
