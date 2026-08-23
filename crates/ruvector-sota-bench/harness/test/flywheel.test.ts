@@ -3,7 +3,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { runRuvectorFlywheel } from "../src/flywheel.js";
+import { ruvectorPromotionRule, runRuvectorFlywheel } from "../src/flywheel.js";
 
 test("flywheel emits a replay-verified bundle and cannot authorize a PR", async () => {
   const outputDir = await mkdtemp(join(tmpdir(), "ruvector-flywheel-test-"));
@@ -54,4 +54,75 @@ test("overlapping holdout and anchor identities fail closed", async () => {
     anchorItems: [item],
     benchmark: async () => ({ scores: [] }),
   }), /must be disjoint/);
+});
+
+interface ScoreShape {
+  primary: number;
+  primarySamples: number[];
+  noopRate: number;
+  recallAt10: number;
+  qps: number;
+  memoryMb: number;
+  p99Us: number;
+  peakRssBytes: number;
+  costPerWin: number;
+  regressed: boolean;
+  vetoReasons: string[];
+  observations: unknown[];
+}
+
+function score(primary: number, costPerWin: number, p99Us: number, samples: number[]): ScoreShape {
+  return {
+    primary,
+    primarySamples: samples,
+    noopRate: 0.04,
+    recallAt10: 0.96,
+    qps: 2_000,
+    memoryMb: 40,
+    p99Us,
+    peakRssBytes: 0,
+    costPerWin,
+    regressed: false,
+    vetoReasons: [],
+    observations: [],
+  };
+}
+
+const reasonsFor = (baseline: ScoreShape, candidate: ScoreShape): string[] =>
+  ruvectorPromotionRule({
+    baseline: baseline as never,
+    candidate: candidate as never,
+  }).reasons;
+
+test("a candidate dominated by the incumbent is refused on the Pareto gate", () => {
+  // Equal accuracy bought with strictly worse cost and latency: the baseline
+  // dominates it on the objective vector, so the frontier gate must fire.
+  const baseline = score(0.9, 10, 100, [0.9, 0.9, 0.9, 0.9, 0.9]);
+  const dominated = score(0.9, 20, 200, [0.9, 0.9, 0.9, 0.9, 0.9]);
+  assert.ok(reasonsFor(baseline, dominated).includes("pareto_dominated_by_baseline"));
+});
+
+test("a candidate better on every objective clears the Pareto gate", () => {
+  const baseline = score(0.90, 20, 200, [0.90, 0.90, 0.90, 0.90, 0.90]);
+  const better = score(0.95, 10, 100, [0.95, 0.95, 0.95, 0.95, 0.95]);
+  const reasons = reasonsFor(baseline, better);
+  assert.ok(!reasons.some((reason) => reason.startsWith("pareto_dominated")));
+  assert.deepEqual(reasons, []);
+});
+
+test("a trade is not domination: better accuracy at worse cost stays on the frontier", () => {
+  // Neither point dominates, so the Pareto gate stays silent and the existing
+  // cost rule is what decides. The frontier must not become a second, hidden
+  // cost gate.
+  const baseline = score(0.90, 10, 100, [0.90, 0.90, 0.90, 0.90, 0.90]);
+  const traded = score(0.95, 40, 400, [0.95, 0.95, 0.95, 0.95, 0.95]);
+  const reasons = reasonsFor(baseline, traded);
+  assert.ok(!reasons.some((reason) => reason.startsWith("pareto_dominated")));
+  assert.ok(reasons.includes("resource_cost_worsened"));
+});
+
+test("a non-finite objective throws rather than silently promoting", () => {
+  const baseline = score(0.9, 10, 100, [0.9, 0.9, 0.9, 0.9, 0.9]);
+  const broken = score(Number.NaN, 10, 100, [0.95, 0.95, 0.95, 0.95, 0.95]);
+  assert.throws(() => reasonsFor(baseline, broken), /non-finite/);
 });

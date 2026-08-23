@@ -28,6 +28,7 @@ OVERRIDE_SCHEMA = "research-override-v1.json"
 BASE_GATE_SCHEMA = "research-base-gate-v1.json"
 ATTESTATION_SUBJECT_SCHEMA = "research-attestation-subject-v1.json"
 EMBEDDING_IDENTITY_SCHEMA = "embedding-space-identity-v1.json"
+OPTIMIZATION_MANIFEST_SCHEMA = "optimization-manifest-v1.json"
 
 
 class SchemaValidationError(ValueError):

@@ -21,6 +21,7 @@ import {
 } from "./benchmark.js";
 import { aggregateReports, type BenchReport } from "./metrics.js";
 import { pairedBootstrapDecision } from "./statistics.js";
+import { admitToFrontier, type ParetoPoint } from "./pareto.js";
 import type { PromotionVetoProvider } from "./vetoes.js";
 import { writeResearchResults, type PairedObservation } from "./research.js";
 
@@ -54,9 +55,23 @@ interface RuvectorScore extends Score {
   recallAt10: number;
   qps: number;
   memoryMb: number;
+  p99Us: number;
   peakRssBytes: number;
   vetoReasons: string[];
   observations: BenchmarkObservation[];
+  /**
+   * Frontier the candidate must not be dominated by. Defaults to the incumbent
+   * baseline when a run has no wider frontier to hand.
+   */
+  frontier?: ParetoPoint[];
+}
+
+/** Objective vector for the in-repo Pareto gate (ADR-335). */
+function paretoPoint(id: string, score: RuvectorScore): ParetoPoint {
+  return {
+    id,
+    values: { primary: score.primary, costPerWin: score.costPerWin, p99Us: score.p99Us },
+  };
 }
 
 export interface RuvectorFlywheelOptions {
@@ -91,6 +106,18 @@ export function ruvectorPromotionRule(evidence: {
   if (candidate.regressed) reasons.push("hard_regression");
   reasons.push(...candidate.vetoReasons);
   if (evidence.anchor && evidence.anchor.candidate < evidence.anchor.baseline) reasons.push("anchor_regressed");
+  // In-repo Pareto gate (ADR-335): a candidate dominated on the objective
+  // vector cannot be promoted even when the paired test passes, because a
+  // scalar improvement bought with a strictly worse cost and latency profile
+  // is a trade rather than a win. Non-finite objectives throw here rather than
+  // comparing, since NaN defeats `<` in both directions.
+  const admission = admitToFrontier(
+    paretoPoint("candidate", candidate),
+    candidate.frontier ?? [paretoPoint("baseline", baseline)],
+  );
+  if (!admission.admitted) {
+    reasons.push(`pareto_dominated_by_${admission.dominatedBy.join("_")}`);
+  }
   return { promote: reasons.length === 0, reasons };
 }
 
@@ -147,6 +174,7 @@ async function toScore(
     recallAt10: aggregate.recallAt10,
     qps: aggregate.qps,
     memoryMb: aggregate.memoryMb,
+    p99Us: aggregate.p99Us,
     peakRssBytes: Math.max(...observations.map((observation) => observation.resources.processPeakRssBytes)),
     costPerWin: aggregate.memoryMb * Math.max(aggregate.p99Us, 1) / Math.max(aggregate.qps, 1),
     regressed: aggregate.regressions.length > 0 || vetoReasons.length > 0,

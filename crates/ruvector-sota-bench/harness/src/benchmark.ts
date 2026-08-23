@@ -78,12 +78,23 @@ function boundedInteger(policy: Record<string, string>, key: string, min: number
   return String(value);
 }
 
+/**
+ * The closed set of policy levers the native runner accepts.
+ *
+ * Exported so a declared optimization manifest (ADR-335) can be checked
+ * against the same list the runner enforces, rather than a second copy that
+ * could drift away from it.
+ */
+export const POLICY_LEVERS: readonly string[] = Object.freeze([
+  "ef_search", "m", "ef_construction", "k", "runner_set",
+]);
+
 export function normalizePolicy(policy: Record<string, string>): BenchmarkPolicy {
   const runnerSet = policy.runner_set ?? "core";
   if (runnerSet !== "core" && runnerSet !== "core-lsm" && runnerSet !== "all") {
     throw new Error("runner_set must be core, core-lsm, or all");
   }
-  const allowed = new Set(["ef_search", "m", "ef_construction", "k", "runner_set"]);
+  const allowed = new Set(POLICY_LEVERS);
   const unknown = Object.keys(policy).filter((key) => !allowed.has(key));
   if (unknown.length) throw new Error(`unsupported policy lever(s): ${unknown.join(", ")}`);
   return {
