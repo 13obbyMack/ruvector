@@ -99,6 +99,13 @@ impl MandatoryClass {
                 "admin",
                 "root",
                 "capability",
+                // Plain-ASCII privilege verbs that matched nothing until
+                // listed: `setcap` grants file capabilities, `chattr` sets
+                // immutable/append-only attributes, `impersonate` is the
+                // ordinary spelling of assuming another identity.
+                "setcap",
+                "chattr",
+                "impersonate",
             ],
             MandatoryClass::NetworkAccess => &[
                 "http", "https", "socket", "curl", "wget", "fetch", "request", "download",
@@ -147,6 +154,16 @@ impl MandatoryClass {
                 "revoke",
                 "terminate",
                 "kill",
+                // Plain-ASCII destructive commands. These are not obfuscation
+                // evasions -- they are the ordinary spelling, and each one
+                // classified as non-mandatory until it was listed here.
+                "unlink",
+                "shred",
+                "rmdir",
+                "wipefs",
+                "mkfs",
+                "dd if=",
+                "dd of=",
             ],
         }
     }
@@ -205,6 +222,41 @@ mod tests {
 
     fn subject(name: &str, description: &str, args: serde_json::Value) -> InspectionSubject {
         InspectionSubject::new(name, description, args)
+    }
+
+    #[test]
+    fn plain_ascii_destructive_and_privilege_verbs_are_recognised() {
+        // Each of these classified as NON-mandatory until it was added to the
+        // marker lists. They are not obfuscation evasions -- they are the
+        // ordinary spelling of the operation, which is what makes missing them
+        // worse than missing an encoded one. Regression test so a future edit
+        // to the marker arrays cannot quietly drop them again.
+        let destructive = [
+            "unlink",
+            "shred",
+            "rmdir",
+            "wipefs",
+            "mkfs",
+            "dd if=/dev/zero of=/dev/sda",
+        ];
+        for verb in destructive {
+            let c = classify(&subject(verb, "", json!({})));
+            assert!(
+                c.matched().contains(&MandatoryClass::DestructiveOperation),
+                "{verb} was not classified as destructive: {:?}",
+                c.matched()
+            );
+        }
+
+        let privilege = ["setcap", "chattr", "impersonate"];
+        for verb in privilege {
+            let c = classify(&subject(verb, "", json!({})));
+            assert!(
+                c.matched().contains(&MandatoryClass::PrivilegeEscalation),
+                "{verb} was not classified as privilege escalation: {:?}",
+                c.matched()
+            );
+        }
     }
 
     #[test]
