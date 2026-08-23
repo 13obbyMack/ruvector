@@ -25,6 +25,20 @@ async function fixture(): Promise<OptimizationManifest> {
 const SEEDS = { exploration: [2, 3, 5, 7, 11], confirmation: [13, 17, 19, 23, 29] };
 const COMMIT = "a".repeat(40);
 
+test("a declared runner_set the runner cannot effect is refused", async () => {
+  // Residue of the lever-range fix: POLICY_LEVER_RANGES covers only the
+  // integer levers, so the enum lever kept the exact defect that fix closed
+  // for the others -- a declaration normalizePolicy would refuse at spawn
+  // time, reading as authorized in the manifest.
+  const manifest = await fixture();
+  const lever = manifest.levers.find((l: { name: string }) => l.name === "runner_set");
+  assert.ok(lever, "fixture must declare the runner_set lever");
+  lever.values = ["bogus"];
+  assert.throws(() => assertOptimizationManifest(manifest), /unknown runner_set: bogus/);
+  lever.values = ["core", "all"];
+  assert.doesNotThrow(() => assertOptimizationManifest(manifest));
+});
+
 test("the shipped fixture manifest is accepted", async () => {
   const manifest = await loadOptimizationManifest(FIXTURE);
   assert.equal(manifest.repository, "ruvnet/ruvector");

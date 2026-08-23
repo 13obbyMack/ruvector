@@ -172,6 +172,18 @@ export function assertOptimizationManifest(value: unknown): asserts value is Opt
             );
           }
         }
+      } else {
+        // The enum lever. `POLICY_LEVER_RANGES` covers only the integer
+        // levers, so without this the same defect the range check closes for
+        // them stays open here: a declared `runner_set` the runner would
+        // refuse at spawn time reads as authorized.
+        for (const raw of values) {
+          if (!RUNNER_SETS.has(raw)) {
+            throw new Error(
+              `optimization manifest lever ${name} declares unknown runner_set: ${raw}`,
+            );
+          }
+        }
       }
     }
     if (lever.bounds !== undefined) {
