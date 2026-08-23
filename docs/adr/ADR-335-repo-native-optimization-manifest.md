@@ -3,7 +3,7 @@
 - **Status**: Proposed
 - **Date**: 2026-08-23
 - **Deciders**: RuV Perpetual Intelligence Runtime (PIR) Program
-- **Related**: ADR-282 (research-gate), ADR-306 (dream-machine consolidation), ADR-313 (SHAPER loop), ADR-324 (external-grounding veto); `crates/ruvector-sota-bench/harness/`; `schemas/research-manifest-v1.json`; `scripts/research-gate/`; see `docs/research/perpetual-intelligence-runtime/12-wave5-evidence-review.md` and `13-wave5-program-plan.md`
+- **Related**: ADR-282 (research-gate), ADR-306 (dream-machine consolidation), ADR-313 (SHAPER loop), ADR-324 (external-grounding veto); `crates/ruvector-sota-bench/harness/`; `schemas/research-manifest-v1.json`; `scripts/research-gate/`; **#920** (flywheel `hard_regression` gate stuck closed — field evidence for this ADR); see `docs/research/perpetual-intelligence-runtime/12-wave5-evidence-review.md` and `13-wave5-program-plan.md`
 - **Tags**: pir, wave-5, optimization, manifest, benchmark, darwin, research-gate
 
 ## Context
@@ -64,6 +64,23 @@ declared per repository.** Every element above is either hard-coded in
 TypeScript or specified per-experiment in
 `schemas/research-manifest-v1.json`. A second repository adopting this
 loop today would have to fork the harness.
+
+**Field evidence for why declaration matters — issue #920.** Running the
+Wave-5 acceptance test surfaced that the flywheel's `hard_regression` gate
+is **permanently stuck closed**: **120 of 120 candidates rejected across 30
+unattended generations**, including **30 candidates that were strictly
+better on primary, recall, qps *and* cost.** The cause is that the gate
+tests an **absolute threshold** rather than comparing against the
+baseline.
+
+This is the argument for this ADR made empirically rather than
+rhetorically. A hard-coded absolute is a value that was correct for one
+repository at one moment, frozen into TypeScript, silently wrong
+thereafter — and wrong in the direction that rejects genuine improvements
+without saying so. It is precisely the class of value that belongs in a
+per-repo declaration, where it is visible, versioned, and reviewable.
+Tracked separately as **#920**; the fix is not in scope here, but the
+manifest layer is what stops the next one recurring.
 
 **Second gap: the Pareto frontier is not ours.** `darwin.ts` passes
 `selection: "pareto"` to `evolve()` from the **external** npm package

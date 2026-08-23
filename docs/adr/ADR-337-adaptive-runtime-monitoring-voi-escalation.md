@@ -3,7 +3,7 @@
 - **Status**: Proposed
 - **Date**: 2026-08-23
 - **Deciders**: RuV Perpetual Intelligence Runtime (PIR) Program
-- **Related**: ADR-331 (PIR — VoI cost-aware routing; **consumed as-is, not reimplemented**); ADR-317 (PIR — HarnessRisk lifecycle-security gate); `crates/ruvector-tiny-dancer-core/src/voi.rs`; `crates/mcp-gate/`; see `docs/research/perpetual-intelligence-runtime/12-wave5-evidence-review.md` and `13-wave5-program-plan.md`
+- **Related**: ADR-331 (PIR — VoI cost-aware routing; **consumed as-is, not reimplemented**); ADR-317 (PIR — HarnessRisk lifecycle-security gate); `crates/ruvector-tiny-dancer-core/src/voi.rs`; `crates/mcp-gate/`; WP33 audit **#919** (the measured evidence and the four corrections recorded below); **#921** (dependency-closure extraction, gates deployment); see `docs/research/perpetual-intelligence-runtime/12-wave5-evidence-review.md` and `13-wave5-program-plan.md`
 - **Tags**: pir, wave-5, monitoring, voi, escalation, mcp-gate, security
 
 ## Context
@@ -94,11 +94,14 @@ Build an escalation ladder in `crates/mcp-gate/` that **consumes**
    **discretionary** investigation only. This is the monitoring analog of
    ADR-331's escalate-only invariant: the failure direction is
    conservative by construction.
-4. **Cost target, stated as a target and not as a claim**: under 5%
-   average monitoring overhead, measured against a real unmonitored
-   baseline on the identical path, with downgrade-only accounting — a
-   skipped inspection may never be scored as a cheap inspection. Until
-   measured, the figure is a design goal.
+4. **Cost target, stated as a target and — as of the WP33 audit —
+   explicitly NOT a guarantee**: under 5% average monitoring overhead,
+   measured against a real unmonitored baseline on the identical path,
+   with downgrade-only accounting (a skipped inspection may never be
+   scored as a cheap inspection). **Nothing in the implementation enforces
+   this bound.** See "Measured overhead" below for the two numbers and
+   "The <5% target is unenforced" for why the honest configuration is
+   currently hard to reach.
 5. **Four binding caveats inherited from the primitive**, each recorded in
    `voi.rs` and each a real failure mode here:
    - **Every rung must have `cost > 0`, or the caller must cap rounds.**
@@ -127,6 +130,98 @@ Build an escalation ladder in `crates/mcp-gate/` that **consumes**
    `ruvnet/midstream`. This ADR covers request- and tool-call-level
    monitoring at the `mcp-gate` boundary.
 
+## Implementation status and measured evidence (WP33 audit, issue #919)
+
+This section records what the WP33 audit actually established, and — more
+importantly — what it did **not**. Four of the items below are corrections
+to claims that would otherwise have travelled downstream as facts.
+
+### The enforcement guarantee held under brute force
+
+The mandatory-inspection floor (Decision §3) was attacked exhaustively
+rather than sampled: **24,300 constructible configurations × 5 mandatory
+operations = 121,500 checks, with ZERO bypasses.** Verified clean
+alongside it: the forced purchase, classification-before-detection
+ordering, union-not-first-match classification, `#[must_use]` on the
+outcome type, the `cost > 0` requirement paired with an independent round
+cap, the oracle exit and its non-finite guard, and unit-range rescaling.
+
+**This is the acceptance evidence for the enforcement claim**, and it is
+strong. Every caveat below concerns measurement, calibration, deployment,
+or recognition — none of them weakens it.
+
+### Measured overhead — two numbers, and only one of them is the target's
+
+| Measurement | Overhead | What it measures |
+|---|---|---|
+| Instant-return investigator fixture | **0.06%** | The ladder's *own* cost. Accounting genuinely wraps classification, detection, the VoI decision, investigation, and observation |
+| Investigators that sleep their declared latency (5 ms cheap rung, 200 ms strong rung — modest for real verifiers) | **14.8%** | Roughly **3× the <5% target** |
+
+**The 0.06% figure must never appear without this caveat.** It is honest
+for what it measures and the accounting behind it is sound — but it is not
+the number the <5% target is about. Quoting it alone would describe a
+ladder whose investigators cost nothing, which is not a ladder anyone
+would deploy.
+
+### The <5% target is unenforced
+
+`latency_price` defaults to `0.0`, so **a rung declaring ten seconds of
+latency costs exactly what a 0 µs rung costs.** Only `max_rounds` bounds
+wall-clock cost, and it bounds *count*, not *duration*.
+
+Worse, the honest configuration is currently hard to reach: pricing
+latency at a plausible $1/second causes **the shipped reference ladder to
+be REFUSED at construction as miscalibrated.** So the two available states
+today are "latency is free" or "the reference ladder will not build." That
+is a real gap, not a tuning note, and the target must not be described as
+a guarantee until it closes.
+
+### "100% inspection of mandatory classes" is not currently a checkable metric
+
+**The enforcement is airtight; the measurement of it is not.**
+`mandatory_inspections` counts inspections **with no denominator** — there
+is no counter for mandatory operations *seen*. A run of 200 operations
+each matching all five mandatory classes reported
+`mandatory_inspections = 0`. That behaviour is **correct** (they halted
+fail-closed before reaching a purchase), but the resulting counter is
+**indistinguishable from a ladder that silently stopped classifying**.
+
+Until a seen-counter exists, "100% inspection" is a property of the code
+established by the 121,500-check sweep, **not** a figure any deployment can
+report from its own telemetry.
+
+### The module is not wired into the gate's request path
+
+`monitor` is not referenced from `server.rs`, `tools.rs`, `main.rs`, or
+`types.rs`. **It is a library module with no call site.** Nobody should
+read "mcp-gate inspects mandatory classes at 100%" as a statement about
+the running gate — today it is a statement about a module the running gate
+does not call.
+
+### The recognition gap does not close by swapping the detector
+
+This is the caveat most likely to be misread, so it is stated flatly: the
+mandatory guarantee is airtight in **enforcement** and entirely dependent
+on **recognition** — and recognition lives in **`classes.rs`'s own marker
+list**, not in `KeywordDetector`. Replacing the detector with a better one
+does not fix it.
+
+Concretely, the plain-ASCII verbs `unlink`, `shred`, `rmdir`, `wipefs`,
+`mkfs`, and `dd` currently match nothing (being fixed). Obfuscation
+evasions remain an acknowledged, open gap. An operation the marker list
+does not recognise is not a mandatory operation as far as the floor is
+concerned — however good the detector in front of it.
+
+### Dependency-closure gap — issue #921, and it gates deployment
+
+`mcp-gate` currently pulls **42 crates** into a *security gate's*
+dependency closure — including bundled SQLite, `ndarray`, and
+`safetensors` — **solely to reuse six pure-math items from `voi.rs`.**
+Extraction into a leaf crate is tracked as **#921** and **should land
+before the ladder is wired into the real request path.** Consuming the
+primitive rather than forking it (Decision §2) remains correct; the
+current packaging of that consumption is not.
+
 ## Consequences
 
 ### Positive
@@ -138,7 +233,8 @@ Build an escalation ladder in `crates/mcp-gate/` that **consumes**
   escalation, so the two cannot drift into divergent cost heuristics.
 - The unconditional floor means the economically-cheapest configuration is
   still safe on the operations that matter, which is what makes an
-  adaptive budget defensible at all.
+  adaptive budget defensible at all. **This is now evidenced, not
+  asserted**: 121,500 exhaustive checks, zero bypasses.
 
 ### Negative
 
@@ -146,13 +242,32 @@ Build an escalation ladder in `crates/mcp-gate/` that **consumes**
   fail open.** Every one of the four caveats above is a way to
   accidentally build a never-investigate switch. The unconditional floor
   is the backstop, and it is why the floor is not negotiable.
-- The "under 5%" target is unvalidated. It is materially below OpenAI's
-  ~20%, but their denominator is a deliberately narrow high-risk slice
-  while ours would be broader — the two numbers are **not comparable**,
-  and this ADR does not claim to beat theirs.
+- **The "under 5%" target is unvalidated *and* unenforced.** Measured at
+  0.06% with an instant-return fixture and **14.8% — roughly 3× target —
+  with investigators that sleep their declared latency**. `latency_price`
+  defaults to 0.0, so declared latency is free; pricing it honestly
+  refuses the reference ladder at construction. It is materially below
+  OpenAI's ~20%, but their denominator is a deliberately narrow high-risk
+  slice while ours would be broader — the two numbers are **not
+  comparable**, and this ADR does not claim to beat theirs.
+- **The enforcement guarantee is not self-reportable.**
+  `mandatory_inspections` has no denominator, so a deployment cannot
+  distinguish "nothing mandatory occurred" from "classification silently
+  stopped". The property is established by the code sweep, not by
+  telemetry.
+- **Nothing is deployed.** `monitor` has no call site in the gate's
+  request path, so none of the above currently describes the running
+  system.
+- **Recognition, not detection, is the ceiling.** The marker list in
+  `classes.rs` decides what counts as mandatory; a better detector in
+  front of it changes nothing. Plain-ASCII destructive verbs currently
+  match nothing (being fixed), and obfuscation evasions are open.
 - Risk-score calibration is the whole ballgame and is unsolved here. A
   miscalibrated detector makes every downstream purchase decision wrong in
   the same direction.
+- **The dependency closure is wrong for a security gate** — 42 crates
+  including bundled SQLite, `ndarray`, and `safetensors`, to reuse six
+  pure-math items. Tracked as #921.
 
 ## Security / Validation Gates
 
@@ -161,7 +276,31 @@ Build an escalation ladder in `crates/mcp-gate/` that **consumes**
   destructive operations are inspected regardless of VoI output.
   Regression-tested by configuring an economics that would suppress all
   discretionary investigation and asserting the five classes are still
-  inspected.
+  inspected. **Status: verified clean** — 24,300 configurations × 5
+  mandatory operations = 121,500 checks, zero bypasses (WP33 audit, #919),
+  along with the forced purchase, classification-before-detection
+  ordering, union-not-first-match classification, `#[must_use]` outcome,
+  the `cost > 0` + round-cap pair, the oracle exit and its non-finite
+  guard, and unit-range rescaling.
+- **Recognition coverage is a separate gate from enforcement** (open) —
+  the floor protects what `classes.rs`'s marker list recognises. Missing
+  plain-ASCII verbs (`unlink`, `shred`, `rmdir`, `wipefs`, `mkfs`, `dd`)
+  are being fixed; obfuscation evasion is open. **A better detector does
+  not close this** — the gap is in the marker list, not the detector.
+- **A mandatory-operations-seen counter is required before "100%
+  inspection" may be reported from telemetry** (open) —
+  `mandatory_inspections` currently has no denominator, so zero is
+  ambiguous between "none occurred" and "classification stopped".
+  Enforcement is airtight; the metric is not yet checkable.
+- **Latency must be priced before the <5% target may be described as
+  enforced** (open) — `latency_price` defaults to 0.0, and pricing it
+  honestly refuses the reference ladder at construction. Until both are
+  resolved, <5% is a design goal with a measured 14.8% counterexample
+  under realistic investigator latency.
+- **#921 (dependency-closure extraction) should land before the ladder is
+  wired into the real request path** — a security gate should not carry
+  bundled SQLite, `ndarray`, and `safetensors` to reuse six pure-math
+  items.
 - **Termination** (blocking, Decision §5) — every rung `cost > 0` or an
   explicit round cap, validated at ladder construction, not at first use.
 - **Oracle rungs exit the protocol** (blocking) — a `noise_std == 0`
@@ -182,6 +321,9 @@ Build an escalation ladder in `crates/mcp-gate/` that **consumes**
 
 - `ruvnet/ruvector` — `crates/mcp-gate/` (detector, ladder, accounting).
   Consumes `crates/ruvector-tiny-dancer-core/src/voi.rs` unchanged.
+  **Deployment status: not wired.** `monitor` has no call site in
+  `server.rs`, `tools.rs`, `main.rs`, or `types.rs` — it is a library
+  module the running gate does not call. #921 should land first.
 - `ruvnet/midstream` — token-level stream inspection, **out of scope this
   wave**, recorded so the boundary is explicit.
 
