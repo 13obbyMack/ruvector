@@ -3,7 +3,7 @@
 - **Status**: Proposed
 - **Date**: 2026-08-23
 - **Deciders**: RuV Perpetual Intelligence Runtime (PIR) Program
-- **Related**: ADR-331 (PIR — VoI cost-aware routing; **consumed as-is, not reimplemented**); ADR-317 (PIR — HarnessRisk lifecycle-security gate); `crates/ruvector-tiny-dancer-core/src/voi.rs`; `crates/mcp-gate/`; WP33 audit **#919** (the measured evidence and the four corrections recorded below); **#921** (dependency-closure extraction, gates deployment); see `docs/research/perpetual-intelligence-runtime/12-wave5-evidence-review.md` and `13-wave5-program-plan.md`
+- **Related**: ADR-331 (PIR — VoI cost-aware routing; **consumed as-is, not reimplemented**); ADR-317 (PIR — HarnessRisk lifecycle-security gate); `crates/ruvector-tiny-dancer-core/src/voi.rs`; `crates/mcp-gate/`; WP33 audit **#919** (the measured evidence and corrections recorded below; fixes at `5d81fb1`); **#921** (dependency-closure extraction, gates deployment); see `docs/research/perpetual-intelligence-runtime/12-wave5-evidence-review.md` and `13-wave5-program-plan.md`
 - **Tags**: pir, wave-5, monitoring, voi, escalation, mcp-gate, security
 
 ## Context
@@ -99,9 +99,10 @@ Build an escalation ladder in `crates/mcp-gate/` that **consumes**
    measured against a real unmonitored baseline on the identical path,
    with downgrade-only accounting (a skipped inspection may never be
    scored as a cheap inspection). **Nothing in the implementation enforces
-   this bound.** See "Measured overhead" below for the two numbers and
-   "The <5% target is unenforced" for why the honest configuration is
-   currently hard to reach.
+   this bound**, and — measured — **whether it is met is a property of the
+   investigators rather than of the economics.** See "Measured overhead"
+   and "Whether <5% is met depends on the investigators" below. `max_rounds`
+   is the only hard bound on wall-clock cost.
 5. **Four binding caveats inherited from the primitive**, each recorded in
    `voi.rs` and each a real failure mode here:
    - **Every rung must have `cost > 0`, or the caller must cap rounds.**
@@ -150,6 +151,21 @@ cap, the oracle exit and its non-finite guard, and unit-range rescaling.
 strong. Every caveat below concerns measurement, calibration, deployment,
 or recognition — none of them weakens it.
 
+### Audit findings fixed at `5d81fb1`
+
+The calibration guard now takes uncertainty from
+`TinyDetector::expected_uncertainty()` rather than an operator
+declaration, and the ceiling calls `voi_upper_bound` instead of
+recomputing with σ — so the two places that could disagree about the same
+quantity now cannot. `Classification` no longer derives `Default` (a
+default classification is a silently-empty one). Coverage gained a
+denominator. Six plain-ASCII destructive verbs were added. `record_rung`
+moved ahead of validation, and `rung_is_purchasable` validates.
+
+Tests: **41 lib + 24 integration**, clippy and fmt clean. **All seven
+negative checks bit** — each fix was verified to fail before it was
+applied.
+
 ### Measured overhead — two numbers, and only one of them is the target's
 
 | Measurement | Overhead | What it measures |
@@ -163,32 +179,53 @@ the number the <5% target is about. Quoting it alone would describe a
 ladder whose investigators cost nothing, which is not a ladder anyone
 would deploy.
 
-### The <5% target is unenforced
+### Whether <5% is met depends on the investigators, not on the ladder's economics
 
-`latency_price` defaults to `0.0`, so **a rung declaring ten seconds of
-latency costs exactly what a 0 µs rung costs.** Only `max_rounds` bounds
-wall-clock cost, and it bounds *count*, not *duration*.
+An earlier revision of this ADR said the target was unenforced *because*
+`latency_price` defaults to `0.0` — which implied that pricing latency
+would enforce it. **That implication was implemented, measured, and
+disproved.** The corrected reasoning:
 
-Worse, the honest configuration is currently hard to reach: pricing
-latency at a plausible $1/second causes **the shipped reference ladder to
-be REFUSED at construction as miscalibrated.** So the two available states
-today are "latency is free" or "the reference ladder will not build." That
-is a real gap, not a tuning note, and the target must not be described as
-a guarantee until it closes.
+| Case | Overhead | Rungs |
+|---|---|---|
+| Investigator **resolves** the ambiguity (posterior 0.2) | **2.6%** | 20 |
+| Investigator **leaves it ambiguous** (0.5), latency priced | **108%** | 80 |
+| Same, latency unpriced | **205%** | 80 |
 
-### "100% inspection of mandatory classes" is not currently a checkable metric
+**The limiter is the belief update, not the price.** When the first rung
+settles the question, VoI collapses and the ladder stops — 2.6%,
+comfortably inside target. When it does not, the belief sits at the
+escalation threshold, every further rung still looks worth buying, and the
+ladder spends `max_rounds` on **every** operation. Pricing latency roughly
+halves overhead by shifting the *mix* toward cheaper rungs; it does not
+reduce the *count*.
 
-**The enforcement is airtight; the measurement of it is not.**
-`mandatory_inspections` counts inspections **with no denominator** — there
-is no counter for mandatory operations *seen*. A run of 200 operations
-each matching all five mandatory classes reported
-`mandatory_inspections = 0`. That behaviour is **correct** (they halted
-fail-closed before reaching a purchase), but the resulting counter is
-**indistinguishable from a ladder that silently stopped classifying**.
+So the honest statement is:
 
-Until a seen-counter exists, "100% inspection" is a property of the code
-established by the 121,500-check sweep, **not** a figure any deployment can
-report from its own telemetry.
+- **`max_rounds` is the only hard bound on wall-clock monitoring cost.**
+  Four rounds of a 200 ms rung against a 20 ms workload is 40× the budget
+  by itself, before any economics are consulted.
+- **Whether <5% is met is a property of the investigators** — specifically
+  whether they actually resolve ambiguity — **not of the ladder's
+  economics.** An investigator that returns "maybe" is not a cheaper
+  investigator; it is an unbounded one.
+
+The 108% and 205% figures are the realistic bad case and are far outside
+target. They, not the 0.06%, are what a reader needs in order to size
+this.
+
+### "100% inspection of mandatory classes" — now measurable (fixed at `5d81fb1`)
+
+**The enforcement was always airtight; the measurement of it was not.**
+`mandatory_inspections` counted inspections **with no denominator**, so a
+run of 200 operations each matching all five mandatory classes reported
+`mandatory_inspections = 0` — correct behaviour, since they halted
+fail-closed before reaching a purchase, but **indistinguishable from a
+ladder that had silently stopped classifying**.
+
+**Coverage now has a denominator**, so the distinction between "nothing
+mandatory occurred" and "classification stopped" is reportable from
+telemetry rather than inferable only from the 121,500-check sweep.
 
 ### The module is not wired into the gate's request path
 
@@ -207,10 +244,11 @@ list**, not in `KeywordDetector`. Replacing the detector with a better one
 does not fix it.
 
 Concretely, the plain-ASCII verbs `unlink`, `shred`, `rmdir`, `wipefs`,
-`mkfs`, and `dd` currently match nothing (being fixed). Obfuscation
-evasions remain an acknowledged, open gap. An operation the marker list
-does not recognise is not a mandatory operation as far as the floor is
-concerned — however good the detector in front of it.
+`mkfs`, and `dd` matched nothing; **all six were added at `5d81fb1`.**
+**Obfuscation evasions remain an acknowledged, open gap**, and closing
+them is a marker-list problem, not a detector problem. An operation the
+marker list does not recognise is not a mandatory operation as far as the
+floor is concerned — however good the detector in front of it.
 
 ### Dependency-closure gap — issue #921, and it gates deployment
 
@@ -242,19 +280,32 @@ current packaging of that consumption is not.
   fail open.** Every one of the four caveats above is a way to
   accidentally build a never-investigate switch. The unconditional floor
   is the backstop, and it is why the floor is not negotiable.
-- **The "under 5%" target is unvalidated *and* unenforced.** Measured at
-  0.06% with an instant-return fixture and **14.8% — roughly 3× target —
-  with investigators that sleep their declared latency**. `latency_price`
-  defaults to 0.0, so declared latency is free; pricing it honestly
-  refuses the reference ladder at construction. It is materially below
-  OpenAI's ~20%, but their denominator is a deliberately narrow high-risk
-  slice while ours would be broader — the two numbers are **not
-  comparable**, and this ADR does not claim to beat theirs.
-- **The enforcement guarantee is not self-reportable.**
-  `mandatory_inspections` has no denominator, so a deployment cannot
-  distinguish "nothing mandatory occurred" from "classification silently
-  stopped". The property is established by the code sweep, not by
-  telemetry.
+- **The "under 5%" target is met or missed by the investigators, not by
+  the economics.** 2.6% when the first rung resolves the ambiguity; **108%
+  when it does not, and 205% with latency unpriced** — the ladder spends
+  `max_rounds` on every operation because the belief never leaves the
+  escalation threshold. `max_rounds` is the only hard bound on wall-clock
+  cost. The target is materially below OpenAI's ~20%, but their
+  denominator is a deliberately narrow high-risk slice while ours would be
+  broader — the two numbers are **not comparable**, and this ADR does not
+  claim to beat theirs.
+- **An investigator that returns "maybe" is not a cheaper investigator; it
+  is an unbounded one.** This is the single most important operational
+  property of the design and it is not visible from the ladder's
+  configuration.
+- **A mitigation's reasoning survived implementation only until it was
+  measured — for the second time this wave.** Pricing latency was proposed
+  as the fix for unbounded cost; implementing it halved overhead by
+  shifting the rung *mix* while leaving the rung *count* untouched, so the
+  bad case stayed catastrophic (205% → 108%, against a 5% target). The
+  Wave-4 precedent is #902's inode identity check, which was necessary but
+  not sufficient — it correctly refused to publish a foreign inode, but
+  the harm had already landed earlier in the sequence. **In both cases the
+  proposed mitigation was real and the reasoning behind it was wrong**, and
+  in both cases only building and measuring it exposed the difference.
+  Recording the pattern is more useful than recording either conclusion:
+  a mitigation that is plausible, correct in isolation, and aimed at the
+  wrong quantity will pass review and fail in production.
 - **Nothing is deployed.** `monitor` has no call site in the gate's
   request path, so none of the above currently describes the running
   system.
@@ -282,21 +333,24 @@ current packaging of that consumption is not.
   ordering, union-not-first-match classification, `#[must_use]` outcome,
   the `cost > 0` + round-cap pair, the oracle exit and its non-finite
   guard, and unit-range rescaling.
-- **Recognition coverage is a separate gate from enforcement** (open) —
-  the floor protects what `classes.rs`'s marker list recognises. Missing
-  plain-ASCII verbs (`unlink`, `shred`, `rmdir`, `wipefs`, `mkfs`, `dd`)
-  are being fixed; obfuscation evasion is open. **A better detector does
-  not close this** — the gap is in the marker list, not the detector.
-- **A mandatory-operations-seen counter is required before "100%
-  inspection" may be reported from telemetry** (open) —
-  `mandatory_inspections` currently has no denominator, so zero is
-  ambiguous between "none occurred" and "classification stopped".
-  Enforcement is airtight; the metric is not yet checkable.
-- **Latency must be priced before the <5% target may be described as
-  enforced** (open) — `latency_price` defaults to 0.0, and pricing it
-  honestly refuses the reference ladder at construction. Until both are
-  resolved, <5% is a design goal with a measured 14.8% counterexample
-  under realistic investigator latency.
+- **Recognition coverage is a separate gate from enforcement** (partially
+  closed) — the floor protects what `classes.rs`'s marker list recognises.
+  The six missing plain-ASCII verbs were added at `5d81fb1`;
+  **obfuscation evasion remains open**. **A better detector does not close
+  this** — the gap is in the marker list, not the detector.
+- **Coverage denominator** (closed at `5d81fb1`) — coverage now has a
+  denominator, so "nothing mandatory occurred" is distinguishable from
+  "classification stopped" in telemetry.
+- **Investigators must resolve ambiguity, and this must be verified per
+  investigator** (open, and it replaces the earlier latency-pricing gate)
+  — an investigator whose posterior leaves the belief at the escalation
+  threshold makes the ladder spend `max_rounds` on every operation: 108%
+  overhead priced, 205% unpriced, against a 5% target. **Pricing latency
+  does not fix this** (measured: it shifts the rung mix, not the rung
+  count). Until a ladder's investigators are shown to resolve, `max_rounds`
+  is the only thing bounding wall-clock cost, and it must be set against
+  the workload's own latency — four rounds of a 200 ms rung against a
+  20 ms workload is 40× budget by itself.
 - **#921 (dependency-closure extraction) should land before the ladder is
   wired into the real request path** — a security gate should not carry
   bundled SQLite, `ndarray`, and `safetensors` to reuse six pure-math
