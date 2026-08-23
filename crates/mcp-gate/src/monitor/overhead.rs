@@ -21,6 +21,21 @@
 //! overhead figure cannot be improved by quietly narrowing the mandatory set:
 //! declassifying a class shows up immediately as `mandatory_inspections`
 //! falling while throughput is unchanged. The ratio alone would hide that.
+//!
+//! A count with no denominator cannot support a coverage claim, though.
+//! `mandatory_inspections = 0` is what a ladder reports when it saw no
+//! mandatory operations *and* what it reports when it stopped classifying
+//! them — indistinguishable without knowing how many it saw. So
+//! `mandatory_operations_seen` is recorded at classification time, before any
+//! decision can divert the operation, and
+//! [`OverheadAccount::mandatory_coverage`] is the ratio that actually means
+//! "100% of mandatory operations were inspected".
+//!
+//! Note the two are legitimately unequal when an operation halts *before*
+//! reaching an investigator — a critical detector score, or a failure on any
+//! fail-closed path. Those operations were stopped, not skipped, which is the
+//! stronger outcome; coverage below 1.0 therefore wants reading alongside
+//! [`OverheadAccount::halts`] rather than alone.
 
 /// Running totals for one ladder's monitoring activity.
 ///
@@ -33,6 +48,7 @@ pub struct OverheadAccount {
     monitoring_us: u128,
     operations: u64,
     inspections: u64,
+    mandatory_operations_seen: u64,
     mandatory_inspections: u64,
     rungs_purchased: u64,
     halts: u64,
@@ -53,6 +69,14 @@ impl OverheadAccount {
     /// Record time spent deciding and investigating.
     pub(crate) fn record_monitoring(&mut self, micros: u128) {
         self.monitoring_us = self.monitoring_us.saturating_add(micros);
+    }
+
+    /// Record that an operation was classified into at least one mandatory
+    /// class. Called immediately after classification, before any decision
+    /// can divert the operation, so it is the honest denominator for
+    /// [`Self::mandatory_coverage`].
+    pub(crate) fn record_mandatory_seen(&mut self) {
+        self.mandatory_operations_seen = self.mandatory_operations_seen.saturating_add(1);
     }
 
     /// Record that an operation was inspected, and whether it was inspected
@@ -109,10 +133,32 @@ impl OverheadAccount {
 
     /// Inspections that a mandatory class compelled.
     ///
-    /// Read alongside [`Self::inspections`]: a drop here without a
-    /// corresponding drop in workload means the mandatory set was narrowed.
+    /// Read alongside [`Self::mandatory_operations_seen`]: this count alone
+    /// cannot distinguish "no mandatory operations arrived" from "mandatory
+    /// operations stopped being recognised".
     pub fn mandatory_inspections(&self) -> u64 {
         self.mandatory_inspections
+    }
+
+    /// Operations that classification placed in at least one mandatory class.
+    pub fn mandatory_operations_seen(&self) -> u64 {
+        self.mandatory_operations_seen
+    }
+
+    /// Fraction of mandatory operations that reached an investigator.
+    ///
+    /// `None` when none were seen — not `1.0`, which would report perfect
+    /// coverage for a ladder that has never classified anything.
+    ///
+    /// Below 1.0 does not necessarily mean an operation slipped through: an
+    /// operation halted before reaching a rung (critical detector score, or
+    /// any fail-closed path) counts in the denominator but not the numerator.
+    /// Read with [`Self::halts`].
+    pub fn mandatory_coverage(&self) -> Option<f64> {
+        if self.mandatory_operations_seen == 0 {
+            return None;
+        }
+        Some(self.mandatory_inspections as f64 / self.mandatory_operations_seen as f64)
     }
 
     /// Investigator rungs purchased across all operations.
@@ -163,5 +209,32 @@ mod tests {
         a.record_inspection(false);
         assert_eq!(a.inspections(), 3);
         assert_eq!(a.mandatory_inspections(), 1);
+    }
+
+    #[test]
+    fn coverage_needs_a_denominator_and_reports_none_without_one() {
+        let mut a = OverheadAccount::new();
+        // Zero inspections and zero seen is not 100% coverage.
+        assert_eq!(a.mandatory_coverage(), None);
+        a.record_mandatory_seen();
+        a.record_mandatory_seen();
+        a.record_inspection(true);
+        assert_eq!(a.mandatory_coverage(), Some(0.5));
+        a.record_inspection(true);
+        assert_eq!(a.mandatory_coverage(), Some(1.0));
+    }
+
+    #[test]
+    fn a_ladder_that_stopped_classifying_is_distinguishable_from_a_quiet_one() {
+        // The failure MEDIUM-5 identified: both of these report
+        // mandatory_inspections == 0, and only the denominator tells them
+        // apart.
+        let quiet = OverheadAccount::new();
+        let mut stopped_classifying = OverheadAccount::new();
+        stopped_classifying.record_mandatory_seen();
+        assert_eq!(quiet.mandatory_inspections(), 0);
+        assert_eq!(stopped_classifying.mandatory_inspections(), 0);
+        assert_eq!(quiet.mandatory_coverage(), None);
+        assert_eq!(stopped_classifying.mandatory_coverage(), Some(0.0));
     }
 }

@@ -128,6 +128,24 @@ pub trait TinyDetector {
     /// Score an operation. Returning `Err` is treated as *fail closed* by the
     /// ladder: an unscoreable operation is escalated or halted, never allowed.
     fn score(&self, subject: &InspectionSubject) -> Result<RiskSignal, MonitorError>;
+
+    /// The uncertainty this detector actually reports from [`Self::score`],
+    /// in `(0, 1]`.
+    ///
+    /// The ladder's construction-time calibration check needs to know how
+    /// much uncertainty there is for an investigator to resolve, because
+    /// that bounds what any rung can be worth. This is a trait method rather
+    /// than a configuration field on purpose: an operator-declared figure is
+    /// free to diverge from what the detector really produces, and a
+    /// *larger* declared value inflates the ceiling and makes the guard more
+    /// permissive — so the one field that exists to catch a never-escalate
+    /// ladder could be used to wave one through. Deriving it from the
+    /// detector removes the divergence rather than bounding it.
+    ///
+    /// A detector whose uncertainty varies per input should report the
+    /// **largest** value it can return, since that is the most permissive
+    /// ceiling it could honestly justify.
+    fn expected_uncertainty(&self) -> f64;
 }
 
 /// A trivial substring-matching detector.
@@ -226,6 +244,12 @@ impl TinyDetector for KeywordDetector {
             .count();
         let risk = (hits as f64 / self.saturation as f64).min(1.0);
         RiskSignal::new(risk, self.uncertainty)
+    }
+
+    /// This detector reports one fixed uncertainty from every `score`, so the
+    /// value it declares here is exactly the value it produces.
+    fn expected_uncertainty(&self) -> f64 {
+        self.uncertainty
     }
 }
 

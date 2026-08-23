@@ -54,41 +54,50 @@ pub struct MonitorConfig {
     pub halt_risk: f64,
     /// Hard cap on investigator purchases per operation. Bounds the loop
     /// independently of the economics.
+    ///
+    /// With [`VoiConfig::latency_price`] at zero this is the **only** thing
+    /// bounding an operation's wall-clock monitoring cost, because a rung
+    /// declaring ten seconds of latency then costs exactly what an instant
+    /// rung costs. Price latency if the overhead budget is meant to be
+    /// enforced economically rather than merely capped.
     pub max_rounds: usize,
-    /// Uncertainty the detector typically reports. Used **only** to verify at
-    /// construction that the cheapest rung is purchasable in principle.
-    pub expected_uncertainty: f64,
 }
 
 impl Default for MonitorConfig {
-    /// Defaults calibrated against the reference two-rung ladder (a $0.01
-    /// verifier at σ=0.15 and a $0.50 investigator at σ=0.05) so that both
-    /// failure modes are avoided.
+    /// Defaults calibrated against the reference two-rung ladder (a $0.01 /
+    /// 5 ms verifier at σ=0.15 and a $0.50 / 200 ms investigator at σ=0.05)
+    /// so that both calibration failure modes are avoided.
     ///
     /// `value_of_success` is bounded on *both* sides, and the window is
     /// narrower than it looks. Too low and nothing is ever purchasable
     /// ([`MonitorError::Miscalibrated`] catches that at construction). Too
     /// high and every operation is worth investigating, including zero-risk
     /// ones — which silently blows the overhead budget while looking
-    /// perfectly configured, and which construction *cannot* catch because
-    /// such a ladder is well-formed. For this ladder the usable window is
-    /// roughly `(0.16, 263)`: at 100 a zero-risk operation is not worth
-    /// investigating (`100 × 3.8e-5 < $0.01`) while an operation sitting at
-    /// the escalation threshold is (`100 × 0.064 > $0.01`).
+    /// perfectly configured, and which construction *cannot* catch, because
+    /// such a ladder is well-formed. At 100 a zero-risk operation is not
+    /// worth investigating while one sitting at the escalation threshold is.
     ///
-    /// Re-derive this when the rungs or the detector's uncertainty change;
-    /// [`rung_is_purchasable`] answers it directly for a given belief.
+    /// `latency_price` defaults to `1e-6`, i.e. **one dollar per second** of
+    /// added latency. A zero default would make the wall-clock cost of a rung
+    /// economically invisible: a ten-second investigator would price
+    /// identically to an instant one, and only [`Self::max_rounds`] would
+    /// bound the damage. Pricing latency is what lets the ladder trade
+    /// against an overhead budget at all.
+    ///
+    /// Re-derive these when the rungs or the detector's uncertainty change;
+    /// [`rung_is_purchasable`](crate::monitor::rung_is_purchasable) answers
+    /// the question directly for a given belief.
     fn default() -> Self {
         Self {
             voi: VoiConfig {
                 // Currency value of catching one violation.
                 value_of_success: 100.0,
-                latency_price: 0.0,
+                // $1 per second of added latency.
+                latency_price: 1e-6,
             },
             escalation_threshold: 0.5,
             halt_risk: 0.95,
             max_rounds: 4,
-            expected_uncertainty: 0.2,
         }
     }
 }

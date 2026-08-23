@@ -14,19 +14,29 @@
 //!
 //! - [`MandatoryClass`] is a closed enum. There is no "custom class" arm and
 //!   no registry, so the set cannot be narrowed by adding configuration.
-//! - [`Classification`] has a private field and **no public constructor**.
-//!   The only way to obtain one is [`classify`], which is `pub(crate)`. A
-//!   caller cannot hand the ladder a forged empty classification, and the
-//!   ladder does not accept one as a parameter — it calls [`classify`]
+//! - [`Classification`] has a private field, **no public constructor**, and
+//!   deliberately does **not** derive `Default` — a derived `Default` would
+//!   hand any external crate a `Classification` reporting "in no mandatory
+//!   class", which is precisely the forgery this is meant to prevent. The
+//!   only way to obtain one is [`classify`], which is `pub(crate)`. The
+//!   ladder also does not accept one as a parameter: it calls [`classify`]
 //!   itself on the subject it was given.
 //! - No type in [`crate::monitor`] carries a per-class enable/disable flag,
 //!   an allowlist, or a bypass token. There is nothing to set.
 //!
 //! The remaining honest gap is *recognition*, not *enforcement*: an operation
 //! this module fails to recognise as belonging to a class is not inspected as
-//! one. That is a detector-quality problem (see [`crate::monitor::detector`]),
-//! and it is why the matchers below are deliberately broad — a false positive
-//! costs one inspection, a false negative costs the guarantee.
+//! one. That gap is **here**, in the marker lists below — not in the tiny
+//! detector. The ladder consults [`classify`] directly and it never consults
+//! a detector, so replacing [`crate::monitor::detector::KeywordDetector`]
+//! with a real classifier does nothing for it. Closing it means improving
+//! these markers, or replacing substring matching with something that
+//! understands the operation.
+//!
+//! The matchers are therefore deliberately broad — a false positive costs one
+//! inspection, a false negative costs the guarantee. They still only match
+//! literal substrings: an operation that spells its verb differently, encodes
+//! it, or expresses it purely through an opaque identifier is not recognised.
 
 use super::detector::InspectionSubject;
 
@@ -147,7 +157,7 @@ impl MandatoryClass {
 /// Deliberately opaque: the private field and absent public constructor mean
 /// this can only be produced by [`classify`], so no caller can assert "this
 /// operation is in no mandatory class".
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Classification {
     matched: Vec<MandatoryClass>,
 }

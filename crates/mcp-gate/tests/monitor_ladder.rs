@@ -73,6 +73,9 @@ impl TinyDetector for FailingDetector {
     fn score(&self, _s: &InspectionSubject) -> Result<RiskSignal, MonitorError> {
         Err(MonitorError::ZeroSaturation)
     }
+    fn expected_uncertainty(&self) -> f64 {
+        0.2
+    }
 }
 
 /// Detector returning a fixed signal, so tests control the risk exactly.
@@ -81,12 +84,33 @@ impl TinyDetector for FixedDetector {
     fn score(&self, _s: &InspectionSubject) -> Result<RiskSignal, MonitorError> {
         RiskSignal::new(self.0, self.1)
     }
+    fn expected_uncertainty(&self) -> f64 {
+        self.1
+    }
 }
 
+/// Declares an uncertainty that differs from what it scores — the divergence
+/// the calibration guard used to be blind to when the figure was configured
+/// rather than derived.
+struct LyingDetector {
+    scored: f64,
+    declared: f64,
+}
+impl TinyDetector for LyingDetector {
+    fn score(&self, _s: &InspectionSubject) -> Result<RiskSignal, MonitorError> {
+        RiskSignal::new(0.5, self.scored)
+    }
+    fn expected_uncertainty(&self) -> f64 {
+        self.declared
+    }
+}
+
+/// Reference ladder. Latencies are declared honestly (5 ms, 200 ms) — modest
+/// for real verifiers — so that pricing them has something to price.
 fn rungs() -> Vec<LadderRung> {
     vec![
-        LadderRung::new("cheap-verifier", 0.01, 0.0, 0.15),
-        LadderRung::new("strong-investigator", 0.50, 0.0, 0.05),
+        LadderRung::new("cheap-verifier", 0.01, 5_000.0, 0.15),
+        LadderRung::new("strong-investigator", 0.50, 200_000.0, 0.05),
     ]
 }
 
@@ -161,6 +185,64 @@ fn a_never_escalating_value_of_success_is_refused_loudly() {
 }
 
 #[test]
+fn a_detector_cannot_inflate_the_ceiling_to_wave_through_a_dead_ladder() {
+    // MEDIUM-1. When the uncertainty was an operator-declared config field it
+    // was used ONLY in the construction ceiling and never cross-checked
+    // against what the detector reported, so declaring a large value bought
+    // past the very guard that exists to catch a never-escalate ladder.
+    // It is now taken from the detector and bounded to (0, 1].
+    for absurd in [100.0_f64, 1.5, 1e12] {
+        let err = EscalationLadder::new(
+            vec![LadderRung::new("verifier", 0.50, 0.0, 0.1)],
+            MonitorConfig {
+                voi: VoiConfig {
+                    value_of_success: 1.0,
+                    latency_price: 0.0,
+                },
+                ..MonitorConfig::default()
+            },
+            LyingDetector {
+                scored: 0.2,
+                declared: absurd,
+            },
+            RecordingInvestigator::new(0.1),
+        )
+        .expect_err("an uncertainty above 1 must be refused");
+        assert!(
+            matches!(err, MonitorError::UncertaintyOutOfRange { .. }),
+            "declared {absurd} gave {err}"
+        );
+    }
+}
+
+#[test]
+fn the_calibration_ceiling_uses_the_predictive_std_not_sigma() {
+    // MEDIUM-2. What a rung can reveal is s = σ/√(1+(τ/σ)²), strictly less
+    // than σ whenever the rung is noisy — and the cheapest rung is
+    // deliberately the noisiest. A σ-based ceiling therefore overstates what
+    // is purchasable and admits ladders that then buy nothing.
+    //
+    // For the reference ladder (σ=0.2, τ=0.15, cheapest monetized cost
+    // $0.015) the σ-based ceiling accepts value_of_success ≥ 0.188 while
+    // real escalation needs ≥ 0.235. This value sits in that gap.
+    let in_the_gap = MonitorConfig {
+        voi: VoiConfig {
+            value_of_success: 0.20,
+            latency_price: 1e-6,
+        },
+        ..MonitorConfig::default()
+    };
+    let err = EscalationLadder::new(
+        rungs(),
+        in_the_gap,
+        KeywordDetector::new(),
+        RecordingInvestigator::new(0.5),
+    )
+    .expect_err("a ladder inside the σ/s gap must be refused");
+    assert!(matches!(err, MonitorError::Miscalibrated { .. }), "{err}");
+}
+
+#[test]
 fn zero_round_cap_is_refused() {
     let config = MonitorConfig {
         max_rounds: 0,
@@ -218,7 +300,6 @@ fn no_valid_config_can_skip_a_mandatory_class() {
         escalation_threshold: 0.99,
         halt_risk: 1.0,
         max_rounds: 4,
-        expected_uncertainty: 0.2,
     };
 
     let cases = [
@@ -551,6 +632,184 @@ fn measured_overhead_on_a_synthetic_workload_is_under_five_percent() {
 }
 
 #[test]
+fn overhead_charges_declared_rung_latency_not_fixture_speed() {
+    // MEDIUM-4. With `latency_price` at zero a ten-second rung priced
+    // identically to an instant one, and the measured figure reflected only
+    // how fast the test double returned. The account now charges what the
+    // rung declares, so the number means something about the configuration.
+    let mut ladder = EscalationLadder::new(
+        rungs(),
+        MonitorConfig::default(),
+        FixedDetector(0.0, 0.2),
+        RecordingInvestigator::new(0.1),
+    )
+    .expect("ladder builds");
+
+    let outcome = ladder.inspect(&InspectionSubject::new(
+        "op",
+        "delete the bucket",
+        json!({}),
+    ));
+    assert!(outcome.permits_execution(), "benign verdict should allow");
+    let purchased = ladder.account().rungs_purchased();
+    assert!(purchased >= 1);
+    // The cheap rung alone declares 5 ms; a fixture returning instantly
+    // cannot account for less than that.
+    assert!(
+        ladder.account().monitoring_us() >= 5_000,
+        "declared latency was not charged: {} µs for {} rungs",
+        ladder.account().monitoring_us(),
+        purchased
+    );
+}
+
+#[test]
+fn measured_overhead_with_honest_latency_pricing() {
+    // The number that actually bears on the 5% design target: rungs declare
+    // realistic latency (5 ms / 200 ms) and the account charges it. Reported
+    // rather than asserted against 5%, because whether the target is met is a
+    // property of the configuration, not of this module.
+    const OPS: usize = 200;
+    const WORKLOAD_US_PER_OP: u128 = 20_000;
+
+    let mut ladder = EscalationLadder::new(
+        rungs(),
+        MonitorConfig::default(),
+        KeywordDetector::new(),
+        RecordingInvestigator::new(0.2),
+    )
+    .expect("ladder builds");
+
+    for i in 0..OPS {
+        let subject = if i % 10 == 0 {
+            InspectionSubject::new("deploy", "delete the old bucket", json!({"i": i}))
+        } else {
+            InspectionSubject::new("sum", "add two integers", json!({"i": i}))
+        };
+        let outcome = ladder.inspect(&subject);
+        let _ = outcome.permits_execution();
+        ladder.record_workload_us(WORKLOAD_US_PER_OP);
+    }
+
+    let a = ladder.account();
+    let fraction = a.fraction().expect("workload recorded");
+    // Coverage is the enforced half and IS asserted.
+    assert_eq!(
+        a.mandatory_coverage(),
+        Some(1.0),
+        "mandatory coverage regressed"
+    );
+    eprintln!(
+        "HONEST OVERHEAD: {:.4} ({} monitoring µs over {} workload µs) |          mandatory {}/{} = {:?} | {} rungs purchased | {} halts",
+        fraction,
+        a.monitoring_us(),
+        a.workload_us(),
+        a.mandatory_inspections(),
+        a.mandatory_operations_seen(),
+        a.mandatory_coverage(),
+        a.rungs_purchased(),
+        a.halts()
+    );
+}
+
+#[test]
+fn latency_pricing_binds_only_when_the_belief_stays_ambiguous() {
+    // What actually limits purchases at the reference configuration is the
+    // belief update, not the price of latency: an investigator reporting a
+    // clearly-benign 0.2 moves the belief away from the 0.5 threshold, value
+    // of information collapses, and the ladder declines the second rung
+    // whether or not latency costs anything.
+    //
+    // Latency pricing binds in the case that update does NOT resolve — an
+    // investigator that keeps reporting exactly the threshold, so the
+    // operation stays maximally ambiguous and every further rung still looks
+    // worth buying. This measures both, so the difference is evidence rather
+    // than assertion.
+    fn run(latency_price: f64, verdict: f64) -> (f64, u64) {
+        let config = MonitorConfig {
+            voi: VoiConfig {
+                value_of_success: 100.0,
+                latency_price,
+            },
+            ..MonitorConfig::default()
+        };
+        let mut ladder = EscalationLadder::new(
+            rungs(),
+            config,
+            KeywordDetector::new(),
+            RecordingInvestigator::new(verdict),
+        )
+        .expect("ladder builds");
+        for i in 0..200 {
+            let subject = if i % 10 == 0 {
+                InspectionSubject::new("deploy", "delete the old bucket", json!({"i": i}))
+            } else {
+                InspectionSubject::new("sum", "add two integers", json!({"i": i}))
+            };
+            let outcome = ladder.inspect(&subject);
+            let _ = outcome.permits_execution();
+            ladder.record_workload_us(20_000);
+        }
+        let a = ladder.account();
+        (
+            a.fraction().expect("workload recorded"),
+            a.rungs_purchased(),
+        )
+    }
+
+    let (resolved_priced, resolved_rungs) = run(1e-6, 0.2);
+    let (ambiguous_priced, ambiguous_priced_rungs) = run(1e-6, 0.5);
+    let (ambiguous_free, ambiguous_free_rungs) = run(0.0, 0.5);
+
+    eprintln!(
+        "OVERHEAD resolved/priced   {:.4} ({} rungs)\n\
+         OVERHEAD ambiguous/priced  {:.4} ({} rungs)\n\
+         OVERHEAD ambiguous/unpriced {:.4} ({} rungs)",
+        resolved_priced,
+        resolved_rungs,
+        ambiguous_priced,
+        ambiguous_priced_rungs,
+        ambiguous_free,
+        ambiguous_free_rungs
+    );
+
+    // Pricing latency can only reduce or leave unchanged what is purchased.
+    assert!(
+        ambiguous_priced_rungs <= ambiguous_free_rungs,
+        "pricing latency increased purchases: {ambiguous_priced_rungs} vs {ambiguous_free_rungs}"
+    );
+}
+
+#[test]
+fn the_purchasability_diagnostic_validates_its_own_inputs() {
+    // LOW-8. This is the one public fn that answers "can this ladder ever
+    // escalate?", so it must not answer "yes" for a configuration the ladder
+    // itself would refuse. Without validation, an infinite value_of_success
+    // returned Ok(true).
+    use mcp_gate::monitor::rung_is_purchasable;
+    use ruvector_tiny_dancer_core::voi::Belief;
+
+    let belief = Belief::new(0.5, 0.2).unwrap();
+    let rung = LadderRung::new("verifier", 0.01, 0.0, 0.15);
+
+    for bad in [f64::INFINITY, f64::NAN, 0.0, -1.0] {
+        let config = MonitorConfig {
+            voi: VoiConfig {
+                value_of_success: bad,
+                latency_price: 0.0,
+            },
+            ..MonitorConfig::default()
+        };
+        assert!(
+            rung_is_purchasable(belief, &rung, &config).is_err(),
+            "value_of_success {bad} produced an answer instead of an error"
+        );
+    }
+    // A well-formed configuration still answers.
+    assert!(rung_is_purchasable(belief, &rung, &MonitorConfig::default()).is_ok());
+}
+
+#[test]
 fn an_empty_account_reports_no_overhead_figure() {
     let ladder = EscalationLadder::new(
         rungs(),
@@ -573,17 +832,21 @@ fn the_investigator_actually_saw_the_mandatory_operations() {
         investigator,
     )
     .unwrap();
-    // `MonitorOutcome` is `#[must_use]`: an unexamined outcome permits an
-    // unmonitored operation, so even a test must consume it deliberately.
     let outcome = ladder.inspect(&InspectionSubject::new(
         "op",
         "delete the bucket",
         json!({}),
     ));
-    assert!(outcome.permits_execution() || !outcome.permits_execution());
+    assert!(
+        outcome
+            .mandatory()
+            .contains(&MandatoryClass::DestructiveOperation),
+        "operation was not classified as destructive"
+    );
     // Reach back through the ladder to confirm a rung genuinely ran, rather
     // than inferring it from counters alone.
     assert!(ladder.account().rungs_purchased() >= 1);
+    assert_eq!(ladder.account().mandatory_coverage(), Some(1.0));
 }
 
 #[test]

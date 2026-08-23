@@ -35,6 +35,17 @@ pub enum MonitorError {
         /// The offending uncertainty.
         uncertainty: f64,
     },
+    /// A detector reported an uncertainty above 1 on a unit-scale risk.
+    ///
+    /// Refused because it is meaningless there, and because the only thing
+    /// an inflated uncertainty does is raise the calibration ceiling — the
+    /// guard that exists to catch a never-escalate ladder would otherwise be
+    /// the lever for waving one through.
+    #[error("detector uncertainty must be within (0, 1] on a unit-scale risk, got {uncertainty}")]
+    UncertaintyOutOfRange {
+        /// The offending uncertainty.
+        uncertainty: f64,
+    },
     /// A detector saturation of zero would divide by zero on every score.
     #[error("detector saturation must be > 0")]
     ZeroSaturation,

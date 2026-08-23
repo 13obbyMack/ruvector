@@ -35,12 +35,46 @@
 //! site, and a monitoring gate that fails open under error is worse than no
 //! gate, because it looks like one.
 //!
-//! # Design target
+//! # Design target, and what is actually enforced
 //!
-//! Under 5% average monitoring overhead with 100% mandatory-class coverage.
-//! [`OverheadAccount`] measures the first and counts the second separately,
-//! so the claim is checkable rather than asserted, and so the ratio cannot be
-//! flattered by narrowing the mandatory set.
+//! The target is under 5% average monitoring overhead with 100%
+//! mandatory-class coverage. [`OverheadAccount`] measures the first and
+//! [`OverheadAccount::mandatory_coverage`] reports the second against a
+//! denominator, so both are checkable rather than asserted.
+//!
+//! Only the coverage half is *enforced*. Overhead is bounded by
+//! [`MonitorConfig::max_rounds`] and priced by [`VoiConfig::latency_price`],
+//! but nothing refuses a ladder whose rungs are simply slow. Measured on the
+//! reference ladder (5 ms / 200 ms rungs, 200 operations, one in ten
+//! mandatory, 20 ms attributed per operation):
+//!
+//! | Case | Overhead | Rungs |
+//! |---|---|---|
+//! | Investigator resolves the ambiguity (reports 0.2) | **2.6%** | 20 |
+//! | Investigator leaves it ambiguous (reports 0.5), latency priced | **108%** | 80 |
+//! | Same, latency unpriced | **205%** | 80 |
+//!
+//! So the target holds only when the first investigator actually settles the
+//! question. When it does not, the belief stays near the escalation
+//! threshold, every further rung still looks worth buying, and the ladder
+//! spends [`MonitorConfig::max_rounds`] rungs on every operation — four
+//! rounds of a 200 ms investigator against a 20 ms workload is 40× the
+//! budget on its own.
+//!
+//! Pricing latency halves that (205% → 108%) by shifting the *mix* toward
+//! cheaper rungs, but it does not reduce the *count*: at
+//! `value_of_success = 100` even a priced 200 ms rung is worth buying at
+//! maximum ambiguity. **`max_rounds` is the only hard bound on wall-clock
+//! cost.** Treat 5% as a budget to configure toward — chiefly by keeping
+//! `max_rounds` small and the top rung fast — not as a property this module
+//! guarantees.
+//!
+//! # Not wired into the request path
+//!
+//! This is a library module with **no call site** in the gate's request
+//! handling: `server.rs`, `tools.rs`, `types.rs`, and `main.rs` do not
+//! reference it. Nothing here is protecting production traffic yet. Wiring
+//! it into [`crate::tools::McpGateTools`] is separate work.
 
 pub mod classes;
 pub mod config;
@@ -59,10 +93,6 @@ pub use config::{Investigator, LadderRung, MonitorConfig};
 pub use detector::{InspectionSubject, KeywordDetector, RiskSignal, TinyDetector};
 pub use error::{HaltReason, MonitorError};
 pub use overhead::OverheadAccount;
-
-/// 1/√(2π): the value-of-information ceiling is `s·φ(0) = s/√(2π)` and
-/// `s ≤ σ`, so `σ/√(2π)` bounds what any rung can ever be worth.
-const INV_SQRT_2PI: f64 = 0.398_942_280_401_432_7;
 
 /// Result of monitoring one operation.
 ///
@@ -162,9 +192,17 @@ impl<D: TinyDetector, I: Investigator> EscalationLadder<D, I> {
             }
         }
         config.voi.validate().map_err(voi_err)?;
-        // Round-trips the uncertainty through the same validation the
-        // detector's signals face.
-        RiskSignal::new(0.0, config.expected_uncertainty)?;
+        // The uncertainty comes from the detector rather than configuration,
+        // so it cannot diverge from what `score` actually reports. Bounded to
+        // (0, 1] like risk itself: an uncertainty above 1 is meaningless on a
+        // unit-scale risk, and would only serve to inflate the ceiling below.
+        let detector_uncertainty = detector.expected_uncertainty();
+        RiskSignal::new(0.0, detector_uncertainty)?;
+        if detector_uncertainty > 1.0 {
+            return Err(MonitorError::UncertaintyOutOfRange {
+                uncertainty: detector_uncertainty,
+            });
+        }
 
         let mut previous = f64::NEG_INFINITY;
         for (index, rung) in rungs.iter().enumerate() {
@@ -187,17 +225,30 @@ impl<D: TinyDetector, I: Investigator> EscalationLadder<D, I> {
             previous = cost;
         }
 
-        // Calibration: no purchase can be worth more than
-        // value_of_success × σ/√(2π). If the cheapest rung exceeds that, the
-        // ladder can never escalate on economics alone.
+        // Calibration: if the cheapest rung costs more than the most any
+        // purchase could ever be worth, the ladder can never escalate on
+        // economics alone.
+        //
+        // The ceiling is computed from the *predictive* standard deviation
+        // `s = σ/√(1+(τ/σ)²)`, not from σ itself. A noisy rung reveals
+        // strictly less than the full prior uncertainty, and this design
+        // deliberately makes the cheapest rung the noisiest — so using σ
+        // would overstate the ceiling by up to ~5× at realistic noise levels
+        // and wave through ladders that then purchase nothing. `voi_upper_bound`
+        // is exactly this quantity, and is the same call `rung_is_purchasable`
+        // makes.
         let cheapest_cost = monetized_cost(&rungs[0].spec, &config.voi);
-        let ceiling = config.voi.value_of_success * config.expected_uncertainty * INV_SQRT_2PI;
+        let calibration_belief =
+            Belief::new(config.escalation_threshold, detector_uncertainty).map_err(voi_err)?;
+        let bound =
+            voi_upper_bound(calibration_belief, rungs[0].spec.noise_std).map_err(voi_err)?;
+        let ceiling = config.voi.value_of_success * bound;
         if cheapest_cost > ceiling {
             return Err(MonitorError::Miscalibrated {
                 cheapest_cost,
                 ceiling,
                 value_of_success: config.voi.value_of_success,
-                uncertainty: config.expected_uncertainty,
+                uncertainty: detector_uncertainty,
             });
         }
 
@@ -256,6 +307,11 @@ impl<D: TinyDetector, I: Investigator> EscalationLadder<D, I> {
         let classification = classes::classify(subject);
         let mandatory: Vec<MandatoryClass> = classification.matched().to_vec();
         let is_mandatory = classification.is_mandatory();
+        if is_mandatory {
+            // Recorded here, before any decision can divert the operation, so
+            // `mandatory_coverage` has an honest denominator.
+            self.account.record_mandatory_seen();
+        }
 
         let signal = match self.detector.score(subject) {
             Ok(s) => s,
@@ -307,6 +363,21 @@ impl<D: TinyDetector, I: Investigator> EscalationLadder<D, I> {
                     )
                 }
             };
+            // The rung ran and was paid for, whatever it returned. Count it
+            // before validating the observation, or an investigator that
+            // fails validation is billed but never recorded.
+            rungs_purchased += 1;
+            inspected = true;
+            self.account.record_rung();
+            // Charge the rung's *declared* latency, not the wall-clock of
+            // whatever ran. A fixture investigator returns instantly, so
+            // wall-clock alone would report an overhead figure that says more
+            // about the test double than about the ladder as configured.
+            // Declared latency is also what the economics priced, so the
+            // accounting and the purchase decision agree on what a rung costs.
+            self.account
+                .record_monitoring(rung.spec.latency_us.max(0.0) as u128);
+
             // Validate before any comparison: a non-finite observation would
             // otherwise pass the halt check silently.
             if !observation.is_finite() || !(0.0..=1.0).contains(&observation) {
@@ -316,10 +387,6 @@ impl<D: TinyDetector, I: Investigator> EscalationLadder<D, I> {
                     mandatory,
                 );
             }
-
-            rungs_purchased += 1;
-            inspected = true;
-            self.account.record_rung();
 
             if rung.is_oracle() {
                 // Ground truth: take it and exit without calling `observe`,
@@ -384,11 +451,18 @@ fn voi_err(e: impl std::fmt::Display) -> MonitorError {
 ///
 /// Exposed so an operator can answer "is this ladder actually able to
 /// escalate?" without running traffic through it.
+///
+/// Validates its inputs through the same choke point the ladder uses. Without
+/// that, a `value_of_success` of infinity reports `true` — a diagnostic that
+/// answers "yes, escalation is possible" for a configuration the ladder
+/// itself would refuse is worse than no diagnostic.
 pub fn rung_is_purchasable(
     belief: Belief,
     rung: &LadderRung,
     config: &MonitorConfig,
 ) -> Result<bool, MonitorError> {
+    config.voi.validate().map_err(voi_err)?;
+    rung.spec.validate().map_err(voi_err)?;
     let bound = voi_upper_bound(belief, rung.spec.noise_std).map_err(voi_err)?;
     Ok(config.voi.value_of_success * bound > monetized_cost(&rung.spec, &config.voi))
 }
