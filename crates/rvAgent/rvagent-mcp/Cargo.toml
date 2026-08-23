@@ -37,7 +37,7 @@ futures = "0.3"
 tokio = { version = "1.41", features = ["rt-multi-thread", "sync", "macros", "io-util", "io-std", "test-util"] }
 mockall = { workspace = true }
 proptest = { workspace = true }
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", features = ["json"] }
 
 # Workspace cleanup pass: research-tier crate, doc/style churn deferred. Correctness + suspicious lints stay denied.
 [lints.rust]
