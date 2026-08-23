@@ -21,6 +21,7 @@ import {
 } from "./benchmark.js";
 import { aggregateReports, type BenchReport } from "./metrics.js";
 import { pairedBootstrapDecision } from "./statistics.js";
+import { admitToFrontier, type ParetoPoint } from "./pareto.js";
 import type { PromotionVetoProvider } from "./vetoes.js";
 import { writeResearchResults, type PairedObservation } from "./research.js";
 
@@ -54,6 +55,7 @@ interface RuvectorScore extends Score {
   recallAt10: number;
   qps: number;
   memoryMb: number;
+  p99Us: number;
   peakRssBytes: number;
   /** The absolute health thresholds this score tripped, itemised. The gate diffs
    *  candidate against baseline over these; the inherited `regressed` boolean
@@ -61,6 +63,20 @@ interface RuvectorScore extends Score {
   regressions: string[];
   vetoReasons: string[];
   observations: BenchmarkObservation[];
+}
+
+/**
+ * Objective vector for the in-repo Pareto gate (ADR-335).
+ *
+ * The frontier is the incumbent baseline, and deliberately nothing the
+ * candidate can influence. An earlier revision let a score carry its own
+ * `frontier` array, which let the judged object choose its judges: an empty
+ * array admitted everything, silently and without a reason string. Widening
+ * this beyond the incumbent must arrive through the caller's options, never
+ * through the evaluator's score object or a deserialized replay bundle.
+ */
+function paretoPoint(id: string, score: RuvectorScore): ParetoPoint {
+  return { id, values: { primary: score.primary, costPerWin: score.costPerWin } };
 }
 
 export interface RuvectorFlywheelOptions {
@@ -119,6 +135,29 @@ export function ruvectorPromotionRule(evidence: {
   reasons.push(...candidateIntroducedRegressions(baseline, candidate));
   reasons.push(...candidate.vetoReasons);
   if (evidence.anchor && evidence.anchor.candidate < evidence.anchor.baseline) reasons.push("anchor_regressed");
+  // In-repo Pareto gate (ADR-335): a candidate dominated on the objective
+  // vector cannot be promoted even when the paired test passes, because a
+  // scalar improvement bought with a strictly worse resource profile is a
+  // trade rather than a win.
+  //
+  // The pure API throws on a non-finite or missing objective, which is right
+  // for a library but wrong here: `@metaharness/flywheel` calls this rule
+  // without a try/catch from both its generation loop and `verifyReplayBundle`,
+  // so an escaping throw would abort the run in one case and, in the other,
+  // destroy the structured `checks` output that the replay assertion below
+  // depends on. Unusable evidence is a reason to REFUSE the candidate, not to
+  // kill the harness, so it is converted into a blocking reason here.
+  try {
+    const admission = admitToFrontier(
+      paretoPoint("candidate", candidate),
+      [paretoPoint("baseline", baseline)],
+    );
+    if (!admission.admitted) {
+      reasons.push(`pareto_dominated_by_${admission.dominatedBy.join("_")}`);
+    }
+  } catch {
+    reasons.push("non_finite_objective");
+  }
   return { promote: reasons.length === 0, reasons };
 }
 
@@ -175,6 +214,7 @@ async function toScore(
     recallAt10: aggregate.recallAt10,
     qps: aggregate.qps,
     memoryMb: aggregate.memoryMb,
+    p99Us: aggregate.p99Us,
     peakRssBytes: Math.max(...observations.map((observation) => observation.resources.processPeakRssBytes)),
     costPerWin: aggregate.memoryMb * Math.max(aggregate.p99Us, 1) / Math.max(aggregate.qps, 1),
     regressions: aggregate.regressions,

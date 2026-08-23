@@ -78,12 +78,40 @@ function boundedInteger(policy: Record<string, string>, key: string, min: number
   return String(value);
 }
 
+/**
+ * The closed set of policy levers the native runner accepts.
+ *
+ * Exported so a declared optimization manifest (ADR-335) can be checked
+ * against the same list the runner enforces, rather than a second copy that
+ * could drift away from it.
+ */
+export const POLICY_LEVERS: readonly string[] = Object.freeze([
+  "ef_search", "m", "ef_construction", "k", "runner_set",
+]);
+
+/**
+ * Ranges `normalizePolicy` enforces for the integer levers.
+ *
+ * Exported so a declared manifest can be checked against the values the runner
+ * will actually accept. Without this a manifest can advertise
+ * `ef_search: {1, 999999}`, look authoritative, and still have every run above
+ * 4096 rejected at spawn time — a declaration that cannot be effected.
+ * `runner_set` is absent because it is an enum, validated above.
+ */
+export const POLICY_LEVER_RANGES: Readonly<Record<string, { minimum: number; maximum: number }>> =
+  Object.freeze({
+    ef_search: Object.freeze({ minimum: 1, maximum: 4096 }),
+    m: Object.freeze({ minimum: 2, maximum: 128 }),
+    ef_construction: Object.freeze({ minimum: 4, maximum: 4096 }),
+    k: Object.freeze({ minimum: 1, maximum: 100 }),
+  });
+
 export function normalizePolicy(policy: Record<string, string>): BenchmarkPolicy {
   const runnerSet = policy.runner_set ?? "core";
   if (runnerSet !== "core" && runnerSet !== "core-lsm" && runnerSet !== "all") {
     throw new Error("runner_set must be core, core-lsm, or all");
   }
-  const allowed = new Set(["ef_search", "m", "ef_construction", "k", "runner_set"]);
+  const allowed = new Set(POLICY_LEVERS);
   const unknown = Object.keys(policy).filter((key) => !allowed.has(key));
   if (unknown.length) throw new Error(`unsupported policy lever(s): ${unknown.join(", ")}`);
   return {
