@@ -20,6 +20,10 @@
 //! State is persisted between invocations as a [`WorkspaceSnapshot`] JSON
 //! file passed in the request's `state` field.
 
+// Lint suggests `as_chunks`, stable only since Rust 1.88 — past the declared
+// `rust-version = "1.77"`. `unknown_lints` keeps older toolchains quiet.
+#![allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
+
 use serde::{Deserialize, Serialize};
 
 use crate::anchor::NoopAnchor;

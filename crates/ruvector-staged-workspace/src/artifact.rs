@@ -1,5 +1,9 @@
 //! Artifact identity: content hash + revision id (ADR-318 §Decision 1).
 
+// Lint suggests `as_chunks`, stable only since Rust 1.88 — past the declared
+// `rust-version = "1.77"`. `unknown_lints` keeps older toolchains quiet.
+#![allow(unknown_lints, clippy::chunks_exact_to_as_chunks)]
+
 use core::fmt;
 use serde::{Deserialize, Serialize};
 

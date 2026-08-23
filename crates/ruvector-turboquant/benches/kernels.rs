@@ -6,6 +6,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use ruvector_turboquant::simd;
+// Only `widen_baseline` reads the table, and that module is x86_64-only.
+#[cfg(target_arch = "x86_64")]
 use ruvector_turboquant::tables::LEVELS_I8;
 
 fn splitmix(state: &mut u64) -> u64 {
