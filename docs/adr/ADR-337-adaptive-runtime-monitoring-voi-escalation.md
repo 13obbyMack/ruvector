@@ -191,12 +191,22 @@ disproved.** The corrected reasoning:
 | Investigator **resolves** the ambiguity (posterior 0.2) | **2.6%** | 20 |
 | Investigator **leaves it ambiguous** (0.5), latency priced | **108%** | 80 |
 | Same, latency unpriced | **205%** | 80 |
+| Ambiguous, **all-mandatory stream** (the actual worst case) | **1075%** | — |
+
+The first three rows are measured on a **10%-mandatory** mix, which is why
+the rung count divides to 0.4 per operation rather than `max_rounds`. An
+adversarial stream is not 10% mandatory: against an all-mandatory stream
+the same configuration measures **1075%**, an order of magnitude worse
+than the 108% figure. Quote 1075% as the worst case, not 108%.
 
 **The limiter is the belief update, not the price.** When the first rung
 settles the question, VoI collapses and the ladder stops — 2.6%,
 comfortably inside target. When it does not, the belief sits at the
 escalation threshold, every further rung still looks worth buying, and the
-ladder spends `max_rounds` on **every** operation. Pricing latency roughly
+ladder spends `max_rounds` on **every operation it inspects** — which is
+every operation that enters the ladder at all, not every operation seen.
+An all-benign 200-operation stream buys 0 rungs; an all-mandatory one buys
+800, exactly 4.00 per operation. Pricing latency roughly
 halves overhead by shifting the *mix* toward cheaper rungs; it does not
 reduce the *count*.
 
@@ -210,9 +220,18 @@ So the honest statement is:
   economics.** An investigator that returns "maybe" is not a cheaper
   investigator; it is an unbounded one.
 
-The 108% and 205% figures are the realistic bad case and are far outside
-target. They, not the 0.06%, are what a reader needs in order to size
-this.
+The 108%, 205% and 1075% figures are the realistic bad cases and are far
+outside target. They, not the 0.06%, are what a reader needs in order to
+size this.
+
+One further caveat on all of these numbers: they are a **declared-cost
+model**, not a wall-clock measurement. The account charges each rung its
+declared latency *and* separately charges the wall-clock of the whole
+inspection, so a real investigator that genuinely takes its declared
+latency is billed roughly twice (measured 2.46x on a single 300 ms rung).
+The direction is conservative — it overstates cost and so cannot conceal a
+budget breach — but `fraction()` should be read as a model until that is
+corrected.
 
 ### "100% inspection of mandatory classes" — now measurable (fixed at `5d81fb1`)
 

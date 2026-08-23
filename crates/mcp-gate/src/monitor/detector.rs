@@ -140,7 +140,13 @@ pub trait TinyDetector {
     /// *larger* declared value inflates the ceiling and makes the guard more
     /// permissive — so the one field that exists to catch a never-escalate
     /// ladder could be used to wave one through. Deriving it from the
-    /// detector removes the divergence rather than bounding it.
+    /// detector *bounds* the divergence rather than removing it. Nothing
+    /// cross-checks this against what [`TinyDetector::score`] actually
+    /// carries, so an implementation may still declare one figure and
+    /// produce another; the (0,1] bound caps how far apart they can be, and
+    /// residual inflation at the legal maximum reaches 44x at sigma=0.05.
+    /// Requiring a trait implementation rather than a config value is what
+    /// changed -- the divergence itself is still there.
     ///
     /// A detector whose uncertainty varies per input should report the
     /// **largest** value it can return, since that is the most permissive

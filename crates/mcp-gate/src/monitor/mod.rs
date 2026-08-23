@@ -57,7 +57,8 @@
 //! So the target holds only when the first investigator actually settles the
 //! question. When it does not, the belief stays near the escalation
 //! threshold, every further rung still looks worth buying, and the ladder
-//! spends [`MonitorConfig::max_rounds`] rungs on every operation — four
+//! spends [`MonitorConfig::max_rounds`] rungs on every operation it
+//! *inspects* — four
 //! rounds of a 200 ms investigator against a 20 ms workload is 40× the
 //! budget on its own.
 //!
