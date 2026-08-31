@@ -66,3 +66,45 @@ regression check rather than an empirical detection rate. Full methodology and r
 See [`ADR-304`](../../docs/adr/ADR-304-retrieval-receipts.md) for the design rationale,
 documented limitations (Merkle padding malleability), and rejection criteria for production
 promotion.
+
+## Signed anchoring (non-repudiation)
+
+The variants above are unsigned: they detect tamper but don't prove *who* issued a receipt.
+The `signing` module adds Ed25519 root-signing, either per query or amortized across a batch:
+
+```rust
+use ruvector_retrieval_receipt::{
+    query_hash, BatchAnchor, Issuer, ReceiptVariant, RetrievalIndex, RetrievalReceipt,
+};
+
+let issuer = Issuer::generate();
+let index = RetrievalIndex::ingest(5_000, 128, 0xC0FF_EE01);
+let query = vec![0.1; 128];
+let results = index.search(&query, 10);
+let qh = query_hash(&query);
+let receipt = RetrievalReceipt::build(ReceiptVariant::Merkle, qh, index.index_state_root(), &results);
+let root = receipt.root().unwrap();
+
+// Per-query:
+let sig = issuer.sign_root(root);
+assert!(ruvector_retrieval_receipt::verify_root(&issuer.verifying_key, root, sig));
+
+// Batched (amortizes signing cost across B roots under one signature):
+let anchor = BatchAnchor::build(&[root]);
+let batch_sig = issuer.sign_root(anchor.root);
+let proof = anchor.proof_for(0);
+assert!(BatchAnchor::verify_inclusion(root, &proof, anchor.root));
+```
+
+Measured (n=5,000, dims=128, k=10, release build, mean of 3 runs): per-query signing costs
+≈29.0 µs amortized; batching to 128 queries per signature drops that to ≈1.7 µs/query (≈17x,
+5.5–6.1% of per-query cost). An *uncaching* verifier — one that re-checks the batch signature
+on every query instead of once per batch — sees none of that benefit (naive verify cost stays
+in a ~42,000–77,000ns band regardless of batch size), which is the deliberately-checked "does
+batching game the benchmark" condition. 100% tamper detection (root/signature/inclusion-proof
+tamper) across all batch sizes in all 3 runs. Full methodology, raw output, and the
+benchmark-harness bug this run caught and fixed:
+[`docs/research/nightly/2026-08-31-signed-retrieval-receipts/README.md`](../../docs/research/nightly/2026-08-31-signed-retrieval-receipts/README.md).
+
+See [`ADR-340`](../../docs/adr/ADR-340-signed-retrieval-receipt-anchoring.md) for the design
+rationale, threat model, and rejection criteria.
