@@ -74,14 +74,14 @@ flowchart LR
     end
 
     subgraph SignedA["Candidate A: per-query signing (B=1)"]
-        M -->|"Issuer.sign_root(root)"| SA["Ed25519 signature\n(1 per query)"]
+        M -->|"sign typed receipt statement"| SA["Ed25519 signature\n(1 per query)"]
     end
 
     subgraph SignedB["Candidate B: batched signing (B>1)"]
         M1[MerkleReceipt root, query 1] --> BT
         M2[MerkleReceipt root, query 2] --> BT
         Mn["MerkleReceipt root, query B\n(...)"] --> BT
-        BT["BatchAnchor\n(2nd Merkle tree over B roots)"] -->|"Issuer.sign_root(batch_root)"| SB["1 Ed25519 signature\nfor B queries"]
+        BT["BatchAnchor\n(2nd Merkle tree over B roots)"] -->|"sign typed batch statement"| SB["1 Ed25519 signature\nfor B queries"]
         BT --> IP["per-query O(log B)\ninclusion proof"]
     end
 
@@ -97,9 +97,11 @@ collide.
 
 ### Threat Model
 
-- **Adds over ADR-304:** non-repudiation — a verifier holding the
-  issuer's public key can show a third party that this specific issuer
-  vouched for this specific root.
+- **Adds over ADR-304:** origin authentication under a supplied public
+  key, with version, purpose, key ID, scope, issuance time, and root all
+  covered by the signature. Organizational identity and legal
+  non-repudiation still require external key ownership and revocation
+  evidence.
 - **Does not add:** issuer honesty. A malicious issuer signs a false root
   exactly as validly as a true one.
 - **Does not add:** real-time availability of a signed anchor. A batch
@@ -112,12 +114,11 @@ collide.
 
 ## Implementation
 
-- `crates/ruvector-retrieval-receipt/src/signing.rs` (new, ~250 lines):
-  `Issuer` (Ed25519 keypair, `sign_root`), `verify_root` (fail-closed
-  verification), `BatchAnchor` (second-level Merkle tree over receipt
-  roots with `proof_for`/`verify_inclusion`), 11 unit tests covering
-  roundtrip signing, tamper detection (root/signature/proof-sibling), and
-  batch-size edge cases (1, 2, 3, 8, 17, 128).
+- `crates/ruvector-retrieval-receipt/src/signing.rs`: `Issuer`, typed
+  `SignedRoot` statements, strict `verify_root`, an opaque
+  `VerifiedRoot`, and a panic-free `BatchAnchor`. Eight focused signing
+  tests cover every signed field, replay boundaries, invalid input, and
+  batch sizes 1, 2, 3, 8, 17, and 128.
 - `crates/ruvector-retrieval-receipt/src/lib.rs`: `RetrievalReceipt::root()`
   accessor, `pub mod signing`, re-exports.
 - `crates/ruvector-retrieval-receipt/src/bin/benchmark.rs`: new signed
@@ -158,9 +159,9 @@ their 13 existing tests, and their documented threat model are untouched
 
 ## Benchmark Results
 
-Mean of 3 repeated runs (raw per-run output in this directory's
-companion `raw-runs.txt`; run-to-run spread was small — see Variance
-below):
+Mean of 3 repeated, warmed runs after the security hardening described
+below. Raw per-run output is in this directory's companion
+`raw-runs.txt`.
 
 ### Unsigned receipts (ADR-304 regression check — unchanged)
 
@@ -178,27 +179,27 @@ overhead: MerkleReceipt 1.7–1.9%, PerResultReceipt 1.6–1.8% of baseline
 
 | batch_size (B) | sign amortized (ns/query) | verify naive (ns/query) | verify cached (ns/query) | sig-verify-once (ns/batch) | proof bytes | tamper detect |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1   | 29,042 | 76,936 | 785   | 65,650 | 96  | 300/300 |
-| 8   | 5,107  | 55,943 | 2,932 | 45,431 | 192 | 450/450 |
-| 32  | 2,521  | 42,322 | 4,081 | 34,258 | 256 | 450/450 |
-| 128 | 1,688  | 46,708 | 5,893 | 37,533 | 320 | 450/450 |
+| 1   | 15,598 | 36,411 | 359   | 34,455 | 170 | 300/300 |
+| 8   | 2,940  | 34,948 | 1,429 | 34,384 | 266 | 450/450 |
+| 32  | 1,337  | 35,394 | 2,195 | 37,750 | 330 | 450/450 |
+| 128 | 1,090  | 41,219 | 2,649 | 42,077 | 394 | 450/450 |
 
 All three runs: **ACCEPT** for the signed anchoring hypothesis.
 
 Reading the table:
 
-- **Amortized signing** drops ~17x from B=1 to B=128 (29,042ns →
-  1,688ns/query), landing at 5.5–6.1% of the B=1 cost across the 3 runs
+- **Amortized signing** drops ~14x from B=1 to B=128 (15,598ns →
+  1,090ns/query), landing at 5.8–7.7% of the B=1 cost across the 3 runs
   — clears the 10% threshold with margin.
 - **Naive verify** (every query independently re-checks the batch
-  signature) stays in a ~42,000–77,000ns band across all batch sizes —
-  confirms the O(1) Ed25519 verify (~40–65µs on this hardware) dominates
+  signature) has means in a ~35,000–41,000ns band across batch sizes —
+  confirms the O(1) Ed25519 verify dominates
   regardless of B, and batching gives an uncaching verifier essentially
   nothing. This is the deliberately-checked "does batching game the
   benchmark" condition, and it did not.
 - **Cached verify** (signature checked once per batch, amortized) grows
-  from 785ns (B=1: no inclusion proof exists, root is a bare hash check)
-  to 5,893ns (B=128: a 7-level inclusion proof) — small in absolute
+  from 359ns (B=1: no inclusion proof exists, root is a bare hash check)
+  to 2,649ns (B=128: a 7-level inclusion proof) — small in absolute
   terms, but a real, non-zero, and correctly-growing cost.
 - **Tamper detection** is 100% at every batch size in every run.
 
@@ -209,7 +210,7 @@ quantitative range) across 3 independent process runs:
 
 ```
 tamper detection 100% across all kinds and batch sizes: true
-amortized signing cost drops below 10% of per-query cost by batch=128: 5.5–6.1% -> true
+amortized signing cost drops below 10% of per-query cost by batch=128: 5.8–7.7% -> true
 naive (uncached) per-query verify cost stays flat across batch sizes: true
 
 SIGNED ANCHORING ACCEPTANCE RESULT: ACCEPT
@@ -217,40 +218,34 @@ SIGNED ANCHORING ACCEPTANCE RESULT: ACCEPT
 
 ## Memory Math
 
-- Per-query signature overhead at B=1: 64 bytes (raw Ed25519 signature)
-  + 32 bytes (public key, amortized across all receipts from one issuer,
-  not per-query) ≈ 96 bytes/query.
-- At B=128: one 64-byte signature per 128 queries (0.5 bytes/query
-  amortized) + a 7-level inclusion proof (7 × 32 = 224 bytes) + the
-  32-byte batch root ≈ 256.5 bytes/query, dominated by the inclusion
-  proof, not the signature.
-- Net: batching trades signature-storage amortization (64B → 0.5B/query)
-  for larger proof overhead (0B → 224B/query) — batching is a CPU-cost
-  win, not a bytes-on-the-wire win, at these batch sizes. Worth stating
-  plainly since it would be easy to imply the opposite.
+- A transported `SignedRoot` is 170 bytes: 106 statement bytes plus a
+  64-byte Ed25519 signature. The 34-byte protocol domain is signed but is
+  implicit and need not be transported. Public-key distribution remains
+  external.
+- At B=128, each independently verifiable query carries the 170-byte
+  signed batch statement plus a 7-level proof of 224 bytes, for 394
+  bytes total.
+- Net: batching reduces signature operations, but increases portable
+  evidence from 170 bytes at B=1 to 394 bytes at B=128. It is a CPU cost
+  win, not a bytes on the wire win.
 
 ## Performance Math
 
-- Ed25519 sign/verify on this hardware: ~29µs sign, ~40–65µs verify
-  (both O(1) in message size, matching the well-known asymmetry of
-  Ed25519 verify being ~1.5–2x sign cost).
+- Warmed Ed25519 statement sign/verify on this hardware: roughly 10 to
+  25µs sign and 23 to 71µs verify across the three runs. System load was
+  the largest observed source of variance.
 - Batch-tree construction: O(B) SHA-256 hashes to build, O(log B) to
   prove/verify one member — negligible next to the Ed25519 operations
   (single-digit microseconds at B=128 vs. tens of microseconds for one
   signature operation).
-- Amortization curve is consistent with the O(1/B) signing-cost model:
-  29,042 / 8 ≈ 3,630 (measured: 5,107 — higher than pure 1/B due to the
-  added batch-tree hashing, itself O(B) total, O(1) per query at large
-  B); 29,042 / 128 ≈ 227 (measured: 1,688 — the gap is the fixed
-  per-query cost of building each query's own MerkleReceipt root plus one
-  batch-leaf hash, which does not shrink with B). The measured amortized
-  cost is therefore consistently *above* the naive 1/B projection by a
-  roughly constant per-query floor — an honest, expected deviation from
-  the idealized model, not a discrepancy to explain away.
+- Amortization follows the expected O(1/B) signature component plus a
+  fixed per-query Merkle hashing floor. The measured batch 128 cost was
+  5.8 to 7.7 percent of batch 1, comfortably below the fixed 10 percent
+  acceptance threshold.
 
 ## Failure Modes
 
-- **Issuer key compromise:** invalidates non-repudiation retroactively
+- **Issuer key compromise:** invalidates origin authentication retroactively
   for every root signed under that key; batching increases blast radius
   per incident (B queries per compromised signature) without changing
   total lifetime exposure.
@@ -302,9 +297,11 @@ SIGNED ANCHORING ACCEPTANCE RESULT: ACCEPT
   *family* introduced.
 - Domain-separated hashing prevents batch-tree/per-result-tree leaf
   collision (see Architecture).
-- Fail-closed verification: `verify_root` and `BatchAnchor::
-  verify_inclusion` return `false`, never panic, on any malformed or
-  mismatched input.
+- Strict verification: `verify_root` checks purpose, scope, key ID, and
+  version before calling `verify_strict`. Batch inclusion requires the
+  opaque token returned by that successful check.
+- Panic-free public batch input: empty batches and invalid proof indexes
+  return typed errors.
 - Key management is explicitly out of scope, as for every other signing
   primitive in this workspace (`Issuer` is a benchmark/API-demonstration
   wrapper, not a KMS integration).
@@ -326,8 +323,7 @@ inclusion proof + batch root; output: boolean + which check
 verification, no state mutation); side effects: none. Signing itself
 should **not** be exposed via MCP without an explicit, separately-reviewed
 authorization model — an MCP surface that can invoke `Issuer::sign_root`
-is equivalent to giving the caller the query engine's non-repudiation
-identity.
+is equivalent to giving the caller the query engine's signing authority.
 
 ## WASM Implications
 
@@ -340,7 +336,7 @@ estimating it, per the process's no-fabricated-claims rule.
 ## RVF Implications
 
 A signed batch anchor is a natural fit for RVF's signed-lineage goals: a
-`BatchAnchor.root` + signature is exactly the shape of a portable,
+`SignedRoot` plus inclusion proof is exactly the shape of a portable,
 independently-verifiable provenance unit an RVF package could carry
 alongside a copy-on-write index snapshot. Not implemented or measured
 here — this is the "could become part of" analysis the process requires,
@@ -350,8 +346,8 @@ not a claim of integration.
 
 Proof-gated mutation is not directly relevant (this ADR signs *reads*,
 not writes), but RVM's coherence-domain isolation could plausibly scope
-`Issuer` instances per domain, so a domain's receipts are non-repudiably
-attributable to that domain specifically. Not implemented or measured;
+`Issuer` instances per domain, so a supplied domain key can authenticate
+that domain's receipts. Not implemented or measured;
 noted as the honest answer to "does this benefit from RVM enforcement,"
 which in this case is "plausibly, but not evaluated."
 
@@ -371,7 +367,7 @@ ecosystem map explicitly calls out for ruFlo.
    agent's retrieved-evidence trail; RuVector capability: signed receipts;
    ecosystem integration: `ruvector-agent-memory` + this crate;
    implementation path: wrap agent-memory queries with per-query signing;
-   business value: non-repudiable "this engine returned this" record;
+   business value: key-authenticated "this system returned this" record;
    main risk: key management overhead; time horizon: near-term.
 2. **Multi-tenant retrieval SLAs** — user: a platform selling retrieval
    as a service; capability: batched signing; integration: per-tenant
@@ -400,7 +396,7 @@ ecosystem map explicitly calls out for ruFlo.
    operator; capability: batched signing at the edge, verified centrally;
    integration: Cognitum edge appliance + central verifier; path: edge
    batches its own detections, signs locally, ships to central audit;
-   value: edge autonomy with central non-repudiation; risk: edge key
+   value: edge autonomy with central origin authentication; risk: edge key
    custody; horizon: mid-term.
 7. **Scientific search reproducibility** — user: a researcher citing a
    retrieved corpus result; capability: signed receipt as a citable proof
@@ -425,7 +421,7 @@ ecosystem map explicitly calls out for ruFlo.
    single-node building block; primary uncertainty: whether cross-signing
    overhead scales past a handful of nodes; falsification: measure
    cross-signing latency at mesh sizes >10.
-2. **Agent operating systems with non-repudiable memory** — thesis: an
+2. **Agent operating systems with authenticated memory** — thesis: an
    agent OS where every memory access is attributably signed by default;
    required advances: near-zero-overhead default signing (this run's
    overhead, while small, is not "default-on for every memory read"
@@ -467,7 +463,7 @@ ecosystem map explicitly calls out for ruFlo.
    tooling; uncertainty: whether signed receipts are legible to human
    auditors without tooling; falsification: auditors cannot use raw
    receipts without significant additional tooling investment.
-7. **RVM coherence domains with domain-scoped non-repudiation** — thesis:
+7. **RVM coherence domains with scoped origin authentication** — thesis:
    each RVM coherence domain has its own `Issuer`, so cross-domain
    information flow is cryptographically attributable to its origin
    domain; required advances: RVM integration (noted as plausible, not
@@ -491,7 +487,7 @@ ecosystem map explicitly calls out for ruFlo.
 This run's hypothesis would have been falsified by any of:
 
 - Amortized signing cost at B=128 not clearing 10% of B=1 cost — it
-  cleared at 5.5–6.1%, not falsified.
+  cleared at 5.8–7.7%, not falsified.
 - Any tamper trial (root/signature/proof-sibling) going undetected at any
   batch size — the first run's B=1 root-swap tamper produced exactly this
   failure signal (50/150 undetected), traced to a benchmark-harness bug
@@ -500,7 +496,7 @@ This run's hypothesis would have been falsified by any of:
   *benchmark* briefly was buggy, and is reported as such rather than
   silently corrected without a trace.
 - Naive verify cost dropping sharply with batch size (>2x band) — it
-  stayed within ~42,000–77,000ns, not falsified.
+  stayed within a 1.2x mean band across batch sizes, not falsified.
 
 ## Rejection Criteria (Not Yet Triggered)
 

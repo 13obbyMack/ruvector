@@ -8,9 +8,11 @@
 use std::time::{Duration, Instant};
 
 use ruvector_retrieval_receipt::{
-    query_hash, synthetic_queries, BatchAnchor, Issuer, ReceiptVariant, ResultItem, RetrievalIndex,
-    RetrievalReceipt,
+    query_hash, synthetic_queries, verify_root, AnchorContext, AnchorPurpose, BatchAnchor, Issuer,
+    ReceiptVariant, ResultItem, RetrievalIndex, RetrievalReceipt, SignedRoot,
 };
+
+const BENCHMARK_ISSUED_AT_UNIX_MS: u64 = 1_788_134_400_000;
 
 fn percentile(sorted: &[Duration], pct: f64) -> Duration {
     if sorted.is_empty() {
@@ -205,7 +207,7 @@ struct SigningStats {
 
 fn apply_sign_tamper(
     roots: &mut [[u8; 32]],
-    sig: &mut [u8; 64],
+    signed: &mut SignedRoot,
     proofs: &mut [Vec<([u8; 32], bool)>],
     kind: SignTamperKind,
     rng: &mut Xorshift64,
@@ -216,7 +218,7 @@ fn apply_sign_tamper(
             roots[idx][rng.next_range(32)] ^= 0xFF;
         }
         SignTamperKind::SignatureByte => {
-            sig[rng.next_range(64)] ^= 0xFF;
+            signed.signature[rng.next_range(64)] ^= 0xFF;
         }
         SignTamperKind::ProofSibling => {
             if let Some((sibling, _)) = proofs[idx].first_mut() {
@@ -236,6 +238,7 @@ fn run_signing_batch(
     batch_size: usize,
     tamper_trials_per_kind: usize,
 ) -> SigningStats {
+    let context = AnchorContext::new(AnchorPurpose::Batch, index_root);
     let mut sign_latencies = Vec::new();
     let mut verify_naive_latencies = Vec::new();
     let mut verify_cached_latencies = Vec::new();
@@ -255,34 +258,42 @@ fn run_signing_batch(
             .collect();
 
         let t0 = Instant::now();
-        let anchor = BatchAnchor::build(&roots);
-        let sig = issuer.sign_root(anchor.root);
+        let anchor = BatchAnchor::build(&roots).expect("benchmark batches are nonempty");
+        let signed = issuer.sign_root(context, anchor.root(), BENCHMARK_ISSUED_AT_UNIX_MS);
         sign_latencies.push(t0.elapsed());
 
         let worst = roots.len() - 1;
-        proof_bytes_worst = proof_bytes_worst.max(64 + anchor.proof_bytes_for(worst));
+        // SignedRoot is 170 canonical bytes including the root. Batch proof
+        // bytes include that same 32-byte root, so add the other 138 bytes.
+        proof_bytes_worst = proof_bytes_worst.max(
+            138 + anchor
+                .proof_bytes_for(worst)
+                .expect("worst index is in bounds"),
+        );
 
         // naive: every query pays a full signature verify + inclusion check
         for (i, root) in roots.iter().enumerate() {
-            let proof = anchor.proof_for(i);
+            let proof = anchor.proof_for(i).expect("enumerated index is in bounds");
             let t1 = Instant::now();
-            let sig_ok =
-                ruvector_retrieval_receipt::verify_root(&issuer.verifying_key, anchor.root, sig);
-            let incl_ok = BatchAnchor::verify_inclusion(*root, &proof, anchor.root);
+            let verified = verify_root(&issuer.verifying_key, context, &signed);
+            let incl_ok = verified
+                .as_ref()
+                .is_some_and(|trusted| BatchAnchor::verify_inclusion(*root, &proof, trusted));
             verify_naive_latencies.push(t1.elapsed());
-            assert!(sig_ok && incl_ok, "honest batch member must verify (naive)");
+            assert!(incl_ok, "honest batch member must verify (naive)");
         }
 
         // cached: signature verified once, reused for every query in the batch
         let t2 = Instant::now();
-        let sig_ok =
-            ruvector_retrieval_receipt::verify_root(&issuer.verifying_key, anchor.root, sig);
+        let verified = verify_root(&issuer.verifying_key, context, &signed);
         sig_verify_once_latencies.push(t2.elapsed());
-        assert!(sig_ok, "honest batch signature must verify");
+        let verified = verified.expect("honest batch signature must verify");
         for (idx, root) in roots.iter().enumerate() {
-            let proof = anchor.proof_for(idx);
+            let proof = anchor
+                .proof_for(idx)
+                .expect("enumerated index is in bounds");
             let t3 = Instant::now();
-            let incl_ok = BatchAnchor::verify_inclusion(*root, &proof, anchor.root);
+            let incl_ok = BatchAnchor::verify_inclusion(*root, &proof, &verified);
             verify_cached_latencies.push(t3.elapsed());
             assert!(incl_ok, "honest batch member must verify (cached)");
         }
@@ -334,18 +345,20 @@ fn run_signing_batch(
                     receipt.root().expect("Merkle receipt always has a root")
                 })
                 .collect();
-            let anchor = BatchAnchor::build(&roots);
-            let mut sig = issuer.sign_root(anchor.root);
-            let mut proofs: Vec<Vec<([u8; 32], bool)>> =
-                (0..roots.len()).map(|i| anchor.proof_for(i)).collect();
+            let anchor = BatchAnchor::build(&roots).expect("benchmark batches are nonempty");
+            let mut signed = issuer.sign_root(context, anchor.root(), BENCHMARK_ISSUED_AT_UNIX_MS);
+            let mut proofs: Vec<Vec<([u8; 32], bool)>> = (0..roots.len())
+                .map(|i| anchor.proof_for(i).expect("enumerated index is in bounds"))
+                .collect();
 
-            let idx = apply_sign_tamper(&mut roots, &mut sig, &mut proofs, kind, &mut rng);
+            let idx = apply_sign_tamper(&mut roots, &mut signed, &mut proofs, kind, &mut rng);
             tamper_trials += 1;
 
-            let sig_ok =
-                ruvector_retrieval_receipt::verify_root(&issuer.verifying_key, anchor.root, sig);
-            let incl_ok = BatchAnchor::verify_inclusion(roots[idx], &proofs[idx], anchor.root);
-            if !(sig_ok && incl_ok) {
+            let verified = verify_root(&issuer.verifying_key, context, &signed);
+            let accepted = verified.as_ref().is_some_and(|trusted| {
+                BatchAnchor::verify_inclusion(roots[idx], &proofs[idx], trusted)
+            });
+            if !accepted {
                 tamper_detected += 1;
             }
         }
@@ -504,6 +517,11 @@ fn main() {
     // ── Signed anchoring (candidate_A = batch_size 1, candidate_B = batch_size > 1) ──
     println!("\n=== signed anchoring benchmark (Ed25519 over MerkleReceipt roots) ===");
     let issuer = Issuer::generate();
+    let warmup_context = AnchorContext::new(AnchorPurpose::Batch, index_root);
+    for byte in 0u8..128 {
+        let signed = issuer.sign_root(warmup_context, [byte; 32], BENCHMARK_ISSUED_AT_UNIX_MS);
+        assert!(verify_root(&issuer.verifying_key, warmup_context, &signed).is_some());
+    }
     let batch_sizes = [1usize, 8, 32, 128];
     let sign_tamper_trials_per_kind = 50usize; // 3 kinds x 50 = 150 trials per batch size
     let sign_stats: Vec<SigningStats> = batch_sizes

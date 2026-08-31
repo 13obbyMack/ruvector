@@ -33,14 +33,16 @@
 //! | `PerResultReceipt` | O(k) hashes        | O(idx) bytes, O(idx) work            | sequential tamper-evidence |
 //! | `MerkleReceipt`  | O(k) hashes          | O(log k) bytes, O(log k) work        | membership-proof tamper-evidence |
 //!
-//! # Signed anchoring (non-repudiation)
+//! # Signed anchoring (origin authentication)
 //!
 //! The variants above are all *unsigned*: they detect tamper but do not
-//! prove which issuer vouched for a root. [`signing`] adds Ed25519
+//! authenticate an issuing key. [`signing`] adds typed, scoped Ed25519
 //! anchoring on top of `PerResultReceipt`/`MerkleReceipt` roots, either
 //! per query ([`signing::Issuer::sign_root`]) or amortized across a batch
-//! of queries under one signature ([`signing::BatchAnchor`]). See
-//! [`RetrievalReceipt::root`] and the `signing` module docs.
+//! of queries under one signature ([`signing::BatchAnchor`]). Binding a
+//! key to an organization remains the responsibility of an external key
+//! registry and revocation policy. See [`RetrievalReceipt::root`] and the
+//! `signing` module docs.
 
 mod index;
 mod receipt;
@@ -48,7 +50,10 @@ pub mod signing;
 
 pub use index::{synthetic_queries, ResultItem, RetrievalIndex};
 pub use receipt::{query_hash, MerkleReceipt, PerResultReceipt, ReceiptVariant};
-pub use signing::{verify_root, BatchAnchor, Issuer};
+pub use signing::{
+    verify_root, AnchorContext, AnchorError, AnchorPurpose, BatchAnchor, Issuer, RootStatement,
+    SignedRoot, VerifiedRoot, SIGNED_ROOT_VERSION,
+};
 
 /// A built receipt for one query's result set, in whichever variant was
 /// requested. Carries enough state to answer `proof_bytes_for` /
@@ -87,7 +92,7 @@ impl RetrievalReceipt {
 
     /// The signable root for this receipt: `PerResult`'s chain head or
     /// `Merkle`'s root. `None` has no root to sign — nothing was
-    /// committed, so nothing can be non-repudiably vouched for.
+    /// committed, so nothing can be authenticated by a signature.
     pub fn root(&self) -> Option<[u8; 32]> {
         match self {
             RetrievalReceipt::None => None,

@@ -1,38 +1,139 @@
-//! Ed25519 root-signing for retrieval receipts — closes the non-repudiation
-//! gap the unsigned [`crate::receipt`] module leaves open (see the crate
-//! docs and ADR-304's Threat Model): an unsigned receipt lets a holder
-//! detect post-issuance tamper, but nothing binds a root to *which issuer*
-//! vouched for it. Two anchoring strategies, both layered on top of an
-//! existing [`crate::RetrievalReceipt`] rather than replacing it:
+//! Ed25519 authentication for retrieval receipt roots.
 //!
-//! - [`Issuer::sign_root`] / [`verify_root`]: sign a single receipt's root
-//!   (`PerResultReceipt::chain_head` or `MerkleReceipt::root`, exposed via
-//!   [`crate::RetrievalReceipt::root`]) directly. One Ed25519 signature per
-//!   query — a batch of size 1 in [`BatchAnchor`] terms.
-//! - [`BatchAnchor`]: build a second Merkle tree over *B* receipt roots and
-//!   sign only the batch root. A verifier who has already checked the
-//!   batch signature needs only an O(log B) inclusion proof (no further
-//!   signature operations) to authenticate any one query's receipt root
-//!   against it — a real amortization, but only if the verifier actually
-//!   caches the one signature check per batch; see the benchmark's
-//!   `verify_naive` vs `verify_cached` split for what happens if it
-//!   doesn't.
+//! A signature authenticates a root under a supplied public key. It does not,
+//! by itself, prove that the key belongs to a named organization or that the
+//! issuer produced an honest result. Production identity requires an external
+//! key registry, rotation policy, and revocation history.
 //!
-//! Neither strategy changes what an unsigned receipt already proves; they
-//! add proof of *origin*, non-repudiably, at a measured cost. What signing
-//! does **not** do: it does not make the issuer honest (a malicious issuer
-//! can sign a false root just as validly as a true one), and a batch
-//! signature does not exist — and so cannot be checked — until the batch
-//! closes, a real end-to-end latency cost this in-process benchmark does
-//! not model (see the nightly research README's Limitations section).
+//! The signed statement binds the protocol version, purpose, issuer key ID,
+//! deployment scope, issuance time, and root. This prevents a valid signature
+//! from being replayed as a different kind of anchor or in a different scope.
+//! [`BatchAnchor::verify_inclusion`] accepts only a [`VerifiedRoot`] returned by
+//! [`verify_root`], which makes the required signature check hard to skip while
+//! preserving one signature check per batch.
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use core::fmt;
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
 
-/// An Ed25519 keypair standing in for a query engine's receipt-issuance
-/// identity. In production this would be a long-lived, HSM- or
-/// KMS-backed key; here it is generated fresh per benchmark/test run.
+const SIGNED_ROOT_DOMAIN: &[u8] = b"ruvector:retrieval:signed-root:v1:";
+const SIGNED_ROOT_BYTES: usize = SIGNED_ROOT_DOMAIN.len() + 106;
+const BATCH_LEAF_DOMAIN: &[u8] = b"ruvector:retrieval:batch:leaf:";
+const BATCH_NODE_DOMAIN: &[u8] = b"ruvector:retrieval:batch:node:";
+
+/// Current canonical signed statement format.
+pub const SIGNED_ROOT_VERSION: u8 = 1;
+
+/// The semantic use of a signed root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum AnchorPurpose {
+    Receipt = 1,
+    Batch = 2,
+}
+
+/// Caller known verification context. `scope_hash` should identify the
+/// deployment, tenant, or index state in which the anchor is valid.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AnchorContext {
+    pub purpose: AnchorPurpose,
+    pub scope_hash: [u8; 32],
+}
+
+impl AnchorContext {
+    pub const fn new(purpose: AnchorPurpose, scope_hash: [u8; 32]) -> Self {
+        Self {
+            purpose,
+            scope_hash,
+        }
+    }
+}
+
+/// The complete, canonically encoded statement covered by an Ed25519
+/// signature. Public fields make transport serialization explicit.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RootStatement {
+    pub version: u8,
+    pub purpose: AnchorPurpose,
+    pub issuer_key_id: [u8; 32],
+    pub scope_hash: [u8; 32],
+    pub issued_at_unix_ms: u64,
+    pub root: [u8; 32],
+}
+
+impl RootStatement {
+    fn canonical_bytes(&self) -> [u8; SIGNED_ROOT_BYTES] {
+        let mut bytes = [0u8; SIGNED_ROOT_BYTES];
+        let mut offset = SIGNED_ROOT_DOMAIN.len();
+        bytes[..offset].copy_from_slice(SIGNED_ROOT_DOMAIN);
+        bytes[offset] = self.version;
+        offset += 1;
+        bytes[offset] = self.purpose as u8;
+        offset += 1;
+        bytes[offset..offset + 32].copy_from_slice(&self.issuer_key_id);
+        offset += 32;
+        bytes[offset..offset + 32].copy_from_slice(&self.scope_hash);
+        offset += 32;
+        bytes[offset..offset + 8].copy_from_slice(&self.issued_at_unix_ms.to_be_bytes());
+        offset += 8;
+        bytes[offset..offset + 32].copy_from_slice(&self.root);
+        bytes
+    }
+}
+
+/// A signed root plus the metadata covered by the signature.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SignedRoot {
+    pub statement: RootStatement,
+    pub signature: [u8; 64],
+}
+
+/// Proof that [`verify_root`] authenticated a statement. Its fields are
+/// private so callers cannot construct a trusted batch root without checking
+/// the signature and expected context.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VerifiedRoot {
+    root: [u8; 32],
+    context: AnchorContext,
+    issued_at_unix_ms: u64,
+}
+
+impl VerifiedRoot {
+    pub const fn root(&self) -> [u8; 32] {
+        self.root
+    }
+
+    pub const fn context(&self) -> AnchorContext {
+        self.context
+    }
+
+    pub const fn issued_at_unix_ms(&self) -> u64 {
+        self.issued_at_unix_ms
+    }
+}
+
+/// Recoverable errors for invalid batch construction and proof requests.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnchorError {
+    EmptyBatch,
+    IndexOutOfBounds { index: usize, len: usize },
+}
+
+impl fmt::Display for AnchorError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyBatch => write!(f, "batch must contain at least one receipt root"),
+            Self::IndexOutOfBounds { index, len } => {
+                write!(f, "batch index {index} is out of bounds for length {len}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for AnchorError {}
+
+/// An Ed25519 keypair representing a receipt signing key.
 pub struct Issuer {
     signing_key: SigningKey,
     pub verifying_key: VerifyingKey,
@@ -48,23 +149,66 @@ impl Issuer {
         }
     }
 
-    /// Sign a 32-byte receipt root or batch root. Returns the raw 64-byte
-    /// Ed25519 signature.
-    pub fn sign_root(&self, root: [u8; 32]) -> [u8; 64] {
-        self.signing_key.sign(&root).to_bytes()
+    /// Stable SHA256 identifier for this public key.
+    pub fn key_id(&self) -> [u8; 32] {
+        key_id(&self.verifying_key)
+    }
+
+    /// Sign a typed, scoped root statement.
+    pub fn sign_root(
+        &self,
+        context: AnchorContext,
+        root: [u8; 32],
+        issued_at_unix_ms: u64,
+    ) -> SignedRoot {
+        let statement = RootStatement {
+            version: SIGNED_ROOT_VERSION,
+            purpose: context.purpose,
+            issuer_key_id: self.key_id(),
+            scope_hash: context.scope_hash,
+            issued_at_unix_ms,
+            root,
+        };
+        let signature = self
+            .signing_key
+            .sign(&statement.canonical_bytes())
+            .to_bytes();
+        SignedRoot {
+            statement,
+            signature,
+        }
     }
 }
 
-/// Verify a root's signature against `vk`. Returns `false` (never panics)
-/// on a malformed signature, matching the fail-closed convention the rest
-/// of the crate uses for verification.
-pub fn verify_root(vk: &VerifyingKey, root: [u8; 32], sig_bytes: [u8; 64]) -> bool {
-    let sig = Signature::from_bytes(&sig_bytes);
-    vk.verify(&root, &sig).is_ok()
+fn key_id(vk: &VerifyingKey) -> [u8; 32] {
+    Sha256::digest(vk.as_bytes()).into()
 }
 
-const BATCH_LEAF_DOMAIN: &[u8] = b"ruvector:retrieval:batch:leaf:";
-const BATCH_NODE_DOMAIN: &[u8] = b"ruvector:retrieval:batch:node:";
+/// Strictly verify a signed root against the expected purpose and scope.
+/// Returns a nonforgeable token on success and `None` on any mismatch.
+pub fn verify_root(
+    vk: &VerifyingKey,
+    expected: AnchorContext,
+    signed: &SignedRoot,
+) -> Option<VerifiedRoot> {
+    let statement = &signed.statement;
+    if statement.version != SIGNED_ROOT_VERSION
+        || statement.purpose != expected.purpose
+        || statement.scope_hash != expected.scope_hash
+        || statement.issuer_key_id != key_id(vk)
+    {
+        return None;
+    }
+
+    let signature = Signature::from_bytes(&signed.signature);
+    vk.verify_strict(&statement.canonical_bytes(), &signature)
+        .ok()
+        .map(|()| VerifiedRoot {
+            root: statement.root,
+            context: expected,
+            issued_at_unix_ms: statement.issued_at_unix_ms,
+        })
+}
 
 fn batch_leaf(receipt_root: &[u8; 32]) -> [u8; 32] {
     let mut h = Sha256::new();
@@ -75,83 +219,90 @@ fn batch_leaf(receipt_root: &[u8; 32]) -> [u8; 32] {
 
 fn batch_node(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     let mut h = Sha256::new();
-    h.update(BATCH_NODE_DOMAIN); // domain-separated from `receipt::node_hash`
+    h.update(BATCH_NODE_DOMAIN);
     h.update(left);
     h.update(right);
     h.finalize().into()
 }
 
-/// A Merkle tree over a *batch* of receipt roots, anchored by a single
-/// Ed25519 signature over `root`. Trades per-query signing latency for
-/// throughput: a batch of size B pays one signature for B queries, at the
-/// cost of an O(log B) inclusion proof per query and — not modeled here —
-/// the wall-clock delay of waiting for the batch to fill before a signed
-/// anchor exists at all. `B = 1` degenerates to per-query signing (one
-/// extra domain-separated hash over the raw root, negligible next to an
-/// Ed25519 signature).
+/// A Merkle tree over a batch of receipt roots.
 pub struct BatchAnchor {
     levels: Vec<Vec<[u8; 32]>>,
-    pub root: [u8; 32],
+    root: [u8; 32],
 }
 
 impl BatchAnchor {
-    pub fn build(receipt_roots: &[[u8; 32]]) -> Self {
-        assert!(
-            !receipt_roots.is_empty(),
-            "batch must contain at least one receipt root"
-        );
+    /// Build a batch anchor without panicking on untrusted empty input.
+    pub fn build(receipt_roots: &[[u8; 32]]) -> Result<Self, AnchorError> {
+        if receipt_roots.is_empty() {
+            return Err(AnchorError::EmptyBatch);
+        }
+
         let leaves: Vec<[u8; 32]> = receipt_roots.iter().map(batch_leaf).collect();
         let mut levels = vec![leaves];
-        while levels.last().unwrap().len() > 1 {
-            let cur = levels.last().unwrap();
+        while levels.last().is_some_and(|level| level.len() > 1) {
+            let cur = levels
+                .last()
+                .expect("a nonempty batch always has a current level");
             let mut next = Vec::with_capacity(cur.len().div_ceil(2));
             let mut i = 0;
             while i < cur.len() {
-                if i + 1 < cur.len() {
-                    next.push(batch_node(&cur[i], &cur[i + 1]));
-                } else {
-                    // odd tail: duplicate the last node, same documented
-                    // scheme (and same non-issue in this deployment shape)
-                    // as `receipt::MerkleReceipt`.
-                    next.push(batch_node(&cur[i], &cur[i]));
-                }
+                let right = cur.get(i + 1).unwrap_or(&cur[i]);
+                next.push(batch_node(&cur[i], right));
                 i += 2;
             }
             levels.push(next);
         }
-        let root = levels.last().unwrap()[0];
-        Self { levels, root }
+        let root = levels[levels.len() - 1][0];
+        Ok(Self { levels, root })
     }
 
-    pub fn proof_for(&self, idx: usize) -> Vec<([u8; 32], bool)> {
+    pub const fn root(&self) -> [u8; 32] {
+        self.root
+    }
+
+    pub fn len(&self) -> usize {
+        self.levels[0].len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    /// Return an inclusion proof or a recoverable bounds error.
+    pub fn proof_for(&self, idx: usize) -> Result<Vec<([u8; 32], bool)>, AnchorError> {
+        if idx >= self.len() {
+            return Err(AnchorError::IndexOutOfBounds {
+                index: idx,
+                len: self.len(),
+            });
+        }
+
         let mut proof = Vec::new();
         let mut i = idx;
         for level in &self.levels[..self.levels.len() - 1] {
             let sibling_idx = if i % 2 == 0 { i + 1 } else { i - 1 };
-            let sibling = if sibling_idx < level.len() {
-                level[sibling_idx]
-            } else {
-                level[i]
-            };
-            proof.push((sibling, i % 2 == 0));
+            let sibling = level.get(sibling_idx).unwrap_or(&level[i]);
+            proof.push((*sibling, i % 2 == 0));
             i /= 2;
         }
-        proof
+        Ok(proof)
     }
 
-    pub fn proof_bytes_for(&self, idx: usize) -> usize {
-        32 + self.proof_for(idx).len() * 32
+    pub fn proof_bytes_for(&self, idx: usize) -> Result<usize, AnchorError> {
+        Ok(32 + self.proof_for(idx)?.len() * 32)
     }
 
-    /// Verify that `receipt_root` is a leaf committed under `root`, given
-    /// an inclusion `proof`. Does **not** itself check any signature —
-    /// callers verify `root`'s signature once (via [`verify_root`]) and
-    /// may reuse that result across every query in the batch.
+    /// Verify membership only under an already authenticated batch root.
     pub fn verify_inclusion(
         receipt_root: [u8; 32],
         proof: &[([u8; 32], bool)],
-        root: [u8; 32],
+        verified_root: &VerifiedRoot,
     ) -> bool {
+        if verified_root.context.purpose != AnchorPurpose::Batch {
+            return false;
+        }
+
         let mut node = batch_leaf(&receipt_root);
         for (sibling, sibling_is_right) in proof {
             node = if *sibling_is_right {
@@ -160,7 +311,7 @@ impl BatchAnchor {
                 batch_node(sibling, &node)
             };
         }
-        node == root
+        node == verified_root.root
     }
 }
 
@@ -168,139 +319,184 @@ impl BatchAnchor {
 mod tests {
     use super::*;
 
-    #[test]
-    fn sign_and_verify_roundtrip_succeeds() {
-        let issuer = Issuer::generate();
-        let root = [7u8; 32];
-        let sig = issuer.sign_root(root);
-        assert!(verify_root(&issuer.verifying_key, root, sig));
+    const SCOPE: [u8; 32] = [9u8; 32];
+    const ISSUED_AT: u64 = 1_788_134_400_000;
+
+    fn context(purpose: AnchorPurpose) -> AnchorContext {
+        AnchorContext::new(purpose, SCOPE)
+    }
+
+    fn sample_roots(n: usize) -> Vec<[u8; 32]> {
+        (0..n)
+            .map(|i| {
+                let mut root = [0u8; 32];
+                root[0] = i as u8;
+                root[1] = (i >> 8) as u8;
+                root
+            })
+            .collect()
     }
 
     #[test]
-    fn tampered_root_fails_verification() {
+    fn typed_root_roundtrip_succeeds() {
         let issuer = Issuer::generate();
-        let root = [7u8; 32];
-        let sig = issuer.sign_root(root);
-        let mut wrong_root = root;
-        wrong_root[0] ^= 0xFF;
-        assert!(!verify_root(&issuer.verifying_key, wrong_root, sig));
+        let signed = issuer.sign_root(context(AnchorPurpose::Receipt), [7u8; 32], ISSUED_AT);
+        let verified = verify_root(
+            &issuer.verifying_key,
+            context(AnchorPurpose::Receipt),
+            &signed,
+        )
+        .expect("honest signature must verify");
+        assert_eq!(verified.root(), [7u8; 32]);
+        assert_eq!(verified.issued_at_unix_ms(), ISSUED_AT);
     }
 
     #[test]
-    fn tampered_signature_byte_fails_verification() {
+    fn every_signed_field_is_bound() {
         let issuer = Issuer::generate();
-        let root = [7u8; 32];
-        let mut sig = issuer.sign_root(root);
-        sig[0] ^= 0xFF;
-        assert!(!verify_root(&issuer.verifying_key, root, sig));
+        let expected = context(AnchorPurpose::Receipt);
+        let signed = issuer.sign_root(expected, [7u8; 32], ISSUED_AT);
+
+        let mut variants = Vec::new();
+        let mut value = signed;
+        value.statement.version = 2;
+        variants.push(value);
+        let mut value = signed;
+        value.statement.purpose = AnchorPurpose::Batch;
+        variants.push(value);
+        let mut value = signed;
+        value.statement.issuer_key_id[0] ^= 0xff;
+        variants.push(value);
+        let mut value = signed;
+        value.statement.scope_hash[0] ^= 0xff;
+        variants.push(value);
+        let mut value = signed;
+        value.statement.issued_at_unix_ms += 1;
+        variants.push(value);
+        let mut value = signed;
+        value.statement.root[0] ^= 0xff;
+        variants.push(value);
+        let mut value = signed;
+        value.signature[0] ^= 0xff;
+        variants.push(value);
+
+        for tampered in variants {
+            assert!(verify_root(&issuer.verifying_key, expected, &tampered).is_none());
+        }
+    }
+
+    #[test]
+    fn cross_purpose_and_cross_scope_replay_fail() {
+        let issuer = Issuer::generate();
+        let signed = issuer.sign_root(context(AnchorPurpose::Receipt), [7u8; 32], ISSUED_AT);
+        assert!(verify_root(
+            &issuer.verifying_key,
+            context(AnchorPurpose::Batch),
+            &signed
+        )
+        .is_none());
+        assert!(verify_root(
+            &issuer.verifying_key,
+            AnchorContext::new(AnchorPurpose::Receipt, [8u8; 32]),
+            &signed
+        )
+        .is_none());
     }
 
     #[test]
     fn wrong_issuer_key_fails_verification() {
         let issuer = Issuer::generate();
         let impostor = Issuer::generate();
-        let root = [7u8; 32];
-        let sig = issuer.sign_root(root);
-        assert!(!verify_root(&impostor.verifying_key, root, sig));
-    }
-
-    fn sample_roots(n: usize) -> Vec<[u8; 32]> {
-        (0..n)
-            .map(|i| {
-                let mut r = [0u8; 32];
-                r[0] = i as u8;
-                r[1] = (i >> 8) as u8;
-                r
-            })
-            .collect()
+        let signed = issuer.sign_root(context(AnchorPurpose::Receipt), [7u8; 32], ISSUED_AT);
+        assert!(verify_root(
+            &impostor.verifying_key,
+            context(AnchorPurpose::Receipt),
+            &signed
+        )
+        .is_none());
     }
 
     #[test]
     fn batch_anchor_verifies_all_members() {
+        let issuer = Issuer::generate();
         for n in [1usize, 2, 3, 8, 17, 128] {
             let roots = sample_roots(n);
-            let anchor = BatchAnchor::build(&roots);
+            let anchor = BatchAnchor::build(&roots).expect("nonempty batch");
+            let signed = issuer.sign_root(context(AnchorPurpose::Batch), anchor.root(), ISSUED_AT);
+            let verified = verify_root(
+                &issuer.verifying_key,
+                context(AnchorPurpose::Batch),
+                &signed,
+            )
+            .expect("honest batch signature");
             for (i, root) in roots.iter().enumerate() {
-                let proof = anchor.proof_for(i);
-                assert!(
-                    BatchAnchor::verify_inclusion(*root, &proof, anchor.root),
-                    "batch size {n}, index {i} must verify"
-                );
+                let proof = anchor.proof_for(i).expect("valid index");
+                assert!(BatchAnchor::verify_inclusion(*root, &proof, &verified));
             }
         }
     }
 
     #[test]
-    fn batch_of_one_root_equals_its_own_leaf_hash() {
-        let roots = sample_roots(1);
-        let anchor = BatchAnchor::build(&roots);
-        assert_eq!(anchor.root, batch_leaf(&roots[0]));
+    fn batch_input_errors_do_not_panic() {
+        assert_eq!(BatchAnchor::build(&[]).err(), Some(AnchorError::EmptyBatch));
+        let anchor = BatchAnchor::build(&sample_roots(2)).expect("nonempty batch");
+        assert_eq!(
+            anchor.proof_for(2).unwrap_err(),
+            AnchorError::IndexOutOfBounds { index: 2, len: 2 }
+        );
+        assert_eq!(
+            anchor.proof_bytes_for(usize::MAX).unwrap_err(),
+            AnchorError::IndexOutOfBounds {
+                index: usize::MAX,
+                len: 2
+            }
+        );
     }
 
     #[test]
-    fn batch_anchor_rejects_wrong_leaf() {
+    fn batch_anchor_rejects_wrong_leaf_and_tampered_proof() {
+        let issuer = Issuer::generate();
         let roots = sample_roots(8);
-        let anchor = BatchAnchor::build(&roots);
-        let proof = anchor.proof_for(3);
+        let anchor = BatchAnchor::build(&roots).expect("nonempty batch");
+        let signed = issuer.sign_root(context(AnchorPurpose::Batch), anchor.root(), ISSUED_AT);
+        let verified = verify_root(
+            &issuer.verifying_key,
+            context(AnchorPurpose::Batch),
+            &signed,
+        )
+        .expect("honest batch signature");
+        let mut proof = anchor.proof_for(3).expect("valid index");
         let mut wrong = roots[3];
-        wrong[0] ^= 0xFF;
-        assert!(!BatchAnchor::verify_inclusion(wrong, &proof, anchor.root));
+        wrong[0] ^= 0xff;
+        assert!(!BatchAnchor::verify_inclusion(wrong, &proof, &verified));
+        proof[0].0[0] ^= 0xff;
+        assert!(!BatchAnchor::verify_inclusion(roots[3], &proof, &verified));
     }
 
     #[test]
-    fn batch_anchor_rejects_tampered_proof_sibling() {
-        let roots = sample_roots(8);
-        let anchor = BatchAnchor::build(&roots);
-        let mut proof = anchor.proof_for(3);
-        proof[0].0[0] ^= 0xFF;
+    fn receipt_signature_cannot_authorize_batch_inclusion() {
+        let issuer = Issuer::generate();
+        let roots = sample_roots(1);
+        let anchor = BatchAnchor::build(&roots).expect("nonempty batch");
+        let signed = issuer.sign_root(context(AnchorPurpose::Receipt), anchor.root(), ISSUED_AT);
+        let verified = verify_root(
+            &issuer.verifying_key,
+            context(AnchorPurpose::Receipt),
+            &signed,
+        )
+        .expect("honest receipt signature");
         assert!(!BatchAnchor::verify_inclusion(
-            roots[3],
-            &proof,
-            anchor.root
+            roots[0],
+            &anchor.proof_for(0).expect("valid index"),
+            &verified
         ));
     }
 
     #[test]
     fn batch_anchor_proof_bytes_grow_logarithmically() {
-        let small = BatchAnchor::build(&sample_roots(2));
-        let large = BatchAnchor::build(&sample_roots(128));
-        assert!(small.proof_bytes_for(0) < large.proof_bytes_for(0));
-        // log2(128) = 7 levels -> 32 (root) + 7*32 = 256 bytes
-        assert_eq!(large.proof_bytes_for(0), 32 + 7 * 32);
-    }
-
-    #[test]
-    fn end_to_end_batch_signing_detects_root_and_signature_tamper() {
-        let issuer = Issuer::generate();
-        let roots = sample_roots(16);
-        let anchor = BatchAnchor::build(&roots);
-        let sig = issuer.sign_root(anchor.root);
-        assert!(verify_root(&issuer.verifying_key, anchor.root, sig));
-
-        let idx = 5;
-        let proof = anchor.proof_for(idx);
-        assert!(BatchAnchor::verify_inclusion(
-            roots[idx],
-            &proof,
-            anchor.root
-        ));
-
-        // Signature tamper: batch root itself is untouched but the
-        // signature is corrupted -> signature check must fail even though
-        // inclusion still holds.
-        let mut bad_sig = sig;
-        bad_sig[10] ^= 0xFF;
-        assert!(!verify_root(&issuer.verifying_key, anchor.root, bad_sig));
-
-        // Root citation tamper: a different receipt root is claimed to be
-        // member `idx` -> inclusion check must fail even though the
-        // signature (over the true, untouched batch root) still verifies.
-        let mut forged_root = roots[idx];
-        forged_root[0] ^= 0xFF;
-        assert!(!BatchAnchor::verify_inclusion(
-            forged_root,
-            &proof,
-            anchor.root
-        ));
+        let small = BatchAnchor::build(&sample_roots(2)).expect("nonempty batch");
+        let large = BatchAnchor::build(&sample_roots(128)).expect("nonempty batch");
+        assert!(small.proof_bytes_for(0).unwrap() < large.proof_bytes_for(0).unwrap());
+        assert_eq!(large.proof_bytes_for(0).unwrap(), 32 + 7 * 32);
     }
 }

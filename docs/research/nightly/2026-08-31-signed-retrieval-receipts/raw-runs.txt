@@ -147,3 +147,36 @@ single-leaf batch) and is now skipped at that batch size rather than
 silently miscounted -- see the README's Failure Modes section and
 `apply_sign_tamper` / the `batch_len == 1` guard in
 `crates/ruvector-retrieval-receipt/src/bin/benchmark.rs`.
+HARDENED SIGNED STATEMENT RERUN
+===============================
+Command: target/release/benchmark 5000 128 10 200
+Environment: 12 logical CPUs, rustc 1.94.1, release profile
+Warmup: 128 sign and strict verify operations before measurement
+
+Run 1
+batch_size        sign_amort_ns    verify_naive_ns   verify_cached_ns sig_verify_once_ns    proof_bytes    tamper_detect
+1                        9715.7              22869                246              21824            170          100/100
+8                        1951.9              23364               1123              25202            266          150/150
+32                        956.9              23238               1380              21387            330          150/150
+128                       637.7              23410               1834              22542            394          150/150
+SIGNED ANCHORING ACCEPTANCE RESULT: ACCEPT
+
+Run 2
+batch_size        sign_amort_ns    verify_naive_ns   verify_cached_ns sig_verify_once_ns    proof_bytes    tamper_detect
+1                       12208.2              28609                291              26683            170          100/100
+8                        2604.8              28561               1152              27360            266          150/150
+32                       1109.6              23292               1619              24994            330          150/150
+128                       707.7              29311               1851              21500            394          150/150
+SIGNED ANCHORING ACCEPTANCE RESULT: ACCEPT
+
+Run 3
+batch_size        sign_amort_ns    verify_naive_ns   verify_cached_ns sig_verify_once_ns    proof_bytes    tamper_detect
+1                       24868.6              57754                541              54858            170          100/100
+8                        4264.0              52918               2012              50590            266          150/150
+32                       1943.1              59653               3586              66869            330          150/150
+128                      1923.8              70935               4263              52188            394          150/150
+SIGNED ANCHORING ACCEPTANCE RESULT: ACCEPT
+
+The historical raw root-only signature runs follow. They are retained to
+show how the benchmark and security contract changed, but they do not
+support the hardened API numbers reported in the README and ADR.

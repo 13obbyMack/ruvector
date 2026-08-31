@@ -16,14 +16,16 @@ That ADR's own Threat Model, restated in the 2026-08-13 nightly research
 README's "Next Research" section, named the gap explicitly:
 
 > Design and benchmark root/head signing (Ed25519 over `index_state_root`
-> + receipt root) to close the non-repudiation gap this crate leaves
+> + receipt root) to close the origin-authentication gap this crate leaves
 > open.
 
 An unsigned receipt proves *what* was returned did not change after
 issuance. It proves nothing about *who* issued it — any party holding the
 same leaves can reproduce the same root, so a receipt alone cannot be
-shown to a third party as evidence that a specific engine instance vouched
-for it. That is the non-repudiation gap this ADR closes: sign the root.
+shown to a third party as evidence that a signing key vouched for it. That
+is the origin-authentication gap this ADR closes. Binding that key to a
+specific engine or organization requires an external key registry,
+rotation policy, and revocation history.
 
 This connects three existing ecosystem primitives without inventing a new
 one: `ruvector-proof-gate`'s write-side hash chains (ADR-227), ADR-304's
@@ -60,9 +62,13 @@ Add a `signing` module to the existing `ruvector-retrieval-receipt` crate
 (no new crate — the surface area is small and it has no reason to exist
 independently of the receipts it signs):
 
-- `Issuer` — an Ed25519 keypair standing in for a query engine's
-  receipt-issuance identity; `sign_root(root: [u8; 32]) -> [u8; 64]`.
-- `verify_root(vk, root, sig) -> bool` — fail-closed signature check.
+- `Issuer` — an Ed25519 keypair standing in for a query engine's signing
+  key. `sign_root(context, root, issued_at_unix_ms)` signs a canonical
+  statement containing version, purpose, public-key ID, scope, time, and
+  root.
+- `verify_root(vk, expected_context, signed) -> Option<VerifiedRoot>` —
+  strict, fail-closed signature and context check. The opaque success
+  token prevents unauthenticated roots from reaching batch inclusion.
 - `BatchAnchor` — a second-level Merkle tree over a batch of `B` receipt
   roots (domain-separated from ADR-304's per-result tree:
   `ruvector:retrieval:batch:leaf:` / `...:node:`, distinct from
@@ -84,10 +90,10 @@ an origin proof on top, opt-in, at a separately measured cost.
 What signed anchoring adds to ADR-304's threat model, and what it still
 does not close:
 
-- **Adds:** non-repudiation of the root. A verifier holding `Issuer`'s
-  public key can show a third party that this specific issuer vouched for
-  this specific root — a receipt is no longer reproducible-and-thus-
-  deniable by any party who happens to hold the same leaves.
+- **Adds:** origin authentication under a supplied public key. The signed
+  statement also prevents cross-purpose and cross-scope replay. It does
+  not establish legal non-repudiation or organizational identity without
+  durable external key ownership and revocation evidence.
 - **Does not add:** issuer honesty. A malicious or compromised issuer can
   sign a false root exactly as validly as a true one; signing binds
   *origin*, not *correctness* of the underlying leaves.
@@ -107,27 +113,28 @@ does not close:
 
 Measured, `cargo run --release -p ruvector-retrieval-receipt --bin
 benchmark` (n=5,000 vectors, dims=128, k=10, 200 queries, 3 repeated
-runs; hardware: 4 logical CPUs, rustc 1.94.1, `release` profile):
+runs after 128 sign/verify warmups; hardware: 12 logical CPUs, rustc
+1.94.1, `release` profile):
 
 | batch_size (B) | sign amortized (ns/query) | verify naive (ns/query) | verify cached (ns/query) | sig-verify-once (ns/batch) | proof bytes (sig + worst-case inclusion) | tamper detect |
 |---:|---:|---:|---:|---:|---:|---:|
-| 1   | ~29,300 | ~76,300 | ~790  | ~65,000 | 96  | 250/250 |
-| 8   | ~4,780  | ~55,300 | ~2,900 | ~44,600 | 192 | 450/450 |
-| 32  | ~2,490  | ~41,700 | ~4,100 | ~33,600 | 256 | 450/450 |
-| 128 | ~1,690  | ~46,800 | ~5,700 | ~37,800 | 320 | 450/450 |
+| 1   | ~15,600 | ~36,400 | ~360  | ~34,500 | 170 | 300/300 |
+| 8   | ~2,940  | ~34,900 | ~1,430 | ~34,400 | 266 | 450/450 |
+| 32  | ~1,340  | ~35,400 | ~2,200 | ~37,800 | 330 | 450/450 |
+| 128 | ~1,090  | ~41,200 | ~2,650 | ~42,100 | 394 | 450/450 |
 
 (Means across the 3 repeated runs referenced in the nightly research
 README; per-run raw output preserved there.)
 
-- Amortized signing cost at B=128 is ~5.5–6.1% of the B=1 (per-query) cost
+- Amortized signing cost at B=128 is ~5.8–7.7% of the B=1 (per-query) cost
   across all 3 runs — comfortably under the 10% threshold fixed before
   the run.
-- `verify_naive` stays within a roughly 40,000–76,000ns band across all
-  batch sizes (dominated by the O(1) Ed25519 verify, ~40–60µs on this
+- `verify_naive` means stay within a roughly 35,000–41,000ns band across
+  batch sizes (dominated by the O(1) Ed25519 verify on this
   hardware) — confirms batching does not help an uncaching verifier, as
   the hypothesis's Subject-to clause requires.
-- `verify_cached` grows from ~0.8µs (B=1, no inclusion proof exists) to
-  ~5.7µs (B=128, a 7-level inclusion proof) — small in absolute terms, but
+- `verify_cached` grows from ~0.36µs (B=1, no inclusion proof exists) to
+  ~2.65µs (B=128, a 7-level inclusion proof) — small in absolute terms, but
   real: caching the signature check does not make batch membership free.
 - Every injected tamper (root-byte flip, signature-byte flip,
   inclusion-proof-sibling flip) was rejected at every batch size across 3
@@ -138,7 +145,7 @@ README; per-run raw output preserved there.)
   replaced with a direct byte flip — recorded here because a fabricated
   or unexamined non-100% number would otherwise have blocked promotion
   for the wrong reason.)
-- All 24 unit tests pass (13 pre-existing ADR-304 tests + 11 new), `cargo
+- All 23 unit tests pass (15 receipt tests + 8 focused signing tests), `cargo
   clippy --all-targets --release` clean, `cargo fmt --check` clean.
 
 Existing ADR-304 unsigned-receipt numbers (MerkleReceipt generation ≈
@@ -200,7 +207,8 @@ a new claim.
 Already implemented in this branch:
 
 1. `crates/ruvector-retrieval-receipt/src/signing.rs` — `Issuer`,
-   `verify_root`, `BatchAnchor`, 11 unit tests.
+   typed signed statements, strict verification, `BatchAnchor`, and
+   security regression tests.
 2. `crates/ruvector-retrieval-receipt/src/lib.rs` — `RetrievalReceipt::root()`,
    `pub mod signing`, re-exports.
 3. `crates/ruvector-retrieval-receipt/src/bin/benchmark.rs` — signed
@@ -219,7 +227,8 @@ rotation, and BLS aggregation.
 
 ```rust
 use ruvector_retrieval_receipt::{
-    query_hash, BatchAnchor, Issuer, ReceiptVariant, RetrievalIndex, RetrievalReceipt,
+    query_hash, verify_root, AnchorContext, AnchorPurpose, BatchAnchor, Issuer,
+    ReceiptVariant, RetrievalIndex, RetrievalReceipt,
 };
 
 let issuer = Issuer::generate();
@@ -232,15 +241,19 @@ let results = index.search(&query, 10);
 let qh = query_hash(&query);
 let receipt = RetrievalReceipt::build(ReceiptVariant::Merkle, qh, root_state, &results);
 let root = receipt.root().unwrap();
-let sig = issuer.sign_root(root);
-assert!(ruvector_retrieval_receipt::verify_root(&issuer.verifying_key, root, sig));
+let issued_at_unix_ms = 1_788_134_400_000;
+let receipt_context = AnchorContext::new(AnchorPurpose::Receipt, root_state);
+let signed = issuer.sign_root(receipt_context, root, issued_at_unix_ms);
+assert!(verify_root(&issuer.verifying_key, receipt_context, &signed).is_some());
 
 // Batched (B receipt roots, one signature):
 let roots: Vec<[u8; 32]> = vec![root /* , ... more query roots ... */];
-let anchor = BatchAnchor::build(&roots);
-let batch_sig = issuer.sign_root(anchor.root);
-let proof = anchor.proof_for(0);
-assert!(BatchAnchor::verify_inclusion(roots[0], &proof, anchor.root));
+let anchor = BatchAnchor::build(&roots).unwrap();
+let batch_context = AnchorContext::new(AnchorPurpose::Batch, root_state);
+let signed_batch = issuer.sign_root(batch_context, anchor.root(), issued_at_unix_ms);
+let verified_batch = verify_root(&issuer.verifying_key, batch_context, &signed_batch).unwrap();
+let proof = anchor.proof_for(0).unwrap();
+assert!(BatchAnchor::verify_inclusion(roots[0], &proof, &verified_batch));
 ```
 
 ## Feature Flags
@@ -265,9 +278,13 @@ Limitations in
   namespaced apart from ADR-304's per-result tree (`ruvector:retrieval:*`)
   so a batch leaf and a per-result leaf can never collide even if a
   32-byte value happened to appear in both trees.
-- Fail-closed verification throughout: `verify_root` and
-  `verify_inclusion` return `false` on any malformed or mismatched input,
-  never panic, matching the crate's existing convention.
+- Signed statements domain-separate and bind version, purpose, SHA256
+  public-key ID, deployment scope, issuance time, and root. Verification
+  uses `ed25519-dalek::VerifyingKey::verify_strict`.
+- Fail-closed verification throughout: `verify_root` returns `None` on
+  any mismatch. Batch construction and proof lookup return recoverable
+  errors for empty or out-of-range input. `verify_inclusion` accepts only
+  the opaque token produced by a successful signature check.
 - Key management (generation, storage, rotation) is out of scope for this
   crate, as for every other signing primitive in the workspace — `Issuer`
   is a thin wrapper for benchmarking and API demonstration, not a
@@ -284,7 +301,7 @@ into a live query path.
 ## Failure Modes
 
 - **Issuer key compromise:** every root signed under the compromised key
-  is no longer trustworthy for non-repudiation, retroactively, for as
+  is no longer trustworthy for origin authentication, retroactively, for as
   long as the key was in use. Batching increases blast radius per
   incident (one key covers B queries per signature) but does not change
   the total exposure across the key's lifetime.

@@ -1,144 +1,115 @@
-# Closing a Non-Repudiation Gap in Retrieval Receipts With Ed25519, Honestly Benchmarked
+# How RuVector proves which key signed a retrieval result
 
-## Problem
+## The short version
 
-Two weeks ago, a nightly research run in the RuVector project shipped
-`ruvector-retrieval-receipt`: cryptographic commitments over ANN query
-result sets, so a holder of a receipt could detect if the result set they
-were handed was silently tampered with after the query engine issued it.
-The design was explicit about what it did *not* prove: the receipts were
-unsigned. Anyone holding the same result leaves could reproduce the same
-root hash. A receipt was internally consistent, but not attributable — it
-couldn't be shown to a third party as evidence that a *specific* engine
-instance vouched for it. The prior run's own README named the fix
-directly: sign the root.
+RuVector retrieval receipts could already prove that a result had not
+changed after it was issued. They could not prove that a particular
+signing key approved that receipt.
 
-## Hypothesis
+This change adds Ed25519 signatures to receipt roots. One signature can
+cover one receipt or a batch of receipts. At a batch size of 128, the
+measured signing cost per query fell to 5.8 to 7.7 percent of the single
+receipt cost. Every one of 1,500 injected signing and proof tamper trials
+was rejected.
 
-Given a Merkle receipt root per query, does signing it with Ed25519 close
-that gap at an acceptable, measurable cost — and does batching many
-receipt roots under one signature actually amortize that cost, or is that
-a plausible-sounding claim that falls apart under an uncaching verifier?
+The practical takeaway is simple: use one signature per query when the
+proof must exist immediately. Use a batch when throughput matters and a
+short wait for the batch to close is acceptable.
 
-Formally:
+## What was fixed before merge
 
+Signing only a raw 32 byte root was too ambiguous. A valid signature
+could be copied into a context the signer never intended. The first API
+also let callers check Merkle inclusion without first checking the batch
+signature.
+
+The merged contract signs a complete statement containing:
+
+1. Protocol version
+
+2. Receipt or batch purpose
+
+3. SHA256 identifier of the public key
+
+4. Deployment or index scope
+
+5. Issuance time
+
+6. Receipt or batch root
+
+Verification uses the strict Ed25519 path. A successful signature check
+returns a trusted root token. Batch inclusion accepts only that token, so
+the compiler makes the required authentication step difficult to skip.
+
+Empty batches and invalid proof indexes now return typed errors instead
+of terminating the process. The canonical statement encoder uses a
+fixed 140 byte buffer, so the stronger contract adds no heap allocation
+to the signing or verification path.
+
+## Measured result
+
+Command:
+
+```text
+cargo run --release -p ruvector-retrieval-receipt --bin benchmark -- 5000 128 10 200
 ```
-Given a MerkleReceipt root per query,
-when signed either per-query (batch size 1) or batched (B roots folded
-  into a second Merkle tree, signed once),
-then batched signing's amortized per-query cost should drop by roughly
-  the batch factor relative to per-query signing,
-subject to: every tamper (root, signature, or inclusion-proof sibling)
-  stays detected, and an uncaching verifier's per-query cost must NOT
-  drop with batch size — if it did, the benchmark would be quietly
-  rewarding an unrealistic verifier.
-```
 
-## Technical Design
+Environment: 12 logical CPUs, Rust 1.94.1, release profile, 128 warmup
+sign and verify operations, then three independent runs.
 
-Two additions, layered on the existing crate without touching it:
+Mean results:
 
-- **Per-query signing:** `Issuer::sign_root(root) -> [u8; 64]`, an
-  Ed25519 signature over the receipt's existing Merkle root.
-- **Batched signing:** `BatchAnchor` — a second Merkle tree built over B
-  receipt roots (domain-separated hashing keeps it from colliding with
-  the existing per-result tree), signed once. Each query gets an O(log B)
-  inclusion proof against the signed batch root.
+1. Batch 1: 15,598 ns signing per query, 36,411 ns uncached verify, 170
+bytes of portable evidence
 
-`ed25519-dalek 2.1` was already used at that exact version in five other
-places in this workspace (`cognitum-gate-tilezero`, `rvm-checkpoint`,
-`rvf-crypto`, `rvforge-registry`, `mcp-brain-server`) — reused verbatim
-rather than re-decided.
+2. Batch 8: 2,940 ns signing per query, 34,948 ns uncached verify, 266
+bytes of portable evidence
 
-## Implementation
+3. Batch 32: 1,337 ns signing per query, 35,394 ns uncached verify, 330
+bytes of portable evidence
 
-~250 new lines in `signing.rs`, one accessor added to the existing
-`RetrievalReceipt` enum, and a new benchmark section reusing the existing
-benchmark file's helpers. No changes to the unsigned-receipt code path.
-11 new unit tests plus the 13 pre-existing ones, all passing; `cargo
-clippy --all-targets --release` and `cargo fmt --check` both clean.
+4. Batch 128: 1,090 ns signing per query, 41,219 ns uncached verify, 394
+bytes of portable evidence
 
-## Benchmark Evidence
+The batch 128 signing cost averaged about 14 times lower than batch 1.
+Uncached verification did not improve with batch size, which confirms
+that the benchmark measured real signature amortization instead of
+hiding verification work.
 
-`cargo run --release -p ruvector-retrieval-receipt --bin benchmark --
-5000 128 10 200`, 4 logical CPUs, rustc 1.94.1, 3 repeated runs:
+## What this proves
 
-| batch_size | sign amortized (ns/query) | verify naive (ns/query) | verify cached (ns/query) |
-|---:|---:|---:|---:|
-| 1   | 29,042 | 76,936 | 785   |
-| 8   | 5,107  | 55,943 | 2,932 |
-| 32  | 2,521  | 42,322 | 4,081 |
-| 128 | 1,688  | 46,708 | 5,893 |
+It proves that the signed statement came from the private key matching a
+supplied public key and that the statement fields were not modified.
 
-Amortized signing drops ~17x from batch=1 to batch=128, landing at
-5.5–6.1% of the per-query cost — under the 10% threshold fixed before the
-run. Naive (uncaching) verify cost stays flat, 42,000–77,000ns, across
-every batch size — confirming the hypothesis's guard condition held: an
-Ed25519 verify (~40–65µs here) dominates regardless of batching, so a
-verifier that skips caching gets no benefit from it. 100% tamper
-detection (root-byte, signature-byte, inclusion-proof-sibling flips)
-across every batch size in all 3 runs.
+It does not prove that the result was correct. A compromised signer can
+sign false data. It also does not prove that a key belongs to a named
+company or engine. That requires an external key registry, rotation
+policy, revocation history, and durable audit record.
 
-## The Bug the Process Caught
+This distinction matters. A cryptographic primitive can authenticate a
+key. Organizational identity is a governance system built around that
+primitive.
 
-The very first run reported 50/150 undetected tampers at batch size 1 —
-a REJECT. Rather than re-run until it passed, the raw output was traced:
-the root-tamper trial swapped a root with `(idx + 1) % batch_len`, which
-for a one-element batch is `idx` itself — a swap with nothing, a no-op.
-Fifty trials "tampered" a batch by doing nothing to it, and the verifier
-correctly verified the untouched data, which the trial-counting logic
-misread as "not detected." Fixed by replacing the swap with a direct byte
-flip (no degenerate case at batch size 1), confirmed clean across 3
-subsequent runs. Both the bug and the fix are recorded in the raw
-evidence file, not silently absorbed into a clean final number.
+## Deployment decision
 
-## Limitations
+This remains experimental and is not connected to the default query
+path. Production promotion needs two additional measurements:
 
-This benchmark measures only in-process CPU cost. A batch signature does
-not exist until a batch closes — the wall-clock delay of waiting for B
-queries to arrive is a real, deployment-specific cost this run does not
-model. Batching is therefore a measured CPU-throughput win, not a
-demonstrated end-to-end latency win. The dataset is synthetic and
-brute-force (inherited scope from the crate's original design, which
-isolates the provenance layer's cost from ANN recall). WASM/edge cost is
-analyzed as plausible (the same dependency is already used in a WASM
-target elsewhere in the workspace) but not measured here.
+1. Batch fill latency under the target query arrival rate
 
-## Production Relevance
+2. Key custody and rotation using the target HSM or KMS
 
-Signed receipts are directly useful anywhere a retrieval result needs to
-be shown to a party that doesn't trust the query engine by default: a
-compliance audit of an agent's cited evidence, a regulated-industry RAG
-deployment, or a swarm of agents that need to accept each other's
-retrieved context without re-querying. Batching is the right choice when
-throughput matters more than per-query signature immediacy (e.g., a
-multi-tenant retrieval service); per-query signing is the right choice
-when a caller needs a signed receipt the instant a query returns.
+The largest uncertainty is batch fill time. A batch of 128 is useful only
+if the traffic rate closes it inside the receipt availability service
+level. The fix path is a time bounded batcher that signs when either the
+size limit or the time limit is reached.
 
-## RuVector Ecosystem Implications
+## Acceptance test
 
-This connects five points of ecosystem leverage from one crate extension:
-`ruvector-proof-gate`'s existing write-side hash chains, the read-side
-receipts this extends, the workspace's established Ed25519 pattern, a
-plausible MCP verification tool (read-only, no signing exposed), and a
-natural fit for RVF's signed-lineage goals (a `BatchAnchor` is exactly
-the shape of a portable, independently-verifiable provenance unit).
+Run the command above. Promotion requires both acceptance sections to
+print `ACCEPT`, all 23 tests to pass, and every tamper count to equal its
+trial count.
 
-## Future Direction
+Design record: `docs/adr/ADR-340-signed-retrieval-receipt-anchoring.md`
 
-Model real wall-clock batch-fill latency under a realistic query
-arrival-rate distribution. Evaluate BLS aggregate signatures, which could
-avoid batch-fill latency entirely by combining independently-issued
-per-query signatures after the fact — deferred here because it requires
-vetting a new pairing-curve dependency. Consider an independent,
-periodically-signed `index_state_root` anchor, decoupled from any single
-query, as a complementary mechanism for auditors who want to verify index
-state without holding a specific receipt.
-
-## References
-
-- ADR-304: Retrieval Receipts (prior nightly run, the origin of this
-  run's hypothesis).
-- ADR-340: Signed Retrieval-Receipt Anchoring (this run's design record).
-- `ed25519-dalek` 2.1 — the signature library, already in use across this
-  workspace.
+Evidence: `docs/research/nightly/2026-08-31-signed-retrieval-receipts/README.md`
