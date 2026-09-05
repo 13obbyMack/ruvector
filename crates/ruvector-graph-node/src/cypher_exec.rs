@@ -269,7 +269,7 @@ fn compare(l: &EvalValue, r: &EvalValue, op: BinaryOperator) -> bool {
         (EvalValue::Str(a), EvalValue::Str(b)) => a.as_str().partial_cmp(b.as_str()),
         _ => match (l.as_f64(), r.as_f64()) {
             // `partial_cmp` on a NaN operand yields None, which falls through
-            // to `false` below — never a panic. (ADR-340 invariant 1.)
+            // to `false` below — never a panic. (ADR-341 invariant 1.)
             (Some(a), Some(b)) => a.partial_cmp(&b),
             _ => None,
         },
@@ -714,7 +714,7 @@ mod tests {
         assert!(out.nodes.is_empty());
     }
 
-    /// NaN must not panic the comparison path (ADR-340 invariant 1).
+    /// NaN must not panic the comparison path (ADR-341 invariant 1).
     #[test]
     fn nan_comparison_is_false_not_a_panic() {
         let gdb = GraphDB::new();
