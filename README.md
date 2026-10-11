@@ -684,3 +684,7 @@ Contributions are welcome. Start with the [contribution guide](./docs/developmen
 RuVector is available under the [MIT License](./LICENSE).
 
 Built by [rUv](https://ruv.io) and powering [Cognitum](https://cognitum.one).
+
+### Focused Python packages
+
+The [Python package portfolio](python/portfolio/README.md) adds graph traversal, embedding clustering and attention ranking APIs over the shared native Rust runtime, with executable examples, animated guides and gated PyPI publishing. These are release candidates until published artifacts are verified.

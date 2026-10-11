@@ -1,0 +1,9 @@
+{
+  "version": "0.1.0",
+  "runtime": "0.1.2",
+  "packages": [
+    "ruvector-graph",
+    "ruvector-cluster",
+    "ruvector-rerank"
+  ]
+}

@@ -344,7 +344,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     name: Publish to PyPI
-    needs: [linux, macos, windows, sdist, validate-wheels]
+    needs: [rust-tests, linux, macos, windows, sdist, validate-wheels]
     if: startsWith(github.ref, 'refs/tags/python-v') || github.event.inputs.publish == 'true'
     environment: pypi
     permissions:
