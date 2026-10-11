@@ -6,7 +6,7 @@ Native scaled dot product attention for embedding aggregation.
 
 ## Getting started
 
-Requires Python 3.10 or later and a platform supported by the `ruvector==0.1.3` native wheel.
+Requires Python 3.10 or later and a platform supported by the `ruvector==0.1.4` native wheel.
 
 ```sh
 python -m pip install ruvector-attention==0.2.0

@@ -28,4 +28,4 @@ Caller embeddings → finite nonzero vector validation → normalization → nat
 
 One representative embedding per route. HNSW is approximate; thresholds are inclusive and do not guarantee intent classification quality. This is a Python semantic policy over the native core index, not a binding to the separate neural router or an embedding model. Mutation rebuilds the index before committing, ensuring replacements and deletions cannot leave stale routes, at a cost proportional to the number of routes. Designed for small intent catalogs rather than high frequency writes to large indexes. Ties among retrieved results sort by name.
 
-Python 3.10 or later; runtime `ruvector==0.1.3`. [Portfolio documentation](https://github.com/ruvnet/RuVector/tree/main/python/portfolio).
+Python 3.10 or later; runtime `ruvector==0.1.4`. [Portfolio documentation](https://github.com/ruvnet/RuVector/tree/main/python/portfolio).

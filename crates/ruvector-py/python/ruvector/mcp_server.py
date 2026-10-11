@@ -350,7 +350,7 @@ _token_verifier, _auth_settings = _build_auth()
 server = MCPServer(
     name="ruvector",
     title="RuVector",
-    version="0.1.2",
+    version="0.1.4",
     instructions=(
         "ultra-low-latency vector search backed by a Rust RaBitQ core. "
         "Create a collection, insert vectors with optional metadata, search "

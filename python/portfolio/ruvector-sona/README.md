@@ -6,7 +6,7 @@ Validated batch inference over the native SONA LoRA hooks.
 
 ## Getting started
 
-Requires Python 3.10 or later and a platform supported by the `ruvector==0.1.3` native wheel.
+Requires Python 3.10 or later and a platform supported by the `ruvector==0.1.4` native wheel.
 
 ```sh
 python -m pip install ruvector-sona==0.2.0

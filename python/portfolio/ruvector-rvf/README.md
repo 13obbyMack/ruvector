@@ -6,7 +6,7 @@ Create a local vector file, store embeddings with integer identifiers, search by
 
 ## Getting started
 
-Requires Python 3.10 or newer and a platform supported by `ruvector==0.1.3`.
+Requires Python 3.10 or newer and a platform supported by `ruvector==0.1.4`.
 
 ```bash
 python -m pip install ruvector-rvf==0.2.0
@@ -67,4 +67,4 @@ Open only locally produced RVF files you own and explicitly trust. Native file d
 
 ## Development
 
-Tests: `python -m pytest python/portfolio/tests/test_rvf_portfolio.py`. Install this package against a locally built `ruvector==0.1.3` wheel before running. Source: [RVF Rust runtime](https://github.com/ruvnet/RuVector/tree/main/crates/rvf/rvf-runtime). [Issues](https://github.com/ruvnet/RuVector/issues).
+Tests: `python -m pytest python/portfolio/tests/test_rvf_portfolio.py`. Install this package against a locally built `ruvector==0.1.4` wheel before running. Source: [RVF Rust runtime](https://github.com/ruvnet/RuVector/tree/main/crates/rvf/rvf-runtime). [Issues](https://github.com/ruvnet/RuVector/issues).

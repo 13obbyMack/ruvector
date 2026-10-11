@@ -44,7 +44,7 @@ Demand snapshot: September 11 through October 10, 2026; 67 successful npm API me
 
 Local release candidate evidence:
 
-* Shared native runtime 0.1.3 compiled with real ruvllm minimal and RVF Rust dependencies.
+* Shared native runtime 0.1.4 compiled with real ruvllm minimal and RVF Rust dependencies.
 * 50 native Rust unit tests passed.
 * 110 Python tests passed across the portfolio and new native RVF/cache APIs.
 * Another 48 existing graph, clustering and GNN tests passed, plus 73 native smoke/collection tests.

@@ -40,6 +40,6 @@ Each instance owns an isolated import-free VM. Default limits are 64 MiB linear 
 
 The wheel bundles `provenance.json` with the exact npm URL, SHA512 archive integrity and SHA256 Wasm digest. The digest is checked before each instantiation. This detects accidental artifact changes; it is not an independent publisher signature. Upstream declares MIT licensing; the repository MIT license is included.
 
-Wasmtime is pinned to `49.0.0`. The shared portfolio runtime is pinned to `ruvector==0.1.3`, although the operations shown here execute the bundled Wasm directly. Installation depends on compatible wheels being available for both dependencies. Python 3.10 or later is required.
+Wasmtime is pinned to `49.0.0`. The shared portfolio runtime is pinned to `ruvector==0.1.4`, although the operations shown here execute the bundled Wasm directly. Installation depends on compatible wheels being available for both dependencies. Python 3.10 or later is required.
 
 Source and issues: [RuVector](https://github.com/ruvnet/RuVector). The quickstart is an acceptance test of real Wasm insertion, distance computation and result decoding.

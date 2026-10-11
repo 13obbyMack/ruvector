@@ -8,7 +8,7 @@ A bounded CPU key/value cache and attention primitive for Python LLM pipelines, 
 
 ## Getting started
 
-Requires Python 3.10 or newer and a platform supported by `ruvector==0.1.3` native wheels.
+Requires Python 3.10 or newer and a platform supported by `ruvector==0.1.4` native wheels.
 
 ```bash
 pip install ruvector-ruvllm==0.2.0

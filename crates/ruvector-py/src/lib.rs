@@ -44,10 +44,10 @@ mod error;
 mod gnn;
 mod graph;
 mod hnsw;
-mod rabitq;
-mod sona;
 mod llm;
+mod rabitq;
 mod rvf;
+mod sona;
 
 #[pymodule]
 fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

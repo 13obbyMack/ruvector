@@ -47,7 +47,7 @@ impl PyKVCache {
             || max_tokens > 65536
             || dimensions
                 .checked_mul(max_tokens)
-                .is_none_or(|n| n > MAX_ELEMENTS)
+                .map_or(true, |n| n > MAX_ELEMENTS)
         {
             return Err(PyValueError::new_err("require dimensions in 1..=4096, max_tokens in 1..=65536, and their product <= 8388608"));
         }

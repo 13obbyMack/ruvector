@@ -6,4 +6,4 @@ Initial graph traversal, embedding clustering and attention ranking packages ove
 
 ## 0.2.0
 
-Eight new companions selected from measured npm demand: core, GNN, attention, SONA, router, ruvllm cache, native RVF, and RVF WASM. Existing graph, cluster and rerank advance together. All pin shared runtime 0.1.3. Includes animated intros, diagrams, getting started examples, actual upstream Wasm with bounded host, persistence and numeric overflow regressions.
+Eight new companions selected from measured npm demand: core, GNN, attention, SONA, router, ruvllm cache, native RVF, and RVF WASM. Existing graph, cluster and rerank advance together. All pin shared runtime 0.1.4. Includes animated intros, diagrams, getting started examples, actual upstream Wasm with bounded host, persistence and numeric overflow regressions.

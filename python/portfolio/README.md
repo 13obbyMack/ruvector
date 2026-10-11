@@ -41,7 +41,7 @@ Choose a task and open its package guide:
 * [ruvector-core](ruvector-core/README.md): Validated vector indexing and search.
 * [ruvector-rvf-wasm](ruvector-rvf-wasm/README.md): Actual RVF WASM in a bounded Wasmtime host.
 
-The base SDK guide is [here](../../crates/ruvector-py/README.md). All companions pin the same `ruvector==0.1.3` native runtime, avoiding duplicate Rust extensions. RVF WASM additionally pins Wasmtime and bundles an integrity verified upstream module. It requires no Node, browser, WASI, network downloads or npm install at runtime.
+The base SDK guide is [here](../../crates/ruvector-py/README.md). All companions pin the same `ruvector==0.1.4` native runtime, avoiding duplicate Rust extensions. RVF WASM additionally pins Wasmtime and bundles an integrity verified upstream module. It requires no Node, browser, WASI, network downloads or npm install at runtime.
 
 ## What is supported?
 

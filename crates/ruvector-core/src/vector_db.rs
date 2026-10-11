@@ -380,7 +380,7 @@ impl VectorDB {
         } else {
             query.k
         };
-        let mut results = index.search(&query.vector, fetch_k)?;
+        let mut results = index.search_ef(&query.vector, fetch_k, query.ef_search)?;
 
         // Enrich results with full data if needed
         for result in &mut results {
