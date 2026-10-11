@@ -23,7 +23,8 @@ for line in result.stdout.splitlines():
     if not match:
         raise ValueError(f'Unrecognized cargo tree record: {line!r}')
     wanted.add(match.groups())
-if ('ruvector-py', '0.1.2') not in wanted:
+native_version = tomllib.loads((root / 'crates/ruvector-py/Cargo.toml').read_text())['package']['version']
+if ('ruvector-py', native_version) not in wanted:
     raise ValueError('Native root missing from dependency closure')
 text = (root / 'Cargo.lock').read_text()
 blocks = text.split('[[package]]')

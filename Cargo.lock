@@ -10759,7 +10759,7 @@ dependencies = [
 
 [[package]]
 name = "ruvector-py"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "numpy",
  "pyo3",
@@ -10770,6 +10770,8 @@ dependencies = [
  "ruvector-graph",
  "ruvector-rabitq",
  "ruvector-sona 0.2.1",
+ "ruvllm 2.5.0",
+ "rvf-runtime",
  "serde_json",
  "thiserror 2.0.18",
 ]
