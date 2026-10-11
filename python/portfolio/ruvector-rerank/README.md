@@ -9,10 +9,10 @@ ruvector-rerank provides attention ranking for rag through `ruvector-attention` 
 ## Install
 
 ```bash
-pip install ruvector-rerank==0.1.0
+pip install ruvector-rerank==0.2.0
 ```
 
-Release candidate: this command works only after publication. From a checkout, install `ruvector==0.1.2` and then `pip install ./python/portfolio/ruvector-rerank`. Python 3.10 or newer; native platform support follows the shared runtime wheels.
+Release candidate: this command works only after publication. From a checkout, install `ruvector==0.1.3` and then `pip install ./python/portfolio/ruvector-rerank`. Python 3.10 or newer; native platform support follows the shared runtime wheels.
 
 ## Quick start
 
@@ -30,7 +30,7 @@ Input conversion can copy arrays. Reuse contiguous float32 arrays for repeated o
 
 ## How does it relate to RuVector?
 
-The algorithm executes through the existing Rust PyO3 binding, pinned to `ruvector==0.1.2`. Python implements convenience conversion and result formatting. For vector search use `pip install ruvector`; for other capabilities see the [Python portfolio](https://github.com/ruvnet/RuVector/tree/main/python/portfolio).
+The algorithm executes through the existing Rust PyO3 binding, pinned to `ruvector==0.1.3`. Python implements convenience conversion and result formatting. For vector search use `pip install ruvector`; for other capabilities see the [Python portfolio](https://github.com/ruvnet/RuVector/tree/main/python/portfolio).
 
 ## Verification and security
 

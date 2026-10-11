@@ -1,41 +1,54 @@
-# RuVector Python package portfolio
+# RuVector Python portfolio
 
-Focused Python APIs backed by existing RuVector Rust libraries. Release candidates, not yet verified as published.
+![RuVector Python capability tracks](https://raw.githubusercontent.com/ruvnet/RuVector/main/docs/python-portfolio/overview.svg)
 
-| Distribution | Import | Rust implementation | Task |
-| :--- | :--- | :--- | :--- |
-| ruvector | ruvector | ruvector-core, ruvector-rabitq | Vector search, collection API, CLI and MCP |
-| ruvector-graph | ruvector_graph | ruvector-graph | Property graphs and bounded traversal |
-| ruvector-cluster | ruvector_cluster | ruvector-cluster-rag | Embedding clustering and cohesion |
-| ruvector-rerank | ruvector_rerank | ruvector-attention | Attention weights and candidate ordering |
+Python access to the ten most downloaded RuVector npm packages. Eight new companion distributions join the existing `ruvector` SDK and `ruvector-graph`. Previously released clustering and reranking remain available. Every companion has its own introduction, animated diagram, runnable getting started example and explicit capability limits.
 
-All three new distributions depend on the same exact native runtime, `ruvector==0.1.2`. Installing all three installs that runtime once. They add useful APIs rather than duplicating Rust binaries. They do not reduce native download size. KGE, quantization and independent native wheels remain future work, not claimed features.
+## Which packages are most popular?
 
-## Build and test
+Measured npm downloads for September 11 through October 10, 2026. These are package retrievals, not unique users. Platform binary variants are excluded. RVF WASM remains a separate distribution because it provides a distinct portable execution backend. [Raw evidence and all source URLs](npm-popularity-2026-10-11.json).
 
-```bash
-python -m pip install build maturin pytest numpy twine
-maturin build --manifest-path crates/ruvector-py/Cargo.toml --out /tmp/native
-python -m pip install /tmp/native/*.whl
-for package in python/portfolio/ruvector-*; do
-  python -m build "$package"
-  python -m pip install "$package"/dist/*.whl
-done
-python -m pytest python/portfolio/tests -q
+| Rank | npm package | Monthly downloads | Python package | Implemented scope |
+| --- | --- | ---: | --- | --- |
+| 1 | `@ruvector/ruvllm` | 519,297 | [`ruvector-ruvllm`](https://pypi.org/project/ruvector-ruvllm/) | Rust KV cache and attention; no text generation |
+| 2 | `ruvector` | 506,811 | [`ruvector`](https://pypi.org/project/ruvector/) | Shared native SDK, CLI and integrations |
+| 3 | `@ruvector/rvf` | 494,402 | [`ruvector-rvf`](https://pypi.org/project/ruvector-rvf/) | Persistent native RVF vector stores |
+| 4 | `@ruvector/graph-node` | 415,506 | [`ruvector-graph`](https://pypi.org/project/ruvector-graph/) | Property graph CRUD and bounded traversal |
+| 5 | `@ruvector/sona` | 395,416 | [`ruvector-sona`](https://pypi.org/project/ruvector-sona/) | Adapter inference; fresh engine is identity |
+| 6 | `@ruvector/attention` | 364,417 | [`ruvector-attention`](https://pypi.org/project/ruvector-attention/) | Scaled dot product attention |
+| 7 | `@ruvector/router` | 362,362 | [`ruvector-router`](https://pypi.org/project/ruvector-router/) | Semantic intent routing over Rust HNSW |
+| 8 | `@ruvector/gnn` | 344,076 | [`ruvector-gnn`](https://pypi.org/project/ruvector-gnn/) | GNN forward inference; no training API |
+| 9 | `@ruvector/core` | 341,954 | [`ruvector-core`](https://pypi.org/project/ruvector-core/) | Validated vector indexing and search |
+| 10 | `@ruvector/rvf-wasm` | 328,808 | [`ruvector-rvf-wasm`](https://pypi.org/project/ruvector-rvf-wasm/) | Actual RVF WASM in a bounded Wasmtime host |
+
+## Getting started
+
+```sh
+python -m venv .venv
+# Activate the environment using your platform's normal command.
+python -m pip install ruvector-core==0.2.0 ruvector-router==0.2.0
 ```
 
-## Automatic publishing
+Choose a task and open its package guide:
 
-Merging a new portfolio version into `main` automatically builds, tests, audits and publishes the exact tested artifacts. The first addition of `manifest.json` counts as a new version. Documentation edits without a version change do not publish. An explicit matching `python-portfolio-v0.1.0` tag is also supported. No recurring task is required. PRs build and test but cannot publish. The release tag must point to a commit on main. Configure the `pypi` GitHub environment to accept protected main and release tags. For unattended releases, configure the environment without a manual reviewer, retaining branch protections and CI gates.
+* [ruvector-ruvllm](ruvector-ruvllm/README.md): Rust KV cache and attention; no text generation.
+* [ruvector-rvf](ruvector-rvf/README.md): Persistent native RVF vector stores.
+* [ruvector-graph](ruvector-graph/README.md): Property graph CRUD and bounded traversal.
+* [ruvector-sona](ruvector-sona/README.md): Adapter inference; fresh engine is identity.
+* [ruvector-attention](ruvector-attention/README.md): Scaled dot product attention.
+* [ruvector-router](ruvector-router/README.md): Semantic intent routing over Rust HNSW.
+* [ruvector-gnn](ruvector-gnn/README.md): GNN forward inference; no training API.
+* [ruvector-core](ruvector-core/README.md): Validated vector indexing and search.
+* [ruvector-rvf-wasm](ruvector-rvf-wasm/README.md): Actual RVF WASM in a bounded Wasmtime host.
 
-Authentication supports an environment secret named `PYPI_API_TOKEN`. When present, only the isolated publish step receives it; otherwise OIDC Trusted Publishing is used. Token publishing does not generate OIDC attestations. Configure the token directly from its protected ruOS binding into the GitHub environment using authenticated GitHub tooling; never print it or put it in command arguments. This credential configuration has not yet been completed.
+The base SDK guide is [here](../../crates/ruvector-py/README.md). All companions pin the same `ruvector==0.1.3` native runtime, avoiding duplicate Rust extensions. RVF WASM additionally pins Wasmtime and bundles an integrity verified upstream module. It requires no Node, browser, WASI, network downloads or npm install at runtime.
 
-For OIDC, register each package's PyPI Trusted Publisher with owner `ruvnet`, repository `RuVector`, workflow `python-portfolio.yml`, environment `pypi`. Confirm name ownership or availability on PyPI; a missing public project is not proof that its name is allocatable. Publish the required runtime version first. The release gate also tests against the published runtime wheel, avoiding accidental dependence on unreleased native APIs.
+## What is supported?
 
-The native runtime keeps its existing `python-v*` wheel workflow. Portfolio packages share a version and release tag, but PyPI publication is not transactional: a partial upload requires checking receipts and publishing only the missing artifacts. Never overwrite releases or silently skip conflicting files.
+These are deliberately scoped Python APIs, not promises of complete npm parity. SONA has inference only and cannot train through this binding. Fresh GNN parameters are untrained. The ruvllm package implements full precision KV caching, not language generation. The RVF store opens trusted local files; it is not an untrusted file sandbox. The WASM package runs actual upstream bytecode with fuel and memory caps, and exposes exhaustive vector queries rather than HNSW.
 
-## Search discovery
+## Release and acceptance
 
-Each package includes a descriptive title, PyPI summary, keywords, repository/documentation links, explicit problem statement, installation command, executable example and limitations. Animated SVGs include accessible titles, descriptions and reduced motion support; static fallback content remains readable. Search rankings are not guaranteed. Prefer measured user adoption and successful installs over package count.
+Native version changes merged into `main` build and test wheels on Linux x86/ARM, macOS x86/ARM and Windows x86 before publishing. Companion version changes in `manifest.json` trigger build, security audit, source installation and native contract tests, then publish through the protected `pypi` environment. The native runtime release must complete before merging a companion version that requires it. Ordinary documentation edits do not publish.
 
-After publishing, Linux, macOS and Windows jobs install the exact versions directly from PyPI in fresh virtual environments and execute portfolio tests and examples. A verification failure is reported as a failed release workflow; uploaded versions are immutable and require a corrective release, not an overwrite.
+Acceptance is a successful upload followed by clean PyPI installation and tests on Linux, macOS and Windows. The token stays in the GitHub environment; it is never included in artifacts. Trusted Publishing remains available when configured. See [security](SECURITY.md), [validation](VALIDATION.md), [architecture decision](../../docs/adr/ADR-python-top-ten-portfolio.md), and [changelog](CHANGELOG.md).

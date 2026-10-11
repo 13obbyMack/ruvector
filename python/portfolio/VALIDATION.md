@@ -37,3 +37,24 @@ python python/portfolio/audit_native.py /tmp/portfolio-native.lock
 ```
 
 Before release, require all CI gates, registered publisher identities, protected release tags, exact artifact versions and installation from PyPI in fresh supported-platform environments.
+
+## Top ten expansion, 2026-10-11
+
+Demand snapshot: September 11 through October 10, 2026; 67 successful npm API measurements, 76 platform binaries excluded, nine unavailable development names. Evidence: `npm-popularity-2026-10-11.json`. Ten npm distributions map to the existing base SDK and graph plus eight new companions. Cluster/rerank remain supported.
+
+Local release candidate evidence:
+
+* Shared native runtime 0.1.3 compiled with real ruvllm minimal and RVF Rust dependencies.
+* 50 native Rust unit tests passed.
+* 110 Python tests passed across the portfolio and new native RVF/cache APIs.
+* Another 48 existing graph, clustering and GNN tests passed, plus 73 native smoke/collection tests.
+* All eleven companion README Python quickstarts executed successfully against installed packages.
+* Eleven wheels plus eleven source distributions built and passed strict Twine and archive identity checks.
+* Clean environment installation from all source distributions passed 88 portfolio tests.
+* Native all-target production/build audit passed: 241 name/version pairs, 243 selected lock records, 1,296 RustSec advisories. Yank status excluded, as in the original gate.
+* Python dependency audit found no known vulnerabilities in indexed dependencies. It cannot audit unpublished local distributions by name; their source was reviewed separately. Wasmtime 49.0.0 is pinned.
+* WASM module is the actual integrity-verified npm `@ruvector/rvf-wasm@0.1.9`, SHA256 `3df581554a6e9cb4721b9e4174d5f3d739dff4569b5ce5f985d517d5c3bbb0fa`.
+* Review reproduced and fixed float32 overflow, tiny cosine-vector underflow, unstable neighbor-weight normalization and excessive GNN parameter allocation. Regression tests cover each case.
+* All SVGs parse as XML and render statically. CSS motion includes reduced-motion handling; browser animation timing was not measured.
+
+Local Linux wheel is a development build and not the artifact intended for PyPI. Native publication requires the CI release wheel matrix and sdist rebuild. Companion publication requires the exact released native runtime and clean PyPI installs on Linux, macOS and Windows. Do not interpret local results as proof that a pending release has published.

@@ -8,7 +8,7 @@ spec.loader.exec_module(release)
 
 
 def test_matching_tag(monkeypatch):
-    monkeypatch.setenv('GITHUB_REF', 'refs/tags/python-portfolio-v0.1.0')
+    monkeypatch.setenv('GITHUB_REF', 'refs/tags/python-portfolio-v0.2.0')
     release.validate()
 
 
