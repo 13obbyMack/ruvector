@@ -1858,9 +1858,13 @@ impl RvfStore {
     pub fn close(mut self) -> Result<(), RvfError> {
         self.persist_index()?;
 
-        self.file
-            .sync_all()
-            .map_err(|_| err(ErrorCode::FsyncFailed))?;
+        // Windows cannot flush a handle opened without write access.
+        // A frozen writer still owns its lock and must flush pending writes.
+        if self.writer_lock.is_some() {
+            self.file
+                .sync_all()
+                .map_err(|_| err(ErrorCode::FsyncFailed))?;
+        }
 
         if let Some(lock) = self.writer_lock {
             lock.release().map_err(|_| err(ErrorCode::LockHeld))?;
@@ -4737,6 +4741,9 @@ mod tests {
         let query = vec![1.0, 0.0, 0.0, 0.0];
         let results = store.query(&query, 1, &QueryOptions::default()).unwrap();
         assert_eq!(results.len(), 1);
+        store.close().unwrap();
+        // Closing a reader must release the handle, including on Windows.
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
